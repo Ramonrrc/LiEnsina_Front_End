@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, KeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
-import { Check } from 'lucide-react'
+import { Check, ChevronDown } from 'lucide-react'
 
 import { cn } from '../../lib/cn'
 
@@ -302,7 +302,7 @@ export function CompactSelect<TValue extends string = string>({
       ref={menuRef}
       style={menuStyle}
       className={cn(
-        'z-[1200] rounded-lg border border-stone-300 bg-white p-1 shadow-[0_18px_40px_rgba(28,25,23,.16)] animate-[fadein_.12s_ease]',
+        'z-[1200] rounded-lg border border-slate-300 bg-white p-1 shadow-[0_18px_40px_rgba(15,23,42,.14)] animate-[fadein_.12s_ease]',
         dropdownClassName,
       )}
     >
@@ -331,10 +331,10 @@ export function CompactSelect<TValue extends string = string>({
               className={cn(
                 'flex w-full min-w-0 items-start gap-2 whitespace-normal rounded-md px-2.5 py-2 text-left text-[13px] font-medium leading-snug outline-none transition-colors',
                 isSelected
-                  ? 'bg-stone-900 text-white'
+                  ? 'bg-indigo-600 text-white'
                   : isActive
-                    ? 'bg-stone-100 text-stone-950'
-                    : 'text-stone-600 hover:bg-stone-50 hover:text-stone-950',
+                    ? 'bg-indigo-50 text-indigo-900'
+                    : 'text-slate-600 hover:bg-indigo-50 hover:text-indigo-900',
                 option.disabled && 'cursor-not-allowed opacity-45',
                 optionClassName,
               )}
@@ -348,7 +348,7 @@ export function CompactSelect<TValue extends string = string>({
               <span className="min-w-0 flex-1 whitespace-normal">
                 <span className="block whitespace-normal break-words leading-snug [overflow-wrap:anywhere]">{option.label}</span>
                 {option.description ? (
-                  <span className={cn('mt-0.5 block whitespace-normal break-words text-[11px] leading-snug [overflow-wrap:anywhere]', isSelected ? 'text-white/70' : 'text-stone-400')}>
+                  <span className={cn('mt-0.5 block whitespace-normal break-words text-[11px] leading-snug [overflow-wrap:anywhere]', isSelected ? 'text-white/70' : 'text-slate-400')}>
                     {option.description}
                   </span>
                 ) : null}
@@ -389,9 +389,17 @@ export function CompactSelect<TValue extends string = string>({
           openMenu()
         }}
         onKeyDown={handleKeyDown}
-        className={cn('inline-flex w-full min-w-0 items-center text-left leading-none', className)}
+        className={cn('inline-flex w-full min-w-0 items-center justify-between gap-2 text-left leading-none', className)}
       >
-        <span className="block min-w-0 truncate">{selectedOption?.label ?? placeholder}</span>
+        <span className="block min-w-0 flex-1 truncate">{selectedOption?.label ?? placeholder}</span>
+        <ChevronDown
+          aria-hidden="true"
+          className={cn(
+            'h-4 w-4 shrink-0 text-slate-400 transition-transform duration-150',
+            isOpen && 'rotate-180 text-indigo-600',
+            disabled && 'opacity-45',
+          )}
+        />
       </button>
       {name ? <input type="hidden" name={name} value={value} /> : null}
       {menu}

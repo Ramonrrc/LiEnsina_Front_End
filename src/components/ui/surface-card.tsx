@@ -28,32 +28,32 @@ export function SurfaceCard({
   return (
     <section
       className={cn(
-        'overflow-hidden rounded-2xl border border-stone-300 bg-white shadow-sm',
+        'overflow-hidden rounded-2xl border border-slate-400 bg-white shadow-sm',
         className,
       )}
     >
       {hasHeader ? (
         <header
           className={cn(
-            'flex flex-col-reverse items-start justify-between gap-4 border-b border-stone-100 bg-white px-4 py-4 sm:px-6 xl:flex-row',
+            'flex flex-col-reverse items-start justify-between gap-4 border-b border-slate-400 bg-slate-50 px-4 py-4 sm:px-6 xl:flex-row',
             headerClassName,
           )}
         >
           <div className="flex items-center gap-3">
             {icon ? (
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-stone-50 text-stone-500 ring-1 ring-inset ring-stone-300">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-indigo-600 text-white ring-1 ring-inset ring-indigo-600">
                 {icon}
               </div>
             ) : null}
 
             <div>
               {eyebrow ? (
-                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-400">
+                <p className="text-[11px] font-black uppercase tracking-[0.14em] text-indigo-500">
                   {eyebrow}
                 </p>
               ) : null}
               {title ? (
-                <h2 className="font-display text-lg font-semibold tracking-tight text-stone-950">
+                <h2 className="font-['Sora',system-ui,sans-serif] text-lg font-bold tracking-tight text-slate-950">
                   {title}
                 </h2>
               ) : null}

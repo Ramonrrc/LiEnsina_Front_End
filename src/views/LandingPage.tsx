@@ -206,23 +206,33 @@ export default function LandingPage() {
       >
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
           <a href="/" className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-stone-900 flex items-center justify-center">
-              <GraduationCap size={17} className="text-white" />
-            </div>
-            <span className="font-['Lora'] font-semibold text-xl text-stone-900">{appName}</span>
+            <div className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${
+            scrolled ? 'bg-stone-900' : 'bg-white/15 border border-white/20'
+          }`}>
+            <GraduationCap size={17} className="text-white" />
+          </div>
+            <span className={`font-['Lora'] font-semibold text-xl transition-colors ${
+            scrolled ? 'text-stone-900' : 'text-white'
+          }`}>
+            {appName}
+          </span>
           </a>
 
           <nav className="hidden md:flex items-center gap-8">
-            {navLinks.map((l) => (
-              <a
-                key={l.href}
-                href={l.href}
-                className="text-[13px] font-semibold text-white hover:bg-white/10 py-1 px-2 rounded-full tracking-wide transition-colors"
-              >
-                {l.label}
-              </a>
-            ))}
-          </nav>
+          {navLinks.map((l) => (
+            <a  
+              key={l.href}
+              href={l.href}
+              className={`text-[13px] font-semibold py-1 px-2 rounded-full tracking-wide transition-colors ${
+                scrolled
+                  ? 'text-stone-700 hover:text-stone-900 hover:bg-stone-100'
+                  : 'text-white hover:bg-white/10'
+              }`}
+            >
+              {l.label}
+            </a>
+          ))}
+        </nav>
 
           <a
             href="/login"
@@ -297,7 +307,7 @@ export default function LandingPage() {
               </a>
               <a
                 href="#simulados"
-                className="landing-hero-secondary-link inline-flex items-center gap-2 font-semibold px-8 py-4 rounded-lg text-sm transition-all duration-200"
+                className="inline-flex items-center gap-2 rounded-lg border border-white/25 px-8 py-4 text-sm font-semibold text-white transition-all duration-200 hover:bg-white/10 hover:text-white"
               >
                 Ver módulos <ChevronDown size={16} />
               </a>
