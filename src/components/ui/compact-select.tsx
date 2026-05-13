@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom'
 import { Check, ChevronDown } from 'lucide-react'
 
 import { cn } from '../../lib/cn'
+import { FieldMessage, fieldStateClass } from './form-field'
 
 let textMeasureCanvas: HTMLCanvasElement | null = null
 
@@ -34,6 +35,8 @@ interface CompactSelectProps<TValue extends string = string> {
   onChange: (value: TValue) => void
   placeholder?: string
   ariaLabel?: string
+  hint?: string
+  error?: string | null
   disabled?: boolean
   className?: string
   wrapperClassName?: string
@@ -42,6 +45,7 @@ interface CompactSelectProps<TValue extends string = string> {
   dropdownMinWidth?: number
   dropdownOffset?: number
   dropdownAnchor?: 'self' | 'parent'
+  dropdownWidth?: 'content' | 'trigger'
   growOnOpen?: boolean
 }
 
@@ -53,6 +57,8 @@ export function CompactSelect<TValue extends string = string>({
   onChange,
   placeholder = 'Selecione',
   ariaLabel,
+  hint,
+  error,
   disabled,
   className,
   wrapperClassName,
@@ -61,11 +67,13 @@ export function CompactSelect<TValue extends string = string>({
   dropdownMinWidth,
   dropdownOffset = 8,
   dropdownAnchor = 'self',
+  dropdownWidth = 'content',
   growOnOpen,
 }: CompactSelectProps<TValue>) {
   const generatedId = useId()
   const selectId = id ?? generatedId
   const listboxId = `${selectId}-listbox`
+  const messageId = `${selectId}-message`
   const rootRef = useRef<HTMLDivElement | null>(null)
   const buttonRef = useRef<HTMLButtonElement | null>(null)
   const menuRef = useRef<HTMLDivElement | null>(null)
@@ -91,6 +99,10 @@ export function CompactSelect<TValue extends string = string>({
   }
 
   function getMenuWidth(anchorWidth: number) {
+    if (dropdownWidth === 'trigger') {
+      return Math.min(anchorWidth, Math.max(120, window.innerWidth - 24))
+    }
+
     const buttonStyle = buttonRef.current ? window.getComputedStyle(buttonRef.current) : undefined
     const optionFont = buttonStyle?.font || '500 13px "DM Sans", sans-serif'
     const widestOptionText = options.reduce((width, option) => {
@@ -125,7 +137,7 @@ export function CompactSelect<TValue extends string = string>({
 
     const rect = trigger.getBoundingClientRect()
     setExpandedWidthFromAnchor(getMenuWidth(rect.width), rect.width)
-  }, [growOnOpen, dropdownAnchor, dropdownMinWidth, options])
+  }, [growOnOpen, dropdownAnchor, dropdownMinWidth, dropdownWidth, options])
 
   const updateMenuPosition = useCallback(() => {
     const trigger = getAnchorElement()
@@ -154,7 +166,7 @@ export function CompactSelect<TValue extends string = string>({
       transform: openAbove ? 'translateY(-100%)' : undefined,
       transformOrigin: openAbove ? 'bottom' : 'top',
     })
-  }, [dropdownAnchor, dropdownMinWidth, dropdownOffset, options])
+  }, [dropdownAnchor, dropdownMinWidth, dropdownOffset, dropdownWidth, options])
 
   function getNextIndex(currentIndex: number, direction: 1 | -1) {
     if (enabledIndexes.length === 0) return -1
@@ -376,6 +388,8 @@ export function CompactSelect<TValue extends string = string>({
         aria-haspopup="listbox"
         aria-expanded={isOpen}
         aria-controls={isOpen ? listboxId : undefined}
+        aria-invalid={Boolean(error) || undefined}
+        aria-describedby={(hint || error) ? messageId : undefined}
         aria-activedescendant={isOpen && activeIndex >= 0 ? `${listboxId}-option-${activeIndex}` : undefined}
         disabled={disabled}
         onClick={() => {
@@ -389,7 +403,11 @@ export function CompactSelect<TValue extends string = string>({
           openMenu()
         }}
         onKeyDown={handleKeyDown}
-        className={cn('inline-flex w-full min-w-0 items-center justify-between gap-2 text-left leading-none', className)}
+        className={cn(
+          'inline-flex w-full min-w-0 items-center justify-between gap-2 text-left leading-none',
+          fieldStateClass(error),
+          className,
+        )}
       >
         <span className="block min-w-0 flex-1 truncate">{selectedOption?.label ?? placeholder}</span>
         <ChevronDown
@@ -402,6 +420,7 @@ export function CompactSelect<TValue extends string = string>({
         />
       </button>
       {name ? <input type="hidden" name={name} value={value} /> : null}
+      <FieldMessage id={messageId} hint={hint} error={error} />
       {menu}
     </div>
   )

@@ -1,29 +1,44 @@
 import type {
   AccessScreenPayload,
+  AddMealFoodRequestToStockPayload,
   CalendarScreenPayload,
   ClassRoom,
+  CreateMealFoodRequestPayload,
+  CreateLessonRecordPayload,
   CreateQuestionRequest,
   CreateMealFoodPayload,
   CreateMealItemPayload,
   CreateMealManagementPayload,
+  CreateRoomReservationPayload,
   DashboardScreenPayload,
   Evaluation,
   EvaluationsScreenPayload,
+  GenerateQuestionSelectionRequest,
+  GenerateQuestionSelectionResponse,
   Guardian,
+  LessonRecord,
   MealFood,
+  MealFoodRequest,
   MealManagement,
   MealManagementsPagePayload,
   MealsScreenPayload,
+  NotificationsScreenPayload,
+  PeoplePageQuery,
   Question,
+  ReviewMealFoodRequestPayload,
   Role,
+  RoomReservation,
   School,
   SchoolCalendarEvent,
   SchoolsScreenPayload,
   SessionPayload,
   SettingsScreenPayload,
   Student,
+  StudentsPagePayload,
   Teacher,
+  TeachersPagePayload,
   UpdateMealBudgetPayload,
+  UpdateMealFoodRequestPayload,
   UpsertMealMenuPayload,
   UserAccount,
 } from './types'
@@ -55,7 +70,9 @@ function resolveApiBaseUrl(value: string) {
     const url = new URL(normalizedValue)
     const currentHost = window.location.hostname
 
-    if (isLoopbackHost(url.hostname) && isLocalBrowserHost(currentHost) && url.hostname !== currentHost) {
+    if (url.hostname === 'localhost' && currentHost === 'localhost') {
+      url.hostname = '127.0.0.1'
+    } else if (isLoopbackHost(url.hostname) && isLocalBrowserHost(currentHost) && url.hostname !== currentHost) {
       url.hostname = currentHost
     }
 
@@ -100,6 +117,7 @@ async function apiRequest<T>(path: string, options: RequestOptions = {}): Promis
     method: options.method ?? 'GET',
     headers,
     credentials: 'include',
+    cache: 'no-store',
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
   })
   const payload = (await response.json().catch(() => null)) as { message?: string } | null
@@ -119,6 +137,7 @@ async function apiFormRequest<T>(path: string, options: { method?: 'POST' | 'PAT
     method: options.method ?? 'POST',
     headers,
     credentials: 'include',
+    cache: 'no-store',
     body: options.body,
   })
   const payload = (await response.json().catch(() => null)) as { message?: string } | null
@@ -162,6 +181,10 @@ export async function loadDashboardScreen(token: string) {
   return apiRequest<DashboardScreenPayload>('/screens/dashboard', { token })
 }
 
+export async function loadNotificationsScreen(token: string) {
+  return apiRequest<NotificationsScreenPayload>('/screens/notifications', { token })
+}
+
 export async function loadSchoolsScreen(token: string) {
   return apiRequest<SchoolsScreenPayload>('/screens/schools', { token })
 }
@@ -176,6 +199,10 @@ export async function loadCalendarScreen(token: string) {
 
 export async function loadMealsScreen(token: string) {
   return apiRequest<MealsScreenPayload>('/screens/meals', { token })
+}
+
+export async function listRoomReservations(token: string) {
+  return apiRequest<RoomReservation[]>('/room-reservations', { token })
 }
 
 export async function listMealManagements(token: string) {
@@ -202,8 +229,41 @@ export async function loadAccessScreen(token: string) {
   return apiRequest<AccessScreenPayload>('/screens/access', { token })
 }
 
+function buildPeoplePageQuery(params: PeoplePageQuery) {
+  const query = new URLSearchParams({
+    page: String(params.page),
+    limit: String(params.limit),
+  })
+
+  if (params.search) query.set('search', params.search)
+  if (params.schoolId && params.schoolId !== 'all') query.set('schoolId', params.schoolId)
+  if (params.discipline && params.discipline !== 'all') query.set('discipline', params.discipline)
+
+  return query.toString()
+}
+
+export async function listTeachersPage(token: string, params: PeoplePageQuery) {
+  return apiRequest<TeachersPagePayload>(`/teachers?${buildPeoplePageQuery(params)}`, { token })
+}
+
+export async function listStudentsPage(token: string, params: PeoplePageQuery) {
+  return apiRequest<StudentsPagePayload>(`/students?${buildPeoplePageQuery(params)}`, { token })
+}
+
 export async function loadSettingsScreen(token: string) {
   return apiRequest<SettingsScreenPayload>('/screens/settings', { token })
+}
+
+export async function markNotificationRead(token: string, id: string) {
+  return apiRequest<NotificationsScreenPayload>(`/notifications/${id}/read`, { method: 'PATCH', token })
+}
+
+export async function markNotificationUnread(token: string, id: string) {
+  return apiRequest<NotificationsScreenPayload>(`/notifications/${id}/unread`, { method: 'PATCH', token })
+}
+
+export async function markAllNotificationsRead(token: string) {
+  return apiRequest<NotificationsScreenPayload>('/notifications/read-all', { method: 'PATCH', token })
 }
 
 export async function createSchool(token: string, payload: Partial<School>) {
@@ -254,8 +314,16 @@ export async function deleteEvaluation(token: string, id: string) {
   return apiRequest<{ success: boolean }>(`/evaluations/${id}`, { method: 'DELETE', token })
 }
 
+export async function generateQuestionSelection(token: string, payload: GenerateQuestionSelectionRequest) {
+  return apiRequest<GenerateQuestionSelectionResponse>('/questions/generate-selection', { method: 'POST', token, body: payload })
+}
+
 export async function createQuestion(token: string, payload: CreateQuestionRequest) {
   return apiRequest<Question>('/questions', { method: 'POST', token, body: payload })
+}
+
+export async function deleteQuestion(token: string, id: string) {
+  return apiRequest<{ success: boolean }>(`/questions/${id}`, { method: 'DELETE', token })
 }
 
 export async function createMealItem(token: string, managementId: string, payload: CreateMealItemPayload) {
@@ -274,6 +342,26 @@ export async function createMealFood(token: string, managementId: string, payloa
   return apiRequest<MealManagement>(`/meal-managements/${managementId}/foods`, { method: 'POST', token, body: payload })
 }
 
+export async function createMealFoodRequest(token: string, payload: CreateMealFoodRequestPayload) {
+  return apiRequest<MealFoodRequest>('/meal-food-requests', { method: 'POST', token, body: payload })
+}
+
+export async function updateMealFoodRequest(token: string, id: string, payload: UpdateMealFoodRequestPayload) {
+  return apiRequest<MealFoodRequest>(`/meal-food-requests/${id}`, { method: 'PATCH', token, body: payload })
+}
+
+export async function deleteMealFoodRequest(token: string, id: string) {
+  return apiRequest<MealFoodRequest>(`/meal-food-requests/${id}`, { method: 'DELETE', token })
+}
+
+export async function reviewMealFoodRequest(token: string, id: string, payload: ReviewMealFoodRequestPayload) {
+  return apiRequest<MealFoodRequest>(`/meal-food-requests/${id}/review`, { method: 'POST', token, body: payload })
+}
+
+export async function addMealFoodRequestToStock(token: string, id: string, payload: AddMealFoodRequestToStockPayload) {
+  return apiRequest<{ request: MealFoodRequest; management: MealManagement }>(`/meal-food-requests/${id}/add-to-stock`, { method: 'POST', token, body: payload })
+}
+
 export async function createMealMenu(token: string, managementId: string, payload: UpsertMealMenuPayload) {
   return apiRequest<MealManagement>(`/meal-managements/${managementId}/menus`, { method: 'POST', token, body: payload })
 }
@@ -288,6 +376,14 @@ export async function deleteMealMenu(token: string, managementId: string, menuId
 
 export async function createCalendarEvent(token: string, payload: Partial<SchoolCalendarEvent>) {
   return apiRequest<SchoolCalendarEvent>('/calendar-events', { method: 'POST', token, body: payload })
+}
+
+export async function createRoomReservation(token: string, payload: CreateRoomReservationPayload) {
+  return apiRequest<RoomReservation>('/room-reservations', { method: 'POST', token, body: payload })
+}
+
+export async function createLessonRecord(token: string, payload: CreateLessonRecordPayload) {
+  return apiRequest<LessonRecord>('/lesson-records', { method: 'POST', token, body: payload })
 }
 
 export async function updateCalendarEvent(token: string, id: string, payload: Partial<SchoolCalendarEvent>) {

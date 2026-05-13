@@ -14,6 +14,7 @@ import { createPortal } from 'react-dom'
 import { CalendarDays, ChevronLeft, ChevronRight, X } from 'lucide-react'
 
 import { cn } from '../../lib/cn'
+import { FieldMessage } from './form-field'
 
 type DateInputProps = Omit<InputHTMLAttributes<HTMLInputElement>, 'type'> & {
   label?: string
@@ -451,11 +452,11 @@ export const DateInput = forwardRef<HTMLInputElement, DateInputProps>(function D
         </label>
       ) : null}
       {control}
-      {error ? (
-        <span className={cn('text-[11px] font-bold text-red-600', errorClassName)}>{error}</span>
-      ) : hint ? (
-        <span className={cn('text-[11px] text-slate-400', hintClassName)}>{hint}</span>
-      ) : null}
+      <FieldMessage
+        hint={hint}
+        error={error}
+        className={error ? errorClassName : hintClassName}
+      />
     </div>
   )
 })

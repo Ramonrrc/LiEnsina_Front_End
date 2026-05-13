@@ -4,11 +4,53 @@ export type EvaluationBuildMode = 'automatic_bank' | 'manual_bank' | 'teacher_cr
 export type LegacyRiskLevel = 'baixo' | 'medio' | 'alto'
 export type UserStatus = 'ativo' | 'pendente' | 'bloqueado'
 export type CalendarEventType = 'aula' | 'reuniao' | 'avaliacao' | 'prazo' | 'evento'
-export type RoleCode = 'ADMIN' | 'DIRETOR' | 'COORDENADOR' | 'PROFESSOR' | 'ALUNO' | 'RESPONSAVEL'
-export type AppSection = 'dashboard' | 'schools' | 'evaluations' | 'calendar' | 'meals' | 'access' | 'settings'
+export type RoleCode = 'ADMIN' | 'DIRETOR' | 'COORDENADOR' | 'PROFESSOR' | 'ALUNO' | 'RESPONSAVEL' | 'NUTRITIONIST'
+export type AppSection =
+  | 'dashboard'
+  | 'schools'
+  | 'classes'
+  | 'people'
+  | 'evaluations'
+  | 'calendar'
+  | 'meals'
+  | 'food-requests'
+  | 'access'
+  | 'notifications'
+  | 'settings'
+  | 'pedagogy'
+  | 'teacher-subjects'
+  | 'room-reservations'
+  | 'lesson-records'
+  | 'attendance-list'
+  | 'student-performance'
+  | 'student-attendance'
+  | 'children'
+  | 'child-attendance'
+  | 'child-performance'
 export type MealStockStatus = 'DISPONIVEL' | 'BAIXO' | 'VENCIDO' | 'DESCARTADO'
+export type MealUnit = 'KG' | 'G' | 'L' | 'ML' | 'UNIT' | 'BOX' | 'PACKAGE' | 'DOZEN'
 export type MealBudgetStatus = 'DENTRO_DO_LIMITE' | 'EM_ALERTA' | 'ULTRAPASSADO'
 export type MealManagementStatus = 'ATIVO' | 'PAUSADO' | 'ENCERRADO'
+export type FoodRequestStatus =
+  | 'PENDING_NUTRITIONIST_APPROVAL'
+  | 'APPROVED_BY_NUTRITIONIST'
+  | 'REJECTED_BY_NUTRITIONIST'
+  | 'NEEDS_ADJUSTMENT'
+  | 'PENDING_PURCHASE'
+  | 'PURCHASED'
+  | 'ADDED_TO_STOCK'
+  | 'CANCELLED'
+export type FoodRequestUrgency = 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT'
+export type MealRequestHistoryAction =
+  | 'CREATED_FOOD_REQUEST'
+  | 'UPDATED_FOOD_REQUEST'
+  | 'APPROVED_FOOD_REQUEST'
+  | 'REJECTED_FOOD_REQUEST'
+  | 'REQUESTED_FOOD_ADJUSTMENT'
+  | 'CANCELLED_FOOD_REQUEST'
+  | 'ADDED_FOOD_REQUEST_TO_STOCK'
+  | 'CORRECTED_MEAL_STOCK'
+  | 'REMOVED_MEAL_STOCK_ITEM'
 export type EducationStage = 'INFANTIL' | 'FUNDAMENTAL' | 'MEDIO' | 'EJA'
 export type QuestionType = 'MULTIPLE_CHOICE'
 export type Difficulty = 'EASY' | 'MEDIUM' | 'HARD'
@@ -22,6 +64,7 @@ export type QuestionSourceType =
   | 'GLOBAL_CURATED'
 export type QuestionVisibility = 'PRIVATE' | 'SCHOOL' | 'NETWORK' | 'GLOBAL'
 export type QuestionStatus = 'DRAFT' | 'PENDING_REVIEW' | 'APPROVED' | 'REJECTED' | 'ARCHIVED'
+export type QuestionSelectionSourceMode = 'system' | 'enem' | 'mixed'
 export type SkillRelevance = 'PRIMARY' | 'SECONDARY'
 export type DescriptorRelevance = 'PRIMARY' | 'SECONDARY'
 export type ReviewStatus = 'APPROVED' | 'REJECTED' | 'NEEDS_CHANGES'
@@ -135,10 +178,47 @@ export interface Evaluation {
   triLevel: string
   buildMode?: EvaluationBuildMode
   questionIds?: string[]
+  questionSnapshots?: Question[]
   skillCodes?: string[]
   descriptorCodes?: string[]
   sourceSummary?: string
+  createdById?: string
+  createdByName?: string
+  creatorName?: string
+  teacherName?: string
+  createdBy?: {
+    id?: string
+    name?: string
+    email?: string
+  }
 }
+
+export interface LessonRecord {
+  id: string
+  classId: string
+  subject: string
+  date: string
+  time: string
+  content: string
+  plan: string
+  resources: string
+  activity: string
+  notes: string
+}
+
+export type CreateLessonRecordPayload = Omit<LessonRecord, 'id'>
+
+export interface RoomReservation {
+  id: string
+  room: string
+  date: string
+  startTime: string
+  endTime: string
+  classId: string
+  purpose: string
+}
+
+export type CreateRoomReservationPayload = Omit<RoomReservation, 'id'>
 
 export interface CurriculumBase {
   id: string
@@ -387,6 +467,22 @@ export interface CreateQuestionRequest {
 
 export type UpdateQuestionRequest = Partial<Omit<CreateQuestionRequest, 'type' | 'sourceType'>>
 
+export interface GenerateQuestionSelectionRequest {
+  quantity: number
+  subject: string
+  gradeLevel?: string | null
+  difficulty?: Difficulty | null
+  sourceMode: QuestionSelectionSourceMode
+  skillCode?: string | null
+  descriptorCode?: string | null
+}
+
+export interface GenerateQuestionSelectionResponse {
+  questions: Question[]
+  questionIds: string[]
+  totalEligible?: number
+}
+
 export interface QuestionImportSpreadsheetRow {
   title: string
   context: string
@@ -446,6 +542,7 @@ export interface SchoolCalendarEvent {
   type: CalendarEventType
   schoolId: string
   classId: string | null
+  createdById?: string
   startsAt: string
   endsAt: string
   allDay: boolean
@@ -477,11 +574,27 @@ export interface DashboardPayload {
   alerts: Array<{ id: string; title: string; description: string; tone: 'warning' | 'danger' | 'info' }>
 }
 
+export type NotificationTone = 'warning' | 'danger' | 'info'
+export type NotificationSourceType = 'student-risk' | 'system'
+
+export interface AppNotification {
+  id: string
+  userId: string
+  title: string
+  description: string
+  tone: NotificationTone
+  sourceType: NotificationSourceType
+  sourceId: string
+  readAt: string | null
+  createdAt: string
+  updatedAt: string
+}
+
 export interface MealFood {
   id: number
   nome: string
   categoria: string
-  unidadeMedida: 'KG' | 'UN' | 'L'
+  unidadeMedida: MealUnit
   iconKey: string
   ativo: boolean
   criadoEm: string
@@ -504,7 +617,7 @@ export interface MealItem {
   nomeAlimento: string
   categoria: string
   quantidade: number
-  unidadeMedida: 'KG' | 'UN' | 'L'
+  unidadeMedida: MealUnit
   valorUnitario: number
   valorTotal: number
   dataValidade: string | null
@@ -546,7 +659,7 @@ export interface MealStockItem {
   nomeAlimento: string
   quantidadeAtual: number
   quantidadeMinima: number
-  unidadeMedida: 'KG' | 'UN' | 'L'
+  unidadeMedida: MealUnit
   dataValidade: string | null
   status: MealStockStatus
 }
@@ -583,6 +696,50 @@ export interface MealManagement {
   resumo: MealSummary
 }
 
+export interface MealFoodRequest {
+  id: string
+  schoolId: string
+  requestedBy: string
+  itemName: string
+  quantity: number
+  unit: MealUnit
+  unitPrice?: number | null
+  reason: string
+  urgencyLevel: FoodRequestUrgency
+  expirationDate: string | null
+  observation: string | null
+  status: FoodRequestStatus
+  reviewedBy?: string | null
+  reviewedAt?: string | null
+  nutritionistObservation?: string | null
+  rejectionReason?: string | null
+  suggestedQuantity?: number | null
+  suggestedUnit?: MealUnit | null
+  suggestedUnitPrice?: number | null
+  confirmedBy?: string | null
+  confirmedAt?: string | null
+  supplierName?: string | null
+  purchaseValue?: number | null
+  purchaseDate?: string | null
+  stockItemId?: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface MealRequestHistory {
+  id: string
+  action: MealRequestHistoryAction
+  entityType: 'FOOD_REQUEST' | 'MEAL_STOCK'
+  entityId: string
+  userId: string
+  userRole: RoleCode
+  schoolId: string
+  oldValue?: unknown
+  newValue?: unknown
+  description: string
+  createdAt: string
+}
+
 export interface CreateMealItemPayload {
   alimentoId: number
   quantidade: number
@@ -597,9 +754,41 @@ export interface CreateMealItemPayload {
 export interface CreateMealFoodPayload {
   nome: string
   categoria: string
-  unidadeMedida: 'KG' | 'UN' | 'L'
+  unidadeMedida: MealUnit
   iconKey?: string
   ativo?: boolean
+}
+
+export interface CreateMealFoodRequestPayload {
+  schoolId?: string
+  itemName: string
+  quantity: number
+  unit: MealUnit
+  unitPrice?: number | null
+  reason: string
+  urgencyLevel: FoodRequestUrgency
+  expirationDate?: string | null
+  observation?: string | null
+}
+
+export type UpdateMealFoodRequestPayload = Partial<CreateMealFoodRequestPayload>
+
+export interface ReviewMealFoodRequestPayload {
+  action: 'APPROVE' | 'REJECT' | 'REQUEST_ADJUSTMENT'
+  nutritionistObservation?: string | null
+  rejectionReason?: string | null
+  suggestedQuantity?: number | null
+  suggestedUnit?: MealUnit | null
+  suggestedUnitPrice?: number | null
+}
+
+export interface AddMealFoodRequestToStockPayload {
+  fornecedorNome?: string | null
+  valorUnitario?: number | null
+  dataCompra?: string | null
+  dataValidade?: string | null
+  observacao?: string | null
+  quantidadeMinima?: number | null
 }
 
 export interface CreateMealManagementPayload {
@@ -641,6 +830,8 @@ export interface BootstrapPayload {
   evaluations: Evaluation[]
   calendarEvents?: SchoolCalendarEvent[]
   mealManagements?: MealManagement[]
+  mealFoodRequests?: MealFoodRequest[]
+  mealRequestHistory?: MealRequestHistory[]
   auditEvents: AuditEvent[]
 }
 
@@ -656,17 +847,27 @@ export interface DashboardScreenPayload {
   auditEvents: AuditEvent[]
 }
 
+export interface NotificationsScreenPayload {
+  notifications: AppNotification[]
+  unreadCount: number
+  totalCount: number
+}
+
 export interface SchoolsScreenPayload {
   schools: School[]
   teachers: Teacher[]
   guardians: Guardian[]
   students: Student[]
   classes: ClassRoom[]
+  lessonRecords?: LessonRecord[]
+  roomReservations?: RoomReservation[]
 }
 
 export interface EvaluationsScreenPayload {
   evaluations: Evaluation[]
   classes: ClassRoom[]
+  schools?: School[]
+  teachers?: Teacher[]
   curriculumBases?: CurriculumBase[]
   curriculumSkills?: CurriculumSkill[]
   assessmentPrograms?: AssessmentProgram[]
@@ -676,16 +877,26 @@ export interface EvaluationsScreenPayload {
   questionImportPlans?: QuestionImportPlan[]
 }
 
+export interface PedagogyScreenPayload extends SchoolsScreenPayload {
+  evaluations: Evaluation[]
+  curriculumSkills?: CurriculumSkill[]
+  assessmentDescriptors?: AssessmentDescriptor[]
+  questionBank?: Question[]
+}
+
 export interface CalendarScreenPayload {
   calendarEvents: SchoolCalendarEvent[]
   schools: School[]
   classes: ClassRoom[]
   evaluations: Evaluation[]
+  scope?: SchoolsScreenPayload
 }
 
 export interface MealsScreenPayload {
   schools: School[]
   mealManagements: MealManagement[]
+  foodRequests: MealFoodRequest[]
+  mealRequestHistory: MealRequestHistory[]
 }
 
 export interface MealManagementsPagePayload {
@@ -697,6 +908,31 @@ export interface MealManagementsPagePayload {
     total: number
     totalPages: number
   }
+}
+
+export interface PaginationMeta {
+  page: number
+  limit: number
+  total: number
+  totalPages: number
+}
+
+export interface PeoplePageQuery {
+  page: number
+  limit: number
+  search?: string
+  schoolId?: string
+  discipline?: string
+}
+
+export interface TeachersPagePayload {
+  teachers: Teacher[]
+  pagination: PaginationMeta
+}
+
+export interface StudentsPagePayload {
+  students: Student[]
+  pagination: PaginationMeta
 }
 
 export interface AccessScreenPayload {
@@ -712,9 +948,23 @@ export interface SettingsScreenPayload {
 export interface ScreenPayloads {
   dashboard: DashboardScreenPayload
   schools: SchoolsScreenPayload
+  classes: SchoolsScreenPayload
+  people: SchoolsScreenPayload
   evaluations: EvaluationsScreenPayload
   calendar: CalendarScreenPayload
   meals: MealsScreenPayload
+  'food-requests': MealsScreenPayload
   access: AccessScreenPayload
+  notifications: NotificationsScreenPayload
   settings: SettingsScreenPayload
+  pedagogy: PedagogyScreenPayload
+  'teacher-subjects': SchoolsScreenPayload
+  'room-reservations': SchoolsScreenPayload
+  'lesson-records': SchoolsScreenPayload
+  'attendance-list': SchoolsScreenPayload
+  'student-performance': SchoolsScreenPayload
+  'student-attendance': SchoolsScreenPayload
+  children: SchoolsScreenPayload
+  'child-attendance': SchoolsScreenPayload
+  'child-performance': SchoolsScreenPayload
 }

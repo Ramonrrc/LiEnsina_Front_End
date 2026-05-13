@@ -4,6 +4,7 @@ import { createCalendar, viewDay, viewList, viewMonthGrid, viewWeek } from '@sch
 import type { CalendarApp, CalendarEventExternal } from '@schedule-x/calendar'
 import '@schedule-x/theme-default/dist/index.css'
 import { Temporal } from 'temporal-polyfill'
+import { z } from 'zod'
 import {
   ChevronLeft, ChevronRight, Clock, MapPin,
   Plus, RefreshCcw, Check, Trash2, X, XCircle,
@@ -13,7 +14,11 @@ import {
 } from 'lucide-react'
 
 import { CompactSelect, type CompactSelectOption } from '../components/ui/compact-select'
+import { ConfirmDialog } from '../components/ui/confirm-dialog'
 import DateInput from '../components/ui/date-input'
+import { FieldMessage, fieldStateClass, zodFieldErrors, type FieldErrors } from '../components/ui/form-field'
+import { PageTitleBar } from '../components/ui/page-title-bar'
+import { formatClassGrade } from '../class-grade-options'
 import type {
   CalendarEventType,
   ClassRoom,
@@ -99,6 +104,21 @@ type CalendarFormState = {
   location: string
   description: string
 }
+type CalendarFormField = keyof CalendarFormState
+
+const calendarFormSchema = z.object({
+  title: z.string().trim().min(1, 'Informe o título do evento.'),
+  type: z.enum(['aula', 'reuniao', 'avaliacao', 'prazo', 'evento']),
+  schoolId: z.string().trim().min(1, 'Selecione uma escola para o evento.'),
+  classId: z.string().trim(),
+  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Informe uma data inicial válida.'),
+  startTime: z.string().regex(/^\d{2}:\d{2}$/, 'Informe um horário inicial válido.'),
+  endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Informe uma data final válida.'),
+  endTime: z.string().regex(/^\d{2}:\d{2}$/, 'Informe um horário final válido.'),
+  allDay: z.boolean(),
+  location: z.string().trim().max(120, 'Local deve ter no máximo 120 caracteres.'),
+  description: z.string().trim().max(500, 'Descrição deve ter no máximo 500 caracteres.'),
+})
 
 type BrazilHoliday = {
   date: string
@@ -117,6 +137,7 @@ type VisualCalendarEvent = {
   allDay: boolean
   schoolId?: string | null
   classId?: string | null
+  createdById?: string
   location?: string
   description?: string
 }
@@ -154,6 +175,33 @@ const visualTypeLabels: Record<VisualEventType, string> = {
   prazo:     'Prazo',
   feriado:   'Feriado',
   simulado:  'Simulado',
+}
+
+const calendarTimeOptions: CompactSelectOption[] = Array.from({ length: 23 }, (_, index) => {
+  const totalMinutes = 7 * 60 + index * 30
+  const hour = Math.floor(totalMinutes / 60)
+  const minutes = totalMinutes % 60
+  const value = `${String(hour).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`
+  return { value, label: `${hour}:${String(minutes).padStart(2, '0')}` }
+})
+const calendarStartTimeOptions = calendarTimeOptions.slice(0, -1)
+
+function getNextCalendarTime(time: string) {
+  const currentIndex = calendarTimeOptions.findIndex((option) => option.value === time)
+  if (currentIndex < 0) return '07:30'
+  return calendarTimeOptions[Math.min(currentIndex + 1, calendarTimeOptions.length - 1)]?.value ?? '07:30'
+}
+
+function getCalendarEndTimeOptions(startTime: string, sameDay: boolean) {
+  return sameDay ? calendarTimeOptions.filter((option) => option.value > startTime) : calendarTimeOptions
+}
+
+function isCalendarStartTime(value: string) {
+  return calendarStartTimeOptions.some((option) => option.value === value)
+}
+
+function isCalendarTime(value: string) {
+  return calendarTimeOptions.some((option) => option.value === value)
 }
 
 const calendarColors: Record<VisualEventType, { main: string; bg: string; text: string }> = {
@@ -418,9 +466,15 @@ export default function CalendarView({
   calendarEvents, schools, classes, evaluations,
   onCreate, onUpdate, onDelete,
 }: CalendarViewProps) {
-  const roleCode = (currentRole?.code ?? currentRole?.name ?? '').toUpperCase()
+  const roleCode = (currentRole?.code ?? currentRole?.name ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
   const isAdminAccess = roleCode.includes('ADMIN')
   const isProfessorAccess = roleCode.includes('PROFESSOR')
+  const isStudentAccess = roleCode.includes('ALUNO')
+  const isGuardianAccess = roleCode.includes('RESPONSAVEL') || roleCode.includes('GUARDIAN')
+  const isFamilyScopedAccess = isStudentAccess || isGuardianAccess
   const linkedTeacherId = currentUser.linkedTeacherId ?? ''
   const linkedProfessorClasses = useMemo(
     () => isProfessorAccess
@@ -435,8 +489,18 @@ export default function CalendarView({
     () => new Set(linkedProfessorClasses.map((classRoom) => classRoom.id)),
     [linkedProfessorClasses],
   )
+  const currentCreatorIds = useMemo(
+    () => new Set([
+      currentUser.id,
+      currentUser.linkedTeacherId,
+      currentUser.linkedStudentId,
+      currentUser.linkedGuardianId,
+    ].filter((id): id is string => Boolean(id))),
+    [currentUser.id, currentUser.linkedGuardianId, currentUser.linkedStudentId, currentUser.linkedTeacherId],
+  )
   const hasCalendarAccess = isAdminAccess || isProfessorAccess
   const canCreateEvent = isAdminAccess || (isProfessorAccess && linkedProfessorClasses.length > 0)
+  const showCreateEventActions = hasCalendarAccess
   const createEventHint = canCreateEvent
     ? 'Crie eventos, reunioes, prazos e muito mais.'
     : isProfessorAccess
@@ -444,19 +508,26 @@ export default function CalendarView({
       : 'Apenas Admin e Professor podem criar eventos.'
   const accessibleSchools = useMemo(() => {
     if (isAdminAccess) return schools
-    if (!isProfessorAccess) return []
+    if (!isProfessorAccess) return schools
     const ids = new Set(linkedProfessorClasses.map((classRoom) => classRoom.schoolId))
     if (ids.size === 0 && currentUser.schoolId) ids.add(currentUser.schoolId)
     return schools.filter((school) => ids.has(school.id))
   }, [currentUser.schoolId, isAdminAccess, isProfessorAccess, linkedProfessorClasses, schools])
   const professorDefaultSchoolId = accessibleSchools[0]?.id ?? ''
   const defaultSchoolId = isProfessorAccess ? professorDefaultSchoolId : ''
+  const defaultSchoolFilter = isProfessorAccess
+    ? professorDefaultSchoolId
+    : isFamilyScopedAccess && accessibleSchools.length === 1
+      ? accessibleSchools[0]?.id ?? 'all'
+      : 'all'
 
   const [loading, setLoading]                 = useState(true)
   const [draft, setDraft]                     = useState<CalendarFormState>(() => createEmptyForm(defaultSchoolId))
   const [editingId, setEditingId]             = useState<string | null>(null)
   const [detailModal, setDetailModal]         = useState<DetailModalState | null>(null)
-  const [schoolFilter, setSchoolFilter]       = useState(isProfessorAccess ? professorDefaultSchoolId : 'all')
+  const [deleteTarget, setDeleteTarget]       = useState<VisualCalendarEvent | null>(null)
+  const [deletingEventId, setDeletingEventId] = useState<string | null>(null)
+  const [schoolFilter, setSchoolFilter]       = useState(defaultSchoolFilter)
   const [classFilter, setClassFilter]         = useState('all')
   const [typeFilter, setTypeFilter]           = useState<VisualEventType | 'all'>('all')
   const [year, setYear]                       = useState(new Date().getFullYear())
@@ -464,6 +535,7 @@ export default function CalendarView({
   const [isLoadingHolidays, setIsLoadingHolidays] = useState(false)
   const [holidayError, setHolidayError]       = useState<string | null>(null)
   const [formError, setFormError]             = useState<string | null>(null)
+  const [formFieldErrors, setFormFieldErrors] = useState<FieldErrors<CalendarFormField>>({})
   const [isEventModalOpen, setIsEventModalOpen] = useState(false)
   const [isCompactCalendar, setIsCompactCalendar] = useState(false)
 
@@ -503,6 +575,25 @@ export default function CalendarView({
       setClassFilter('all')
     }
   }, [accessibleSchools, isProfessorAccess, professorDefaultSchoolId, schoolFilter])
+
+  useEffect(() => {
+    if (isProfessorAccess) return
+
+    if (isFamilyScopedAccess && accessibleSchools.length === 1) {
+      const onlySchoolId = accessibleSchools[0].id
+      if (schoolFilter !== onlySchoolId) {
+        setSchoolFilter(onlySchoolId)
+        setClassFilter('all')
+      }
+      return
+    }
+
+    const hasSelectedSchool = schoolFilter === 'all' || accessibleSchools.some((school) => school.id === schoolFilter)
+    if (!hasSelectedSchool) {
+      setSchoolFilter('all')
+      setClassFilter('all')
+    }
+  }, [accessibleSchools, isFamilyScopedAccess, isProfessorAccess, schoolFilter])
 
   useEffect(() => {
     if (!isProfessorAccess) return
@@ -563,6 +654,7 @@ export default function CalendarView({
       title: ev.title, type: ev.type,
       startsAt: ev.startsAt, endsAt: ev.endsAt, allDay: ev.allDay,
       schoolId: ev.schoolId, classId: ev.classId,
+      createdById: ev.createdById,
       location: ev.location, description: ev.description,
     }))
     return [...schoolEvents, ...evaluationEvents, ...holidayEvents]
@@ -570,7 +662,7 @@ export default function CalendarView({
 
   const accessibleVisualEvents = useMemo(() => {
     if (isAdminAccess) return visualEvents
-    if (!isProfessorAccess) return []
+    if (!isProfessorAccess) return visualEvents
     const accessibleSchoolIds = new Set(accessibleSchools.map((school) => school.id))
     return visualEvents.filter((event) => {
       if (event.source === 'holiday') return true
@@ -664,20 +756,27 @@ export default function CalendarView({
       : [],
     [classes, draft.schoolId, isProfessorAccess, linkedProfessorClassIds],
   )
+  const isSameDayEvent = draft.startDate === draft.endDate
+  const calendarEndTimeOptions = useMemo(
+    () => getCalendarEndTimeOptions(draft.startTime, isSameDayEvent),
+    [draft.startTime, isSameDayEvent],
+  )
 
   /* ── Select options ── */
   const schoolFilterOptions = useMemo<Array<CompactSelectOption<string>>>(
     () => {
-      if (!hasCalendarAccess) {
-        return [{ value: 'all', label: 'Sem acesso ao calendario', disabled: true }]
+      const allSchoolsOption = {
+        value: 'all',
+        label: isFamilyScopedAccess ? 'Todas as escolas dos filhos' : 'Todas as escolas',
       }
+      const shouldShowAllSchoolsOption = !isProfessorAccess && (!isFamilyScopedAccess || accessibleSchools.length !== 1)
 
       return [
-        ...(isProfessorAccess ? [] : [{ value: 'all', label: 'Todas as escolas' }]),
+        ...(shouldShowAllSchoolsOption ? [allSchoolsOption] : []),
         ...accessibleSchools.map((s) => ({ value: s.id, label: s.name })),
       ]
     },
-    [accessibleSchools, hasCalendarAccess, isProfessorAccess],
+    [accessibleSchools, isFamilyScopedAccess, isProfessorAccess],
   )
 
   const classFilterOptions = useMemo<Array<CompactSelectOption<string>>>(
@@ -695,7 +794,7 @@ export default function CalendarView({
         ...classesAvailableForSelectedSchool.map((classRoom) => ({
           value: classRoom.id,
           label: classRoom.name,
-          description: `${classRoom.grade} · ${classRoom.shift}`,
+          description: `${formatClassGrade(classRoom.grade)} · ${classRoom.shift}`,
         })),
       ]
     },
@@ -737,7 +836,7 @@ export default function CalendarView({
       ...filteredClassesForDraft.map((c) => ({
         value: c.id,
         label: c.name,
-        description: `${c.grade} · ${c.shift}`,
+        description: `${formatClassGrade(c.grade)} · ${c.shift}`,
       })),
     ],
     [draft.schoolId, filteredClassesForDraft, isProfessorAccess],
@@ -758,16 +857,15 @@ export default function CalendarView({
       .filter((ev) => eventMatchesDate(ev, date))
       .sort((a, b) => a.startsAt.localeCompare(b.startsAt) || a.title.localeCompare(b.title))
   }
-  function canEditSchoolEvent(event: Pick<SchoolCalendarEvent, 'schoolId' | 'classId'> | VisualCalendarEvent) {
+  function canEditSchoolEvent(event: Pick<SchoolCalendarEvent, 'createdById'> | VisualCalendarEvent) {
     if (isAdminAccess) return true
-    if (!isProfessorAccess) return false
-    return Boolean(event.classId && linkedProfessorClassIds.has(event.classId))
+    return Boolean(event.createdById && currentCreatorIds.has(event.createdById))
   }
 
   /* ── Modal actions ── */
   function openDetailModal(date: string, events: VisualCalendarEvent[]) {
     if (events.length === 0) return
-    setEditingId(null); setFormError(null); setIsEventModalOpen(false)
+    setEditingId(null); setFormError(null); setFormFieldErrors({}); setIsEventModalOpen(false)
     setDetailModal({ date, events })
   }
   function closeDetailModal() { setDetailModal(null) }
@@ -778,18 +876,27 @@ export default function CalendarView({
     closeDetailModal(); startEditing(schoolEvent)
   }
 
-  async function deleteSchoolEventFromDetail(event: VisualCalendarEvent) {
+  function deleteSchoolEventFromDetail(event: VisualCalendarEvent) {
     if (event.source !== 'school' || !canEditSchoolEvent(event)) return
-    if (!window.confirm('Excluir este evento do calendário escolar?')) return
+    setDeleteTarget(event)
+  }
 
-    await onDelete(event.sourceId)
-    setEditingId(null)
-    setFormError(null)
-    setDetailModal((current) => {
-      if (!current) return current
-      const remainingEvents = current.events.filter((item) => item.id !== event.id)
-      return remainingEvents.length > 0 ? { ...current, events: remainingEvents } : null
-    })
+  async function confirmDeleteSchoolEvent() {
+    if (!deleteTarget || deleteTarget.source !== 'school' || !canEditSchoolEvent(deleteTarget)) return
+    setDeletingEventId(deleteTarget.sourceId)
+    try {
+      await onDelete(deleteTarget.sourceId)
+      setEditingId(null)
+      setFormError(null)
+      setDetailModal((current) => {
+        if (!current) return current
+        const remainingEvents = current.events.filter((item) => item.id !== deleteTarget.id)
+        return remainingEvents.length > 0 ? { ...current, events: remainingEvents } : null
+      })
+      setDeleteTarget(null)
+    } finally {
+      setDeletingEventId(null)
+    }
   }
 
   function startEditing(event: SchoolCalendarEvent) {
@@ -799,7 +906,7 @@ export default function CalendarView({
     }
     const start = splitDateTime(event.startsAt, '08:00')
     const end   = splitDateTime(event.endsAt, event.allDay ? '23:59' : '09:00')
-    setEditingId(event.id); setDetailModal(null); setFormError(null); setIsEventModalOpen(true)
+    setEditingId(event.id); setDetailModal(null); setFormError(null); setFormFieldErrors({}); setIsEventModalOpen(true)
     setDraft({
       title: event.title, type: event.type, schoolId: event.schoolId,
       classId: event.classId ?? '', startDate: start.date, startTime: start.time,
@@ -813,12 +920,12 @@ export default function CalendarView({
       setFormError('Seu acesso nao permite criar eventos neste calendario.')
       return
     }
-    setEditingId(null); setDetailModal(null); setFormError(null)
+    setEditingId(null); setDetailModal(null); setFormError(null); setFormFieldErrors({})
     setDraft(createEmptyForm(defaultSchoolId)); setIsEventModalOpen(true)
   }
 
   function resetForm() {
-    setEditingId(null); setDetailModal(null); setFormError(null)
+    setEditingId(null); setDetailModal(null); setFormError(null); setFormFieldErrors({})
     setIsEventModalOpen(false); setDraft(createEmptyForm(defaultSchoolId))
   }
 
@@ -835,10 +942,89 @@ export default function CalendarView({
     return null
   }
 
+  function validateDraftWithZod() {
+    const parsed = calendarFormSchema.safeParse(draft)
+    if (!parsed.success) {
+      const errors = zodFieldErrors<CalendarFormField>(parsed.error)
+      return {
+        message: Object.values(errors)[0] ?? 'Revise os campos do evento.',
+        errors,
+      }
+    }
+
+    const errors: FieldErrors<CalendarFormField> = {}
+    if (isProfessorAccess && !draft.classId) {
+      errors.classId = 'Selecione uma turma vinculada para que os alunos vejam o evento.'
+    }
+    if (draft.classId && !filteredClassesForDraft.some((classRoom) => classRoom.id === draft.classId)) {
+      errors.classId = 'Selecione uma turma disponivel para esta escola.'
+    }
+    if (draft.endDate < draft.startDate) {
+      errors.endDate = 'A data final precisa ser igual ou posterior a data inicial.'
+    }
+    if (!draft.allDay && !isCalendarStartTime(draft.startTime)) {
+      errors.startTime = 'Selecione um horario inicial entre 7:00 e 17:30.'
+    }
+    if (!draft.allDay && !isCalendarTime(draft.endTime)) {
+      errors.endTime = 'Selecione um horario final entre 7:00 e 18:00.'
+    }
+    if (!draft.allDay && draft.startDate === draft.endDate && draft.endTime <= draft.startTime) {
+      errors.endTime = 'O horario final precisa ser posterior ao horario inicial.'
+    }
+
+    const message = Object.values(errors)[0]
+    return message ? { message, errors } : null
+  }
+
+  function updateDraftField<K extends keyof CalendarFormState>(field: K, value: CalendarFormState[K]) {
+    setFormFieldErrors((current) => ({ ...current, [field]: undefined }))
+    setDraft((current) => ({ ...current, [field]: value }))
+  }
+
+  function handleStartTimeChange(startTime: string) {
+    setFormFieldErrors((current) => ({ ...current, startTime: undefined, endTime: undefined }))
+    setDraft((current) => ({
+      ...current,
+      startTime,
+      endTime: current.startDate === current.endDate && current.endTime <= startTime
+        ? getNextCalendarTime(startTime)
+        : current.endTime,
+    }))
+  }
+
+  function handleStartDateChange(startDate: string) {
+    setFormFieldErrors((current) => ({ ...current, startDate: undefined, endDate: undefined, endTime: undefined }))
+    setDraft((current) => {
+      const endDate = current.endDate < startDate ? startDate : current.endDate
+      const endTime = endDate === startDate && current.endTime <= current.startTime
+        ? getNextCalendarTime(current.startTime)
+        : current.endTime
+
+      return { ...current, startDate, endDate, endTime }
+    })
+  }
+
+  function handleEndDateChange(endDate: string) {
+    setFormFieldErrors((current) => ({ ...current, endDate: undefined, endTime: undefined }))
+    setDraft((current) => ({
+      ...current,
+      endDate,
+      endTime: endDate === current.startDate && current.endTime <= current.startTime
+        ? getNextCalendarTime(current.startTime)
+        : current.endTime,
+    }))
+  }
+
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
-    const error = validateDraft()
-    if (error) { setFormError(error); return }
+    const validation = validateDraftWithZod()
+    if (validation) {
+      setFormError(validation.message)
+      setFormFieldErrors(validation.errors)
+      return
+    }
+    setFormError(null)
+    setFormFieldErrors({})
     const payload: Partial<SchoolCalendarEvent> = {
       title: draft.title.trim(), type: draft.type, schoolId: draft.schoolId,
       classId: draft.classId || null,
@@ -1096,20 +1282,14 @@ export default function CalendarView({
       <div className="cv-page font-['DM_Sans',system-ui,sans-serif] text-slate-900 bg-slate-50 min-h-screen">
 
         {/* ══ HEADER BAR ══ */}
-        <div className="cv-main-header cv-section flex items-center justify-between gap-4 flex-wrap border-b border-slate-400 bg-white px-[clamp(16px,3vw,40px)] py-4">
-          <div className="flex items-center gap-3">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-600 shadow-sm">
-              <CalendarDays size={15} className="text-white" />
-            </div>
-            <div>
-              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-indigo-500">Agenda da rede</p>
-              <p className="font-['Sora',system-ui,sans-serif] text-lg font-bold text-slate-900 leading-none mt-0.5">
-                Calendário escolar
-              </p>
-            </div>
-          </div>
-
-          <div className="cv-header-actions flex items-center gap-2 flex-wrap">
+        <div className="px-[clamp(16px,3vw,40px)] pt-5">
+          <PageTitleBar
+            className="cv-main-header cv-section"
+            label="Agenda da rede"
+            title="Calendário escolar"
+            icon={<CalendarDays />}
+            actions={(
+              <div className="cv-header-actions flex items-center gap-2 flex-wrap">
             {/* Year nav */}
             <div className="cv-year-control flex items-center bg-slate-50 border border-slate-400 rounded-sm overflow-hidden">
               <button
@@ -1143,16 +1323,9 @@ export default function CalendarView({
             >
               <RefreshCcw size={13} />Hoje
             </button>
-
-            <button
-              type="button"
-              onClick={openCreateModal}
-              disabled={!canCreateEvent}
-              className="cv-header-action-button inline-flex items-center gap-1.5 bg-indigo-600 text-white text-[13px] font-bold px-4 py-1.5 rounded-sm shadow-sm transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500"
-            >
-              <Plus size={15} />Novo evento
-            </button>
-          </div>
+              </div>
+            )}
+          />
         </div>
 
         {/* ══ HOLIDAY ERROR ══ */}
@@ -1196,10 +1369,10 @@ export default function CalendarView({
           )}
 
           {/* ══ CALLOUT BAR ══ */}
-          <div className="cv-callout cv-section bg-slate-900 rounded-xl px-5 py-4 shadow-md flex items-center justify-between gap-4 flex-wrap">
+          {showCreateEventActions ? <div className="cv-callout cv-section bg-white border border-slate-400 rounded-xl px-5 py-4 shadow-md flex items-center justify-between gap-4 flex-wrap">
             <div className="min-w-0">
-              <p className="text-[10px] font-black tracking-[0.18em] uppercase text-slate-400">Evento escolar</p>
-              <h3 className="font-['Sora',system-ui,sans-serif] text-base font-bold text-white leading-snug mt-0.5">
+              <p className="text-[10px] font-black tracking-[0.18em] uppercase text-indigo-500">Evento escolar</p>
+              <h3 className="font-['Sora',system-ui,sans-serif] text-base font-bold text-slate-800 leading-snug mt-0.5">
                 Adicionar ao calendário
               </h3>
               <p className="text-[13px] text-slate-400 mt-0.5">
@@ -1214,7 +1387,7 @@ export default function CalendarView({
             >
               <Plus size={15} />Novo evento
             </button>
-          </div>
+          </div> : null}
 
           {/* ══ CALENDAR PANEL ══ */}
           <section className="cv-section overflow-hidden rounded-xl border border-slate-400 bg-white shadow-sm">
@@ -1227,7 +1400,7 @@ export default function CalendarView({
                 <div>
                   <p className="text-[10px] font-black uppercase tracking-[0.18em] text-indigo-500">Agenda visual</p>
                   <p className="font-['Sora',system-ui,sans-serif] text-sm font-bold text-slate-900 leading-none mt-0.5">
-                    Calendário unificado
+                    Calendário
                   </p>
                 </div>
               </div>
@@ -1242,7 +1415,7 @@ export default function CalendarView({
                       setClassFilter('all')
                     }}
                     options={schoolFilterOptions}
-                    disabled={!hasCalendarAccess || (isProfessorAccess && accessibleSchools.length <= 1)}
+                    disabled={isProfessorAccess && accessibleSchools.length <= 1}
                     wrapperClassName="flex self-stretch items-center"
                     className="bg-transparent border-none outline-none text-[13px] font-semibold text-slate-900 cursor-pointer appearance-none pr-1 disabled:cursor-not-allowed disabled:text-slate-400"
                     dropdownAnchor="parent"
@@ -1497,10 +1670,11 @@ export default function CalendarView({
                         </button>
                         <button
                           type="button"
-                          onClick={() => void deleteSchoolEventFromDetail(event)}
+                          disabled={deletingEventId === event.sourceId}
+                          onClick={() => deleteSchoolEventFromDetail(event)}
                           className="inline-flex items-center gap-1.5 bg-red-50 text-red-700 border border-red-300 text-[12px] font-bold px-3 py-1.5 rounded-sm hover:bg-red-100 hover:border-red-400 transition-colors"
                         >
-                          <Trash2 size={13} />Excluir
+                          <Trash2 size={13} />{deletingEventId === event.sourceId ? 'Excluindo' : 'Excluir'}
                         </button>
                       </div>
                     )}
@@ -1542,6 +1716,19 @@ export default function CalendarView({
           </Modal>
         )}
 
+        {deleteTarget && (
+          <ConfirmDialog
+            title="Excluir evento"
+            description={`Excluir "${deleteTarget.title}" do calendario escolar? Esta acao nao pode ser desfeita.`}
+            confirmLabel="Excluir evento"
+            loading={deletingEventId === deleteTarget.sourceId}
+            onCancel={() => {
+              if (!deletingEventId) setDeleteTarget(null)
+            }}
+            onConfirm={confirmDeleteSchoolEvent}
+          />
+        )}
+
         {/* ══ CREATE/EDIT EVENT MODAL ══ */}
         {isEventModalOpen && (
           <Modal
@@ -1550,7 +1737,7 @@ export default function CalendarView({
             subtitle={editingId ? 'Editar evento' : 'Novo evento'}
             onClose={resetForm}
           >
-            <form onSubmit={handleSubmit}>
+            <form onSubmit={handleSubmit} noValidate>
               <div className="px-6 py-5 flex flex-col gap-4">
                 {formError && (
                   <div className="flex items-center gap-2 px-3.5 py-2.5 bg-red-50 border border-red-300 rounded-sm text-[13px] text-red-700 font-semibold">
@@ -1566,12 +1753,14 @@ export default function CalendarView({
                     <label className={labelCls} htmlFor="cv-title">Título</label>
                     <input
                       id="cv-title"
-                      className={inputCls}
+                      className={`${inputCls} ${fieldStateClass(formFieldErrors.title)}`}
                       value={draft.title}
-                      onChange={(e) => setDraft({ ...draft, title: e.target.value })}
+                      onChange={(e) => updateDraftField('title', e.target.value)}
                       placeholder="Nome do evento"
+                      aria-invalid={Boolean(formFieldErrors.title) || undefined}
                       required
                     />
+                    <FieldMessage hint="Digite um nome curto para identificar o evento na agenda." error={formFieldErrors.title} />
                   </div>
 
                   {/* Type */}
@@ -1579,10 +1768,12 @@ export default function CalendarView({
                     <label className={labelCls} htmlFor="cv-type">Tipo</label>
                     <CompactSelect<CalendarEventType>
                       id="cv-type"
-                      className={inputCls}
+                      className={`${inputCls} ${fieldStateClass(formFieldErrors.type)}`}
                       value={draft.type}
-                      onChange={(type) => setDraft({ ...draft, type })}
+                      onChange={(type) => updateDraftField('type', type)}
                       options={eventTypeOptions}
+                      hint="Escolha a categoria que melhor descreve o evento."
+                      error={formFieldErrors.type}
                       dropdownMinWidth={190}
                     />
                   </div>
@@ -1592,10 +1783,15 @@ export default function CalendarView({
                     <label className={labelCls} htmlFor="cv-school">Escola</label>
                     <CompactSelect
                       id="cv-school"
-                      className={inputCls}
+                      className={`${inputCls} ${fieldStateClass(formFieldErrors.schoolId)}`}
                       value={draft.schoolId}
-                      onChange={(schoolId) => setDraft({ ...draft, schoolId, classId: '' })}
+                      onChange={(schoolId) => {
+                        setFormFieldErrors((current) => ({ ...current, schoolId: undefined, classId: undefined }))
+                        setDraft({ ...draft, schoolId, classId: '' })
+                      }}
                       options={schoolOptions}
+                      hint="Selecione a escola responsável por este evento."
+                      error={formFieldErrors.schoolId}
                       disabled={isProfessorAccess && accessibleSchools.length <= 1}
                       dropdownMinWidth={260}
                     />
@@ -1606,10 +1802,12 @@ export default function CalendarView({
                     <label className={labelCls} htmlFor="cv-class">Turma</label>
                     <CompactSelect
                       id="cv-class"
-                      className={inputCls}
+                      className={`${inputCls} ${fieldStateClass(formFieldErrors.classId)}`}
                       value={draft.classId}
-                      onChange={(classId) => setDraft({ ...draft, classId })}
+                      onChange={(classId) => updateDraftField('classId', classId)}
                       options={classOptions}
+                      hint={isProfessorAccess ? 'Selecione a turma vinculada que verá o evento.' : 'Opcional: limite o evento a uma turma específica.'}
+                      error={formFieldErrors.classId}
                       disabled={!draft.schoolId || filteredClassesForDraft.length === 0}
                       dropdownMinWidth={260}
                     />
@@ -1627,11 +1825,12 @@ export default function CalendarView({
                       <input
                         type="checkbox"
                         checked={draft.allDay}
-                        onChange={(e) => setDraft({ ...draft, allDay: e.target.checked })}
+                        onChange={(e) => updateDraftField('allDay', e.target.checked)}
                         className="w-4 h-4 accent-indigo-600 cursor-pointer rounded-sm"
                       />
                       Dia inteiro
                     </label>
+                    <FieldMessage hint="Marque quando o evento ocupar o dia todo e não precisar de horários." error={formFieldErrors.allDay} />
                   </div>
 
                   {/* Start date */}
@@ -1639,13 +1838,11 @@ export default function CalendarView({
                     <label className={labelCls} htmlFor="cv-start-date">Data de início</label>
                     <DateInput
                       id="cv-start-date"
-                      className={inputCls}
+                      className={`${inputCls} ${fieldStateClass(formFieldErrors.startDate)}`}
                       value={draft.startDate}
-                      onChange={(e) => setDraft({
-                        ...draft,
-                        startDate: e.target.value,
-                        endDate: draft.endDate < e.target.value ? e.target.value : draft.endDate,
-                      })}
+                      onChange={(e) => handleStartDateChange(e.target.value)}
+                      hint="Selecione a data em que o evento começa."
+                      error={formFieldErrors.startDate}
                       required
                     />
                   </div>
@@ -1654,13 +1851,16 @@ export default function CalendarView({
                   {!draft.allDay && (
                     <div className="flex flex-col gap-1.5">
                       <label className={labelCls} htmlFor="cv-start-time">Horário inicial</label>
-                      <input
+                      <CompactSelect
                         id="cv-start-time"
-                        type="time"
-                        className={inputCls}
+                        className={`${inputCls} ${fieldStateClass(formFieldErrors.startTime)}`}
                         value={draft.startTime}
-                        onChange={(e) => setDraft({ ...draft, startTime: e.target.value })}
-                        required
+                        onChange={handleStartTimeChange}
+                        options={calendarStartTimeOptions}
+                        ariaLabel="Horario inicial do evento"
+                        hint="Escolha quando o evento comeca."
+                        error={formFieldErrors.startTime}
+                        dropdownWidth="trigger"
                       />
                     </div>
                   )}
@@ -1670,9 +1870,11 @@ export default function CalendarView({
                     <label className={labelCls} htmlFor="cv-end-date">Data de término</label>
                     <DateInput
                       id="cv-end-date"
-                      className={inputCls}
+                      className={`${inputCls} ${fieldStateClass(formFieldErrors.endDate)}`}
                       value={draft.endDate}
-                      onChange={(e) => setDraft({ ...draft, endDate: e.target.value })}
+                      onChange={(e) => handleEndDateChange(e.target.value)}
+                      hint="Selecione a data em que o evento termina."
+                      error={formFieldErrors.endDate}
                       required
                     />
                   </div>
@@ -1681,13 +1883,16 @@ export default function CalendarView({
                   {!draft.allDay && (
                     <div className="flex flex-col gap-1.5">
                       <label className={labelCls} htmlFor="cv-end-time">Horário final</label>
-                      <input
+                      <CompactSelect
                         id="cv-end-time"
-                        type="time"
-                        className={inputCls}
+                        className={`${inputCls} ${fieldStateClass(formFieldErrors.endTime)}`}
                         value={draft.endTime}
-                        onChange={(e) => setDraft({ ...draft, endTime: e.target.value })}
-                        required
+                        onChange={(endTime) => updateDraftField('endTime', endTime)}
+                        options={calendarEndTimeOptions}
+                        ariaLabel="Horario final do evento"
+                        hint="Escolha um horario posterior ao inicio."
+                        error={formFieldErrors.endTime}
+                        dropdownWidth="trigger"
                       />
                     </div>
                   )}
@@ -1697,11 +1902,13 @@ export default function CalendarView({
                     <label className={labelCls} htmlFor="cv-location">Local</label>
                     <input
                       id="cv-location"
-                      className={inputCls}
+                      className={`${inputCls} ${fieldStateClass(formFieldErrors.location)}`}
                       value={draft.location}
-                      onChange={(e) => setDraft({ ...draft, location: e.target.value })}
+                      onChange={(e) => updateDraftField('location', e.target.value)}
+                      aria-invalid={Boolean(formFieldErrors.location) || undefined}
                       placeholder="Auditório, quadra, sala 2..."
                     />
+                    <FieldMessage hint="Opcional: diga onde o evento acontecerá." error={formFieldErrors.location} />
                   </div>
 
                   {/* Description */}
@@ -1709,12 +1916,14 @@ export default function CalendarView({
                     <label className={labelCls} htmlFor="cv-desc">Descrição</label>
                     <textarea
                       id="cv-desc"
-                      className={`${inputCls} resize-y min-h-[80px] leading-relaxed`}
+                      className={`${inputCls} min-h-[80px] leading-relaxed ${fieldStateClass(formFieldErrors.description)}`}
                       value={draft.description}
-                      onChange={(e) => setDraft({ ...draft, description: e.target.value })}
+                      onChange={(e) => updateDraftField('description', e.target.value)}
                       rows={3}
                       placeholder="Detalhes adicionais sobre o evento..."
+                      aria-invalid={Boolean(formFieldErrors.description) || undefined}
                     />
+                    <FieldMessage hint="Opcional: escreva orientações ou contexto para quem verá a agenda." error={formFieldErrors.description} />
                   </div>
 
                 </div>

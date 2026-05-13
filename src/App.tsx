@@ -1,34 +1,50 @@
 import { lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   ApiError,
+  addMealFoodRequestToStock,
   createClassRoom,
   createGuardian,
   createCalendarEvent,
   createEvaluation,
+  createLessonRecord,
   createQuestion,
+  generateQuestionSelection,
   createMealItem,
+  createMealManagement,
+  createMealFoodRequest,
+  createRoomReservation,
   createSchool,
   createStudent,
   createTeacher,
   deleteCalendarEvent,
   deleteEvaluation,
+  deleteQuestion,
+  deleteMealFoodRequest,
   loadAccessScreen,
   loadCalendarScreen,
   loadDashboardScreen,
   loadEvaluationsScreen,
   loadMealsScreen,
+  loadNotificationsScreen,
   loadSchoolsScreen,
   loadSession,
   loadSettingsScreen,
+  listRoomReservations,
+  listStudentsPage,
+  listTeachersPage,
   listMealManagementSchoolPage,
   login,
   logout as logoutSession,
+  markAllNotificationsRead,
+  markNotificationRead,
+  markNotificationUnread,
   removeProfileAvatar,
   removeProfileBanner,
   resolveApiAssetUrl,
   refreshAccessToken,
   searchMealFoods,
   updateMealBudget,
+  updateMealFoodRequest,
   updateCalendarEvent,
   updateClassRoom,
   updateGuardian,
@@ -38,6 +54,7 @@ import {
   updateStudent,
   updateTeacher,
   updateUserRole,
+  reviewMealFoodRequest,
   uploadProfileAvatar,
   uploadProfileBanner,
 } from './api'
@@ -46,7 +63,31 @@ import { Header } from './components/layout/Header'
 import { Sidebar } from './components/layout/Sidebar'
 import LandingPage from './views/LandingPage'
 import LoginView from './views/LoginView'
-import type { AppSection, Question, ScreenPayloads, SessionPayload, UserAccount } from './types'
+import type {
+  AppSection,
+  CalendarScreenPayload,
+  EvaluationsScreenPayload,
+  GenerateQuestionSelectionRequest,
+  GenerateQuestionSelectionResponse,
+  MealManagement,
+  MealManagementsPagePayload,
+  MealsScreenPayload,
+  CreateMealManagementPayload,
+  NotificationsScreenPayload,
+  PedagogyScreenPayload,
+  Question,
+  LessonRecord,
+  Role,
+  RoleCode,
+  RoomReservation,
+  ClassRoom,
+  School,
+  SchoolsScreenPayload,
+  ScreenPayloads,
+  SessionPayload,
+  Teacher,
+  UserAccount,
+} from './types'
 
 const ACCESS_TOKEN_REFRESH_INTERVAL_MS = 25 * 60 * 1000
 
@@ -59,18 +100,372 @@ function refreshAccessTokenOnce() {
   return refreshAccessTokenRequest
 }
 
+function normalizeQuestionSelectionText(value?: string | null) {
+  return String(value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+}
+
+function questionMatchesSelectionSubject(question: Question, subject: string) {
+  const target = normalizeQuestionSelectionText(subject)
+  if (!target) return true
+  const source = normalizeQuestionSelectionText([
+    question.subject,
+    question.component,
+    question.area,
+    question.title,
+    question.statement,
+    question.context,
+  ].join(' '))
+
+  return source.includes(target) || target.includes(normalizeQuestionSelectionText(question.subject))
+}
+
+function shuffleSelectionQuestions(questions: Question[]) {
+  const shuffled = [...questions]
+  for (let index = shuffled.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1))
+    ;[shuffled[index], shuffled[swapIndex]] = [shuffled[swapIndex], shuffled[index]]
+  }
+  return shuffled
+}
+
+function buildLocalQuestionSelection(
+  questionBank: Question[],
+  request: GenerateQuestionSelectionRequest,
+): GenerateQuestionSelectionResponse {
+  const eligible = questionBank.filter((question) => {
+    if (request.sourceMode === 'enem' && question.sourceType !== 'INEP_ENEM') return false
+    if (request.sourceMode === 'system' && question.sourceType === 'INEP_ENEM') return false
+    if (question.status !== 'APPROVED') return false
+    if (!questionMatchesSelectionSubject(question, request.subject)) return false
+    if (request.gradeLevel && question.gradeLevel !== request.gradeLevel) return false
+    if (request.difficulty && question.difficulty !== request.difficulty) return false
+    if (request.skillCode && !question.skills.some((skill) => skill.code === request.skillCode)) return false
+    if (request.descriptorCode && !question.descriptors.some((descriptor) => descriptor.code === request.descriptorCode)) return false
+    return true
+  })
+
+  const quantity = Math.max(1, Number(request.quantity || 1))
+  const questions = request.sourceMode === 'mixed'
+    ? [
+        ...shuffleSelectionQuestions(eligible.filter((question) => question.sourceType === 'INEP_ENEM')).slice(0, Math.ceil(quantity / 2)),
+        ...shuffleSelectionQuestions(eligible.filter((question) => question.sourceType !== 'INEP_ENEM')).slice(0, Math.floor(quantity / 2)),
+      ].slice(0, quantity)
+    : shuffleSelectionQuestions(eligible).slice(0, quantity)
+
+  const completedSelection = questions.length >= quantity
+    ? questions
+    : [
+        ...questions,
+        ...shuffleSelectionQuestions(eligible.filter((question) => !questions.some((selected) => selected.id === question.id))).slice(0, quantity - questions.length),
+      ]
+
+  return {
+    questions: completedSelection,
+    questionIds: completedSelection.map((question) => question.id),
+    totalEligible: eligible.length,
+  }
+}
+
 const DashboardView = lazy(() => import('./views/DashboardView'))
 const SchoolsView = lazy(() => import('./views/SchoolsView'))
+const ClassesView = lazy(() => import('./views/ClassesView'))
+const PeopleView = lazy(() => import('./views/PeopleView'))
+const RolePortalView = lazy(() => import('./views/RolePortalView'))
 const EvaluationsView = lazy(() => import('./views/EvaluationsView'))
 const CalendarView = lazy(() => import('./views/CalendarView'))
 const MealsView = lazy(() => import('./views/MealsView'))
+const NutritionRequestsView = lazy(() => import('./views/NutritionRequestsView'))
 const AccessView = lazy(() => import('./views/AccessView'))
+const NotificationsView = lazy(() => import('./views/NotificationsView'))
 const SettingsView = lazy(() => import('./views/SettingsView'))
 
 type ScreenCache = Partial<ScreenPayloads>
 type ScreenFlags = Partial<Record<AppSection, boolean>>
 type ScreenErrors = Partial<Record<AppSection, string>>
 type AppToast = { tone: 'success' | 'error'; message: string }
+type RoleProfile = RoleCode
+type NavigationItem = (typeof navItems)[number]
+
+const adminSections: AppSection[] = ['dashboard', 'schools', 'people', 'evaluations', 'meals', 'access', 'notifications', 'settings']
+const directorSections: AppSection[] = ['dashboard', 'schools', 'people', 'meals', 'notifications', 'settings']
+const coordinatorSections: AppSection[] = ['pedagogy', 'evaluations', 'calendar', 'notifications', 'settings']
+const teacherSections: AppSection[] = ['teacher-subjects', 'room-reservations', 'evaluations', 'calendar', 'notifications', 'settings']
+const studentSections: AppSection[] = ['student-performance', 'calendar', 'notifications', 'settings']
+const guardianSections: AppSection[] = ['child-performance', 'child-attendance', 'calendar', 'notifications', 'settings']
+const nutritionistSections: AppSection[] = ['food-requests', 'meals', 'notifications', 'settings']
+const hiddenSidebarSections: AppSection[] = ['notifications', 'child-attendance']
+const schoolsPayloadSections: AppSection[] = [
+  'schools',
+  'classes',
+  'people',
+  'pedagogy',
+  'teacher-subjects',
+  'room-reservations',
+  'lesson-records',
+  'attendance-list',
+  'student-performance',
+  'student-attendance',
+  'child-attendance',
+  'child-performance',
+]
+
+const sectionLabels: Partial<Record<RoleProfile, Partial<Record<AppSection, Pick<NavigationItem, 'label' | 'description'>>>>> = {
+  ADMIN: {
+    dashboard: { label: 'Dashboard Geral', description: 'Rede, escolas e resultados' },
+    meals: { label: 'Merenda Escolar', description: 'Estoque e orcamento da rede' },
+    notifications: { label: 'Notificações', description: 'Alertas e comunicados' },
+    settings: { label: 'Meu Perfil', description: 'Conta do administrador' },
+  },
+  DIRETOR: {
+    dashboard: { label: 'Dashboard da Escola', description: 'Indicadores da unidade' },
+    schools: { label: 'Escolas', description: 'Minha unidade escolar' },
+    people: { label: 'Professores e Alunos', description: 'Equipe e estudantes' },
+    meals: { label: 'Merenda Escolar', description: 'Solicitacoes e estoque da unidade' },
+    notifications: { label: 'Notificações', description: 'Alertas da unidade' },
+    settings: { label: 'Meu Perfil', description: 'Dados do diretor' },
+  },
+  COORDENADOR: {
+    pedagogy: { label: 'Dashboard Pedagogico', description: 'Frequencia, aulas e alertas' },
+    evaluations: { label: 'Provas e Simulados', description: 'Acompanhamento pedagogico' },
+    calendar: { label: 'Calendario Escolar', description: 'Eventos da escola' },
+    notifications: { label: 'Notificações', description: 'Alertas pedagogicos' },
+    settings: { label: 'Meu Perfil', description: 'Dados do coordenador' },
+  },
+  PROFESSOR: {
+    'teacher-subjects': { label: 'Minhas Materias', description: 'Materias e turmas' },
+    'room-reservations': { label: 'Reservar Sala', description: 'Ambientes escolares' },
+    evaluations: { label: 'Provas e Simulados', description: 'Criar e aplicar avaliacoes' },
+    calendar: { label: 'Calendario Escolar', description: 'Eventos e avisos' },
+    notifications: { label: 'Notificações', description: 'Alertas das suas turmas' },
+    settings: { label: 'Meu Perfil', description: 'Dados do professor' },
+  },
+  ALUNO: {
+    'student-performance': { label: 'Frequencia e Desempenho', description: 'Presencas, notas e alertas' },
+    calendar: { label: 'Calendario e Comunicados', description: 'Eventos e avisos' },
+    notifications: { label: 'Notificações', description: 'Alertas academicos' },
+    settings: { label: 'Meu Perfil', description: 'Dados do aluno' },
+  },
+  RESPONSAVEL: {
+    'child-attendance': { label: 'Frequencia e Desempenho', description: 'Presencas, notas e alertas' },
+    'child-performance': { label: 'Frequencia e Desempenho', description: 'Presencas, notas e alertas' },
+    calendar: { label: 'Calendario e Comunicados', description: 'Eventos dos filhos' },
+    notifications: { label: 'Notificações', description: 'Alertas dos alunos vinculados' },
+    settings: { label: 'Meu Perfil', description: 'Dados do responsavel' },
+  },
+  NUTRITIONIST: {
+    'food-requests': { label: 'Aprovacao de Alimentos', description: 'Solicitacoes das escolas' },
+    meals: { label: 'Estoque das Escolas', description: 'Alertas e vencimentos' },
+    notifications: { label: 'Notificacoes', description: 'Alertas nutricionais' },
+    settings: { label: 'Meu Perfil', description: 'Dados do nutricionista' },
+  },
+}
+
+function normalizeRoleText(value?: string | null) {
+  return (value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+}
+
+const roleProfileTokens: Record<RoleProfile, string[]> = {
+  ADMIN: ['ADMIN', 'ADMINISTRADOR', 'ADMINISTRADORA'],
+  DIRETOR: ['DIRETOR', 'DIRETORA', 'DIRECAO', 'DIRETORIA'],
+  COORDENADOR: ['COORDENADOR', 'COORDENADORA', 'COORDENACAO', 'PEDAGOGO', 'PEDAGOGA', 'PEDAGOGICO', 'PEDAGOGICA'],
+  PROFESSOR: ['PROFESSOR', 'PROFESSORA', 'DOCENTE', 'TEACHER'],
+  ALUNO: ['ALUNO', 'ALUNA', 'ESTUDANTE', 'STUDENT'],
+  RESPONSAVEL: ['RESPONSAVEL', 'RESPONSAVEIS', 'PAI', 'MAE', 'PAIS', 'GUARDIAN'],
+  NUTRITIONIST: ['NUTRITIONIST', 'NUTRICIONISTA', 'NUTRICAO', 'NUTRICAOESCOLAR'],
+}
+
+function normalizeRoleTokens(value?: string | null) {
+  return normalizeRoleText(value)
+    .replace(/[^A-Z0-9]+/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+}
+
+function matchRoleProfileFromText(value?: string | null): RoleProfile | null {
+  const tokens = normalizeRoleTokens(value)
+  if (!tokens.length) return null
+
+  for (const profile of ['ADMIN', 'DIRETOR', 'COORDENADOR', 'PROFESSOR', 'ALUNO', 'RESPONSAVEL', 'NUTRITIONIST'] as RoleProfile[]) {
+    if (tokens.some((token) => roleProfileTokens[profile].includes(token))) return profile
+  }
+
+  return null
+}
+
+function getRoleProfileOrNull(role: Role | null): RoleProfile | null {
+  if (!role) return null
+
+  return matchRoleProfileFromText(`${role.code ?? ''} ${role.name ?? ''}`)
+    ?? matchRoleProfileFromText(role.description)
+}
+
+function getLinkedUserProfile(user?: UserAccount | null): RoleProfile | null {
+  if (!user) return null
+  if (user.linkedStudentId) return 'ALUNO'
+  if (user.linkedGuardianId) return 'RESPONSAVEL'
+  if (user.linkedTeacherId) return 'PROFESSOR'
+
+  return matchRoleProfileFromText(user.roleId)
+}
+
+function getRoleProfile(role: Role | null): RoleProfile {
+  return getRoleProfileOrNull(role) ?? 'ADMIN'
+}
+
+function getSessionRoleProfile(session: SessionPayload | null): RoleProfile {
+  if (!session) return 'ADMIN'
+  const currentRoleMatchesUser = !session.currentRole?.id || !session.currentUser.roleId || session.currentRole.id === session.currentUser.roleId
+  const currentRoleProfile = currentRoleMatchesUser ? getRoleProfileOrNull(session.currentRole) : null
+
+  return matchRoleProfileFromText(session.currentUser.roleId)
+    ?? currentRoleProfile
+    ?? getLinkedUserProfile(session.currentUser)
+    ?? getRoleProfileOrNull(session.currentRole)
+    ?? 'ADMIN'
+}
+
+function getFallbackRole(profile: RoleProfile, role: Role | null): Role {
+  return {
+    id: role?.id ?? profile,
+    code: profile,
+    name: {
+      ADMIN: 'Admin',
+      DIRETOR: 'Diretor',
+      COORDENADOR: 'Coordenador',
+      PROFESSOR: 'Professor',
+      ALUNO: 'Aluno',
+      RESPONSAVEL: 'Responsavel',
+      NUTRITIONIST: 'Nutricionista',
+    }[profile],
+    description: role?.description ?? '',
+    permissions: role?.permissions ?? [],
+  }
+}
+
+function resolveSessionRole(session: SessionPayload | null, profile: RoleProfile): Role | null {
+  if (!session) return null
+  const currentRoleMatchesUser = !session.currentRole?.id || !session.currentUser.roleId || session.currentRole.id === session.currentUser.roleId
+  const currentProfile = getRoleProfileOrNull(session.currentRole)
+  if (session.currentRole && currentRoleMatchesUser && currentProfile === profile) return session.currentRole
+
+  return getFallbackRole(profile, session.currentRole)
+}
+
+function getSectionsForProfile(profile: RoleProfile) {
+  if (profile === 'DIRETOR') return directorSections
+  if (profile === 'COORDENADOR') return coordinatorSections
+  if (profile === 'PROFESSOR') return teacherSections
+  if (profile === 'ALUNO') return studentSections
+  if (profile === 'RESPONSAVEL') return guardianSections
+  if (profile === 'NUTRITIONIST') return nutritionistSections
+  return adminSections
+}
+
+function getDefaultSectionForSession(session: SessionPayload | null) {
+  return getSectionsForProfile(getSessionRoleProfile(session))[0] ?? 'dashboard'
+}
+
+function getSectionAliasForProfile(section: AppSection, profile: RoleProfile): AppSection {
+  if (profile === 'COORDENADOR' && section === 'dashboard') return 'pedagogy'
+  return section
+}
+
+function getNavItemsForProfile(profile: RoleProfile) {
+  const labels = sectionLabels[profile] ?? {}
+  return getSectionsForProfile(profile)
+    .filter((section) => !hiddenSidebarSections.includes(section))
+    .map((section) => {
+      const item = navItems.find((navItem) => navItem.id === section)
+      if (!item) return null
+      return { ...item, ...(labels[section] ?? {}) }
+    })
+    .filter((item): item is NavigationItem => Boolean(item))
+}
+
+function isAdminProfile(profile: RoleProfile) {
+  return profile === 'ADMIN'
+}
+
+function isSchoolLeadership(profile: RoleProfile) {
+  return profile === 'DIRETOR' || profile === 'COORDENADOR'
+}
+
+function userMatchesSchool(user: UserAccount, schoolId: string) {
+  return Boolean(user.schoolId && user.schoolId === schoolId)
+}
+
+function userRelatedSchoolIds(
+  user: UserAccount,
+  schools: School[],
+  mealManagements: MealManagement[] = [],
+) {
+  const schoolIds = new Set<string>()
+  if (user.schoolId) schoolIds.add(user.schoolId)
+
+  const userName = normalizeRoleText(user.name)
+  for (const school of schools) {
+    const directorName = normalizeRoleText(school.director)
+    if (directorName && userName && (directorName === userName || directorName.includes(userName) || userName.includes(directorName))) {
+      schoolIds.add(school.id)
+    }
+  }
+
+  const userIds = new Set([user.id, user.linkedTeacherId].filter((id): id is string => Boolean(id)))
+  for (const management of mealManagements) {
+    if (userIds.has(management.responsaveisGestao.diretorId)) {
+      schoolIds.add(management.escolaId)
+    }
+  }
+
+  return schoolIds
+}
+
+function buildMealManagementsPagePayload(data: MealsScreenPayload, page: number, limit: number): MealManagementsPagePayload {
+  const safeLimit = Math.max(1, limit)
+  const total = data.mealManagements.length
+  const totalPages = Math.max(1, Math.ceil(total / safeLimit))
+  const safePage = Math.min(Math.max(1, page), totalPages)
+  const start = (safePage - 1) * safeLimit
+  const mealManagements = data.mealManagements.slice(start, start + safeLimit)
+  const schoolIds = new Set(mealManagements.map((management) => management.escolaId))
+
+  return {
+    schools: data.schools.filter((school) => schoolIds.has(school.id)),
+    mealManagements,
+    pagination: {
+      page: safePage,
+      limit: safeLimit,
+      total,
+      totalPages,
+    },
+  }
+}
+
+function splitAcademicTokens(value?: string | null) {
+  return normalizeRoleText(value)
+    .split(/[,;|/]+|\s+-\s+/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
+
+function teacherMatchesClassByDiscipline(teacher: Teacher, classRoom: ClassRoom) {
+  const teacherTokens = splitAcademicTokens(teacher.specialty)
+  const classTokens = (classRoom.bnccFocus ?? []).flatMap(splitAcademicTokens)
+  if (!teacherTokens.length || !classTokens.length) return false
+
+  return teacherTokens.some((teacherToken) => classTokens.some((classToken) => (
+    teacherToken === classToken
+    || teacherToken.includes(classToken)
+    || classToken.includes(teacherToken)
+  )))
+}
 
 function getSectionFromPath(pathname: string): AppSection | null {
   const route = pathname.replace(/^\/+/, '').replace(/\/+$/, '')
@@ -82,12 +477,20 @@ function isLoginPath(pathname: string) {
   return pathname.replace(/\/+$/, '') === '/login'
 }
 
+function isLandingPath(pathname: string) {
+  return pathname.replace(/\/+$/, '') === '/landing'
+}
+
 function getCurrentPath() {
   return window.location.pathname || '/'
 }
 
 function replaceById<T extends { id: string }>(items: T[], updated: T) {
   return items.map((item) => (item.id === updated.id ? updated : item))
+}
+
+function upsertById<T extends { id: string }>(items: T[], updated: T) {
+  return items.some((item) => item.id === updated.id) ? replaceById(items, updated) : [...items, updated]
 }
 
 function removeById<T extends { id: string }>(items: T[], id: string) {
@@ -98,14 +501,49 @@ async function loadSectionPayload(section: AppSection, token: string) {
   switch (section) {
     case 'dashboard':
       return loadDashboardScreen(token)
+    case 'notifications':
+      return loadNotificationsScreen(token)
+    case 'pedagogy':
+      return Promise.all([loadSchoolsScreen(token), loadEvaluationsScreen(token)]).then(([schoolsPayload, evaluationsPayload]) => ({
+        ...schoolsPayload,
+        evaluations: evaluationsPayload.evaluations,
+        curriculumSkills: evaluationsPayload.curriculumSkills,
+        assessmentDescriptors: evaluationsPayload.assessmentDescriptors,
+        questionBank: evaluationsPayload.questionBank,
+      }))
     case 'schools':
+    case 'classes':
+    case 'people':
+    case 'teacher-subjects':
+    case 'lesson-records':
+    case 'attendance-list':
+    case 'student-performance':
+    case 'student-attendance':
+    case 'child-attendance':
+    case 'child-performance':
       return loadSchoolsScreen(token)
+    case 'room-reservations':
+      return Promise.all([loadSchoolsScreen(token), listRoomReservations(token)]).then(([schoolsPayload, roomReservations]) => ({
+        ...schoolsPayload,
+        roomReservations,
+      }))
     case 'evaluations':
-      return loadEvaluationsScreen(token)
+      return Promise.all([loadEvaluationsScreen(token), loadSchoolsScreen(token)]).then(([evaluationsPayload, schoolsPayload]) => ({
+        ...evaluationsPayload,
+        schools: schoolsPayload.schools,
+        teachers: schoolsPayload.teachers,
+      }))
     case 'calendar':
-      return loadCalendarScreen(token)
+      return Promise.all([loadCalendarScreen(token), loadSchoolsScreen(token)]).then(([calendarPayload, schoolsPayload]) => ({
+        ...calendarPayload,
+        scope: schoolsPayload,
+      }))
     case 'meals':
-      return loadMealsScreen(token)
+    case 'food-requests':
+      return Promise.all([loadMealsScreen(token), loadSchoolsScreen(token)]).then(([mealsPayload, schoolsPayload]) => ({
+        ...mealsPayload,
+        schools: mealsPayload.schools?.length ? mealsPayload.schools : schoolsPayload.schools,
+      }))
     case 'access':
       return loadAccessScreen(token)
     case 'settings':
@@ -130,8 +568,18 @@ export default function App() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [profileAssetVersion, setProfileAssetVersion] = useState({ avatar: 0, banner: 0 })
 
-  const activeSection = getSectionFromPath(route) ?? 'dashboard'
-  const activeLabel = navItems.find((item) => item.id === activeSection)?.label ?? appName
+  const roleProfile = getSessionRoleProfile(session)
+  const userRole = useMemo(() => resolveSessionRole(session, roleProfile), [roleProfile, session])
+  const allowedSections = useMemo(() => getSectionsForProfile(roleProfile), [roleProfile])
+  const visibleNavItems = useMemo(() => getNavItemsForProfile(roleProfile), [roleProfile])
+  const fallbackSection = visibleNavItems[0]?.id ?? 'dashboard'
+  const routeSection = getSectionFromPath(route)
+  const requestedSection = routeSection ?? fallbackSection
+  const requestedSectionAlias = getSectionAliasForProfile(requestedSection, roleProfile)
+  const activeSection = allowedSections.includes(requestedSectionAlias) ? requestedSectionAlias : fallbackSection
+  const activeLabel = visibleNavItems.find((item) => item.id === activeSection)?.label
+    ?? navItems.find((item) => item.id === activeSection)?.label
+    ?? appName
 
   useEffect(() => {
     if (window.location.hash.startsWith('#/')) {
@@ -200,10 +648,14 @@ export default function App() {
   useEffect(() => {
     if (!token || !session) return
     if (!getSectionFromPath(route) || isLoginPath(route)) return
+    if (routeSection && requestedSection !== activeSection) {
+      navigateToSection(fallbackSection, 'replace')
+      return
+    }
     if (screenData[activeSection] || screenLoading[activeSection] || screenErrors[activeSection]) return
 
     void loadScreen(activeSection, token)
-  }, [activeSection, route, screenData, screenErrors, screenLoading, session, token])
+  }, [activeSection, fallbackSection, requestedSection, route, routeSection, screenData, screenErrors, screenLoading, session, token])
 
   function navigateToPath(path: string, mode: 'push' | 'replace' = 'push') {
     if (mode === 'replace') {
@@ -246,8 +698,8 @@ export default function App() {
     try {
       const nextSession = await loadSession(currentToken)
       setSession(nextSession)
-      if (!getSectionFromPath(window.location.pathname) || isLoginPath(window.location.pathname)) {
-        navigateToSection('dashboard', 'replace')
+      if ((!getSectionFromPath(window.location.pathname) || isLoginPath(window.location.pathname)) && !isLandingPath(window.location.pathname)) {
+        navigateToSection(getDefaultSectionForSession(nextSession), 'replace')
       }
     } catch (error) {
       if (error instanceof ApiError && error.statusCode === 401) {
@@ -270,11 +722,23 @@ export default function App() {
 
     try {
       const nextData = await loadSectionPayload(section, currentToken)
-      setScreenData((current) => ({ ...current, [section]: nextData }))
+      setScreenData((current) => {
+        if (section === 'calendar') {
+          const calendarData = nextData as CalendarScreenPayload
+          return calendarData.scope
+            ? { ...current, schools: calendarData.scope, calendar: calendarData }
+            : { ...current, calendar: calendarData }
+        }
 
-      if (section === 'dashboard') {
-        const dashboardData = nextData as ScreenPayloads['dashboard']
-        setSession((current) => current ? { ...current, alertCount: dashboardData.dashboard.alerts.length } : current)
+        const next: ScreenCache = { ...current }
+        ;(next as Partial<Record<AppSection, unknown>>)[section] = nextData
+        return next
+      })
+
+      if (section === 'notifications') {
+        const notificationsData = nextData as ScreenPayloads['notifications']
+        const scopedNotificationsData = getScopedNotificationsData(notificationsData)
+        setSession((current) => current ? { ...current, alertCount: scopedNotificationsData.unreadCount } : current)
       }
 
       if (section === 'settings') {
@@ -307,6 +771,63 @@ export default function App() {
     })
   }
 
+  function upsertLessonRecordInCachedScreens(record: LessonRecord) {
+    setScreenData((current) => {
+      const next: ScreenCache = { ...current }
+      const nextSchoolsPayloads = next as Partial<Record<AppSection, SchoolsScreenPayload>>
+      let changed = false
+
+      for (const section of schoolsPayloadSections) {
+        const payload = current[section] as SchoolsScreenPayload | undefined
+        if (!payload) continue
+
+        nextSchoolsPayloads[section] = {
+          ...payload,
+          lessonRecords: [
+            record,
+            ...(payload.lessonRecords ?? []).filter((item) => item.id !== record.id),
+          ],
+        }
+        changed = true
+      }
+
+      return changed ? next : current
+    })
+  }
+
+  function syncNotificationsPayload(payload: NotificationsScreenPayload) {
+    setScreenData((current) => ({ ...current, notifications: payload }))
+    const scopedPayload = getScopedNotificationsData(payload)
+    setSession((current) => current ? { ...current, alertCount: scopedPayload.unreadCount } : current)
+  }
+
+  async function runNotificationUpdate(action: (currentToken: string) => Promise<NotificationsScreenPayload>) {
+    if (!token) {
+      showToast({ tone: 'error', message: 'Sessao expirada. Entre novamente para continuar.' })
+      return
+    }
+
+    try {
+      const payload = await action(token)
+      syncNotificationsPayload(payload)
+    } catch (error) {
+      showToast({ tone: 'error', message: error instanceof Error ? error.message : 'Nao foi possivel atualizar a notificacao.' })
+      throw error
+    }
+  }
+
+  function handleMarkNotificationRead(id: string) {
+    return runNotificationUpdate((currentToken) => markNotificationRead(currentToken, id))
+  }
+
+  function handleMarkNotificationUnread(id: string) {
+    return runNotificationUpdate((currentToken) => markNotificationUnread(currentToken, id))
+  }
+
+  function handleMarkAllNotificationsRead() {
+    return runNotificationUpdate((currentToken) => markAllNotificationsRead(currentToken))
+  }
+
   function invalidateScreens(sections: AppSection[]) {
     setScreenData((current) => {
       const next = { ...current }
@@ -320,10 +841,243 @@ export default function App() {
     })
   }
 
+  function getScopedSchoolsData(data: SchoolsScreenPayload): SchoolsScreenPayload {
+    if (!session || isAdminProfile(roleProfile)) return data
+
+    const user = session.currentUser
+    const withScopedAcademicExtras = (
+      base: Omit<SchoolsScreenPayload, 'lessonRecords' | 'roomReservations'>,
+    ): SchoolsScreenPayload => {
+      const classIds = new Set(base.classes.map((classRoom) => classRoom.id))
+      const schoolIds = new Set(base.schools.map((school) => school.id))
+      const reservationSchoolByClassId = new Map(data.classes.map((classRoom) => [classRoom.id, classRoom.schoolId]))
+
+      return {
+        ...base,
+        lessonRecords: (data.lessonRecords ?? []).filter((record) => classIds.has(record.classId)),
+        roomReservations: (data.roomReservations ?? []).filter((reservation) => {
+          const reservationSchoolId = reservationSchoolByClassId.get(reservation.classId)
+          return reservationSchoolId ? schoolIds.has(reservationSchoolId) : classIds.has(reservation.classId)
+        }),
+      }
+    }
+    const linkedTeachers = data.teachers.filter((teacher) => teacher.id === user.linkedTeacherId || teacher.userId === user.id)
+    const teacherIds = new Set(linkedTeachers.map((teacher) => teacher.id))
+    const studentIds = new Set(data.students
+      .filter((student) => student.id === user.linkedStudentId || student.userId === user.id)
+      .map((student) => student.id))
+    const guardianIds = new Set(data.guardians
+      .filter((guardian) => guardian.id === user.linkedGuardianId || guardian.userId === user.id)
+      .map((guardian) => guardian.id))
+
+    if (isSchoolLeadership(roleProfile)) {
+      const relatedSchoolIds = userRelatedSchoolIds(user, data.schools)
+      const schoolIds = new Set(data.schools.filter((school) => relatedSchoolIds.has(school.id) || userMatchesSchool(user, school.id)).map((school) => school.id))
+      const classes = data.classes.filter((classRoom) => schoolIds.has(classRoom.schoolId))
+      const classIds = new Set(classes.map((classRoom) => classRoom.id))
+      return withScopedAcademicExtras({
+        schools: data.schools.filter((school) => schoolIds.has(school.id)),
+        classes,
+        teachers: data.teachers.filter((teacher) => schoolIds.has(teacher.schoolId)),
+        students: data.students.filter((student) => schoolIds.has(student.schoolId) || classIds.has(student.classId)),
+        guardians: data.guardians.filter((guardian) => schoolIds.has(guardian.schoolId)),
+      })
+    }
+
+    if (roleProfile === 'PROFESSOR') {
+      const classes = data.classes.filter((classRoom) => (
+        teacherIds.has(classRoom.teacherId)
+        || (classRoom.teacherIds ?? []).some((teacherId) => teacherIds.has(teacherId))
+        || linkedTeachers.some((teacher) => teacherMatchesClassByDiscipline(teacher, classRoom))
+      ))
+      const classIds = new Set(classes.map((classRoom) => classRoom.id))
+      const schoolIds = new Set(classes.map((classRoom) => classRoom.schoolId))
+      const students = data.students.filter((student) => classIds.has(student.classId))
+      const guardianIdsFromStudents = new Set(students.flatMap((student) => student.guardianIds ?? []))
+
+      return withScopedAcademicExtras({
+        schools: data.schools.filter((school) => schoolIds.has(school.id)),
+        classes,
+        teachers: data.teachers.filter((teacher) => teacherIds.has(teacher.id)),
+        students,
+        guardians: data.guardians.filter((guardian) => guardianIdsFromStudents.has(guardian.id)),
+      })
+    }
+
+    if (roleProfile === 'ALUNO') {
+      const students = data.students.filter((student) => studentIds.has(student.id))
+      const classIds = new Set(students.map((student) => student.classId))
+      const schoolIds = new Set(students.map((student) => student.schoolId))
+      const classes = data.classes.filter((classRoom) => classIds.has(classRoom.id))
+      const teacherIdsFromClasses = new Set(classes.flatMap((classRoom) => [classRoom.teacherId, ...(classRoom.teacherIds ?? [])].filter(Boolean)))
+
+      return withScopedAcademicExtras({
+        schools: data.schools.filter((school) => schoolIds.has(school.id)),
+        classes,
+        teachers: data.teachers.filter((teacher) => teacherIdsFromClasses.has(teacher.id)),
+        students,
+        guardians: [],
+      })
+    }
+
+    if (roleProfile === 'RESPONSAVEL') {
+      const guardians = data.guardians.filter((guardian) => guardianIds.has(guardian.id))
+      const linkedStudentIds = new Set(guardians.flatMap((guardian) => guardian.studentIds ?? []))
+      const students = data.students.filter((student) => linkedStudentIds.has(student.id) || (student.guardianIds ?? []).some((guardianId) => guardianIds.has(guardianId)))
+      const classIds = new Set(students.map((student) => student.classId))
+      const schoolIds = new Set(students.map((student) => student.schoolId))
+      const classes = data.classes.filter((classRoom) => classIds.has(classRoom.id))
+      const teacherIdsFromClasses = new Set(classes.flatMap((classRoom) => [classRoom.teacherId, ...(classRoom.teacherIds ?? [])].filter(Boolean)))
+
+      return withScopedAcademicExtras({
+        schools: data.schools.filter((school) => schoolIds.has(school.id)),
+        classes,
+        teachers: data.teachers.filter((teacher) => teacherIdsFromClasses.has(teacher.id)),
+        students,
+        guardians,
+      })
+    }
+
+    return data
+  }
+
+  function getScopedEvaluationsData(data: EvaluationsScreenPayload): EvaluationsScreenPayload {
+    if (!session || isAdminProfile(roleProfile)) return data
+
+    const currentQuestionCreatorIds = new Set(
+      [session.currentUser.id, session.currentUser.linkedTeacherId].filter((id): id is string => Boolean(id)),
+    )
+    const scopedSchools = screenData.schools ? getScopedSchoolsData(screenData.schools) : null
+    const relatedSchoolIds = userRelatedSchoolIds(session.currentUser, data.schools ?? scopedSchools?.schools ?? [])
+    const allowedSchoolIds = new Set(scopedSchools?.schools.map((school) => school.id) ?? Array.from(relatedSchoolIds))
+    if (session.currentUser.schoolId) allowedSchoolIds.add(session.currentUser.schoolId)
+    const allowedClassIdsFromSchools = new Set(scopedSchools?.classes.map((classRoom) => classRoom.id) ?? [])
+    const allowedClasses = data.classes.filter((classRoom) => {
+      if (roleProfile === 'PROFESSOR') {
+        return classRoom.teacherId === session.currentUser.linkedTeacherId || (classRoom.teacherIds ?? []).includes(session.currentUser.linkedTeacherId ?? '')
+      }
+
+      if (allowedClassIdsFromSchools.size > 0) return allowedClassIdsFromSchools.has(classRoom.id)
+      return allowedSchoolIds.has(classRoom.schoolId)
+    })
+    const allowedClassIds = new Set(allowedClasses.map((classRoom) => classRoom.id))
+
+    const scopedEvaluations = data.evaluations.filter((evaluation) => allowedClassIds.has(evaluation.classId))
+    const referencedQuestionIds = new Set(scopedEvaluations.flatMap((evaluation) => evaluation.questionIds ?? []))
+
+    return {
+      ...data,
+      classes: allowedClasses,
+      evaluations: scopedEvaluations,
+      schools: data.schools?.filter((school) => allowedSchoolIds.has(school.id)),
+      teachers: data.teachers?.filter((teacher) => allowedSchoolIds.has(teacher.schoolId)),
+      questionBank: data.questionBank?.filter((question) => {
+        if (referencedQuestionIds.has(question.id)) return true
+        if (question.sourceType === 'INEP_ENEM') return true
+        if (roleProfile === 'PROFESSOR') return currentQuestionCreatorIds.has(question.createdById)
+        if (isSchoolLeadership(roleProfile)) return allowedSchoolIds.has(question.schoolId) || question.visibility === 'GLOBAL'
+        return currentQuestionCreatorIds.has(question.createdById)
+      }),
+    }
+  }
+
+  function getScopedPedagogyEvaluationData(data: PedagogyScreenPayload, scopedSchools: SchoolsScreenPayload) {
+    if (!session || isAdminProfile(roleProfile)) {
+      return {
+        evaluations: data.evaluations,
+        curriculumSkills: data.curriculumSkills ?? [],
+        assessmentDescriptors: data.assessmentDescriptors ?? [],
+        questionBank: data.questionBank ?? [],
+      }
+    }
+
+    const allowedClassIds = new Set(scopedSchools.classes.map((classRoom) => classRoom.id))
+    const allowedSchoolIds = new Set(scopedSchools.schools.map((school) => school.id))
+    const currentQuestionCreatorIds = new Set(
+      [session.currentUser.id, session.currentUser.linkedTeacherId].filter((id): id is string => Boolean(id)),
+    )
+
+    return {
+      evaluations: data.evaluations.filter((evaluation) => allowedClassIds.has(evaluation.classId)),
+      curriculumSkills: data.curriculumSkills ?? [],
+      assessmentDescriptors: data.assessmentDescriptors ?? [],
+      questionBank: (data.questionBank ?? []).filter((question) => {
+        if (question.sourceType === 'INEP_ENEM') return true
+        if (roleProfile === 'PROFESSOR') return currentQuestionCreatorIds.has(question.createdById)
+        if (isSchoolLeadership(roleProfile)) return allowedSchoolIds.has(question.schoolId) || question.visibility === 'GLOBAL'
+        return currentQuestionCreatorIds.has(question.createdById)
+      }),
+    }
+  }
+
+  function getScopedCalendarData(data: CalendarScreenPayload): CalendarScreenPayload {
+    if (!session || isAdminProfile(roleProfile)) return data
+
+    const scopeSource = data.scope ?? screenData.schools
+    const scopedSchools = scopeSource ? getScopedSchoolsData(scopeSource) : null
+    const schoolIds = new Set(scopedSchools?.schools.map((school) => school.id) ?? [session.currentUser.schoolId].filter(Boolean) as string[])
+    const classIds = new Set(scopedSchools?.classes.map((classRoom) => classRoom.id) ?? [])
+
+    return {
+      ...data,
+      schools: data.schools.filter((school) => schoolIds.has(school.id)),
+      classes: data.classes.filter((classRoom) => classIds.size ? classIds.has(classRoom.id) : schoolIds.has(classRoom.schoolId)),
+      evaluations: data.evaluations.filter((evaluation) => !classIds.size || classIds.has(evaluation.classId)),
+      calendarEvents: data.calendarEvents.filter((event) => (
+        schoolIds.has(event.schoolId)
+        && (!event.classId || classIds.size === 0 || classIds.has(event.classId))
+      )),
+    }
+  }
+
+  function getScopedNotificationsData(data: NotificationsScreenPayload): NotificationsScreenPayload {
+    if (!session || isAdminProfile(roleProfile)) return data
+
+    const notifications = data.notifications.filter((notification) => notification.userId === session.currentUser.id)
+    return {
+      notifications,
+      unreadCount: notifications.filter((notification) => !notification.readAt).length,
+      totalCount: notifications.length,
+    }
+  }
+
+  function getScopedMealsData(data: MealsScreenPayload): MealsScreenPayload {
+    if (!session || isAdminProfile(roleProfile) || roleProfile === 'NUTRITIONIST') return data
+
+    const allowedSchoolIds = userRelatedSchoolIds(session.currentUser, data.schools, data.mealManagements)
+    if (isSchoolLeadership(roleProfile) && allowedSchoolIds.size === 0 && data.schools.length === 1) {
+      allowedSchoolIds.add(data.schools[0].id)
+    }
+    return {
+      schools: data.schools.filter((school) => allowedSchoolIds.has(school.id)),
+      mealManagements: data.mealManagements.filter((management) => allowedSchoolIds.has(management.escolaId)),
+      foodRequests: (data.foodRequests ?? []).filter((request) => allowedSchoolIds.has(request.schoolId)),
+      mealRequestHistory: (data.mealRequestHistory ?? []).filter((entry) => allowedSchoolIds.has(entry.schoolId)),
+    }
+  }
+
+  function blockUnauthorizedAction(message = 'Seu perfil nao possui permissao para esta acao.') {
+    showToast({ tone: 'error', message })
+    return Promise.resolve()
+  }
+
   function syncCurrentUser(updated: UserAccount) {
     setSession((current) => current ? { ...current, currentUser: updated } : current)
     updateScreenData('settings', (current) => ({ ...current, currentUser: updated }))
     updateScreenData('access', (current) => ({ ...current, users: replaceById(current.users, updated) }))
+    updateScreenData('schools', (current) => ({
+      ...current,
+      students: current.students.map((student) => (
+        student.id === updated.linkedStudentId || student.userId === updated.id
+          ? { ...student, avatarUrl: updated.avatarUrl, bannerUrl: updated.bannerUrl }
+          : student
+      )),
+      teachers: current.teachers.map((teacher) => (
+        teacher.id === updated.linkedTeacherId || teacher.userId === updated.id
+          ? { ...teacher, avatarUrl: updated.avatarUrl, bannerUrl: updated.bannerUrl }
+          : teacher
+      )),
+    }))
   }
 
   async function handleLogin(credentials: { email: string; password: string }) {
@@ -335,7 +1089,7 @@ export default function App() {
       setScreenData({})
       setScreenErrors({})
       setToken(result.token)
-      navigateToSection('dashboard', 'replace')
+      navigateToPath('/', 'replace')
     } catch (error) {
       setAuthError(error instanceof Error ? error.message : 'Nao foi possivel entrar.')
     } finally {
@@ -370,8 +1124,6 @@ export default function App() {
     }
   }
 
-  const userRole = session?.currentRole ?? null
-
   const userInitials = useMemo(() => {
     if (!session) return ''
     return session.currentUser.name
@@ -383,7 +1135,8 @@ export default function App() {
   }, [session])
 
   function handleSectionChange(section: AppSection) {
-    navigateToSection(section)
+    const nextSection = getSectionAliasForProfile(section, roleProfile)
+    navigateToSection(allowedSections.includes(nextSection) ? nextSection : fallbackSection)
     setMobileOpen(false)
   }
 
@@ -418,43 +1171,55 @@ export default function App() {
         const data = screenData.dashboard
         if (!data) return renderMissingScreen('dashboard')
 
-        return <DashboardView dashboard={data.dashboard} auditEvents={data.auditEvents} evaluations={data.evaluations} />
+        return (
+          <DashboardView
+            dashboard={data.dashboard}
+            auditEvents={data.auditEvents}
+            evaluations={data.evaluations}
+            profile={roleProfile}
+            schools={screenData.schools ? getScopedSchoolsData(screenData.schools).schools : []}
+            classes={screenData.schools ? getScopedSchoolsData(screenData.schools).classes : []}
+          />
+        )
       }
 
       case 'schools': {
         const data = screenData.schools
         if (!data) return renderMissingScreen('schools')
+        const scopedData = getScopedSchoolsData(data)
 
         return (
           <SchoolsView
             currentUser={session.currentUser}
             currentRole={userRole}
-            schools={data.schools}
-            classes={data.classes}
-            students={data.students}
-            teachers={data.teachers}
-            guardians={data.guardians}
-            onCreate={(draft) => runAction(async () => {
+            schools={scopedData.schools}
+            classes={scopedData.classes}
+            students={scopedData.students}
+            teachers={scopedData.teachers}
+            guardians={scopedData.guardians}
+            assetVersion={profileAssetVersion}
+            readOnly={!isAdminProfile(roleProfile)}
+            onCreate={(draft) => isAdminProfile(roleProfile) ? runAction(async () => {
               const created = await createSchool(token, draft)
               updateScreenData('schools', (current) => ({ ...current, schools: [created, ...current.schools] }))
-              invalidateScreens(['dashboard', 'access', 'calendar'])
-            }, 'Escola criada com sucesso.')}
-            onUpdate={(id, draft) => runAction(async () => {
+              invalidateScreens(['dashboard', 'access', 'calendar', 'pedagogy'])
+            }, 'Escola criada com sucesso.') : blockUnauthorizedAction()}
+            onUpdate={(id, draft) => isAdminProfile(roleProfile) ? runAction(async () => {
               const updated = await updateSchool(token, id, draft)
               updateScreenData('schools', (current) => ({ ...current, schools: replaceById(current.schools, updated) }))
-              invalidateScreens(['dashboard', 'access', 'calendar'])
-            }, 'Escola atualizada.')}
-            onCreateClass={(draft) => runAction(async () => {
+              invalidateScreens(['dashboard', 'access', 'calendar', 'pedagogy'])
+            }, 'Escola atualizada.') : blockUnauthorizedAction()}
+            onCreateClass={(draft) => isAdminProfile(roleProfile) ? runAction(async () => {
               const created = await createClassRoom(token, draft)
               updateScreenData('schools', (current) => ({ ...current, classes: [created, ...current.classes] }))
-              invalidateScreens(['dashboard', 'evaluations', 'calendar'])
-            }, 'Turma criada com sucesso.')}
-            onUpdateClass={(id, draft) => runAction(async () => {
+              invalidateScreens(['dashboard', 'evaluations', 'calendar', 'pedagogy'])
+            }, 'Turma criada com sucesso.') : blockUnauthorizedAction()}
+            onUpdateClass={(id, draft) => isAdminProfile(roleProfile) ? runAction(async () => {
               const updated = await updateClassRoom(token, id, draft)
               updateScreenData('schools', (current) => ({ ...current, classes: replaceById(current.classes, updated) }))
-              invalidateScreens(['dashboard', 'evaluations', 'calendar'])
-            }, 'Turma atualizada.')}
-            onCreateTeacher={(draft) => runAction(async () => {
+              invalidateScreens(['dashboard', 'evaluations', 'calendar', 'pedagogy'])
+            }, 'Turma atualizada.') : blockUnauthorizedAction()}
+            onCreateTeacher={(draft) => isAdminProfile(roleProfile) ? runAction(async () => {
               const created = await createTeacher(token, draft)
               updateScreenData('schools', (current) => ({
                 ...current,
@@ -469,14 +1234,14 @@ export default function App() {
                     : classRoom)
                   : current.classes,
               }))
-              invalidateScreens(['access', 'calendar'])
-            }, 'Professor criado e vinculado.')}
-            onUpdateTeacher={(id, draft) => runAction(async () => {
+              invalidateScreens(['access', 'calendar', 'pedagogy'])
+            }, 'Professor criado e vinculado.') : blockUnauthorizedAction()}
+            onUpdateTeacher={(id, draft) => isAdminProfile(roleProfile) ? runAction(async () => {
               const updated = await updateTeacher(token, id, draft)
               updateScreenData('schools', (current) => ({ ...current, teachers: replaceById(current.teachers, updated) }))
-              invalidateScreens(['access', 'calendar'])
-            }, 'Professor atualizado.')}
-            onCreateStudent={(draft) => runAction(async () => {
+              invalidateScreens(['access', 'calendar', 'pedagogy'])
+            }, 'Professor atualizado.') : blockUnauthorizedAction()}
+            onCreateStudent={(draft) => isAdminProfile(roleProfile) ? runAction(async () => {
               const created = await createStudent(token, draft)
               updateScreenData('schools', (current) => ({
                 ...current,
@@ -485,14 +1250,14 @@ export default function App() {
                   ? { ...guardian, studentIds: Array.from(new Set([...guardian.studentIds, created.id])) }
                   : guardian),
               }))
-              invalidateScreens(['dashboard', 'access'])
-            }, 'Aluno criado e vinculado.')}
-            onUpdateStudent={(id, draft) => runAction(async () => {
+              invalidateScreens(['dashboard', 'access', 'pedagogy'])
+            }, 'Aluno criado e vinculado.') : blockUnauthorizedAction()}
+            onUpdateStudent={(id, draft) => isAdminProfile(roleProfile) ? runAction(async () => {
               const updated = await updateStudent(token, id, draft)
               updateScreenData('schools', (current) => ({ ...current, students: replaceById(current.students, updated) }))
-              invalidateScreens(['dashboard', 'access'])
-            }, 'Aluno atualizado.')}
-            onCreateGuardian={(draft) => runAction(async () => {
+              invalidateScreens(['dashboard', 'access', 'pedagogy'])
+            }, 'Aluno atualizado.') : blockUnauthorizedAction()}
+            onCreateGuardian={(draft) => isAdminProfile(roleProfile) ? runAction(async () => {
               const created = await createGuardian(token, draft)
               updateScreenData('schools', (current) => ({
                 ...current,
@@ -502,12 +1267,111 @@ export default function App() {
                   : student),
               }))
               invalidateScreens(['access'])
-            }, 'Responsavel criado e vinculado.')}
-            onUpdateGuardian={(id, draft) => runAction(async () => {
+            }, 'Responsavel criado e vinculado.') : blockUnauthorizedAction()}
+            onUpdateGuardian={(id, draft) => isAdminProfile(roleProfile) ? runAction(async () => {
               const updated = await updateGuardian(token, id, draft)
               updateScreenData('schools', (current) => ({ ...current, guardians: replaceById(current.guardians, updated) }))
               invalidateScreens(['access'])
-            }, 'Responsavel atualizado.')}
+            }, 'Responsavel atualizado.') : blockUnauthorizedAction()}
+          />
+        )
+      }
+
+      case 'classes': {
+        const data = screenData.classes
+        if (!data) return renderMissingScreen('classes')
+        const scopedData = getScopedSchoolsData(data)
+
+        return (
+          <ClassesView
+            classes={scopedData.classes}
+            schools={scopedData.schools}
+            teachers={scopedData.teachers}
+            students={scopedData.students}
+            readOnly={!isAdminProfile(roleProfile)}
+            onCreate={(draft) => isAdminProfile(roleProfile) ? runAction(async () => {
+              const created = await createClassRoom(token, draft)
+              updateScreenData('schools', (current) => ({ ...current, classes: [created, ...current.classes] }))
+              invalidateScreens(['dashboard', 'evaluations', 'calendar', 'pedagogy'])
+            }, 'Turma criada com sucesso.') : blockUnauthorizedAction()}
+            onUpdate={(id, draft) => isAdminProfile(roleProfile) ? runAction(async () => {
+              const updated = await updateClassRoom(token, id, draft)
+              updateScreenData('schools', (current) => ({ ...current, classes: replaceById(current.classes, updated) }))
+              invalidateScreens(['dashboard', 'evaluations', 'calendar', 'pedagogy'])
+            }, 'Turma atualizada.') : blockUnauthorizedAction()}
+          />
+        )
+      }
+
+      case 'people': {
+        const data = screenData.people
+        if (!data) return renderMissingScreen('people')
+        const scopedData = getScopedSchoolsData(data)
+
+        return (
+          <PeopleView
+            schoolsData={scopedData}
+            currentUser={session.currentUser}
+            currentRole={userRole}
+            assetVersion={profileAssetVersion}
+            onLoadTeachersPage={(params) => listTeachersPage(token, params)}
+            onLoadStudentsPage={(params) => listStudentsPage(token, params)}
+          />
+        )
+      }
+
+      case 'pedagogy':
+      case 'teacher-subjects':
+      case 'room-reservations':
+      case 'lesson-records':
+      case 'attendance-list':
+      case 'student-performance':
+      case 'student-attendance':
+      case 'child-attendance':
+      case 'child-performance': {
+        const data = screenData[activeSection]
+        if (!data) return renderMissingScreen(activeSection)
+        const scopedData = getScopedSchoolsData(data)
+        const evaluationsData = activeSection === 'pedagogy'
+          ? getScopedPedagogyEvaluationData(data as PedagogyScreenPayload, scopedData)
+          : undefined
+
+        return (
+          <RolePortalView
+            section={activeSection}
+            profile={roleProfile}
+            currentUser={session.currentUser}
+            currentRole={userRole}
+            schoolsData={scopedData}
+            evaluationsData={evaluationsData}
+            onCreateRoomReservation={async (draft) => {
+              let createdReservation: RoomReservation | null = null
+
+              await runAction(async () => {
+                createdReservation = await createRoomReservation(token, draft)
+                updateScreenData('room-reservations', (current) => ({
+                  ...current,
+                  roomReservations: [
+                    createdReservation as RoomReservation,
+                    ...(current.roomReservations ?? []).filter((reservation) => reservation.id !== createdReservation?.id),
+                  ],
+                }))
+              }, 'Reserva salva no banco.')
+
+              if (!createdReservation) throw new Error('Nao foi possivel salvar a reserva.')
+              return createdReservation
+            }}
+            onCreateLessonRecord={async (draft) => {
+              let createdLesson: LessonRecord | null = null
+
+              await runAction(async () => {
+                createdLesson = await createLessonRecord(token, draft)
+                upsertLessonRecordInCachedScreens(createdLesson)
+              }, 'Registro de aula salvo no banco.')
+
+              if (!createdLesson) throw new Error('Nao foi possivel salvar o registro de aula.')
+              return createdLesson
+            }}
           />
         )
       }
@@ -515,34 +1379,47 @@ export default function App() {
       case 'evaluations': {
         const data = screenData.evaluations
         if (!data) return renderMissingScreen('evaluations')
+        const scopedData = getScopedEvaluationsData(data)
+        const canManageEvaluations = roleProfile === 'ADMIN' || roleProfile === 'PROFESSOR'
 
         return (
           <EvaluationsView
-            evaluations={data.evaluations}
-            classes={data.classes}
-            curriculumSkills={data.curriculumSkills ?? []}
-            assessmentDescriptors={data.assessmentDescriptors ?? []}
-            questionBank={data.questionBank ?? []}
-            questionImportPlans={data.questionImportPlans ?? []}
-            onCreate={(draft) => runAction(async () => {
+            currentUser={session.currentUser}
+            currentRole={userRole}
+            evaluations={scopedData.evaluations}
+            classes={scopedData.classes}
+            teachers={scopedData.teachers ?? []}
+            curriculumSkills={scopedData.curriculumSkills ?? []}
+            assessmentDescriptors={scopedData.assessmentDescriptors ?? []}
+            questionBank={scopedData.questionBank ?? []}
+            questionImportPlans={scopedData.questionImportPlans ?? []}
+            onCreate={(draft) => canManageEvaluations ? runAction(async () => {
               const created = await createEvaluation(token, draft)
               const createdWithBlueprint = {
                 ...created,
+                createdById: created.createdById ?? draft.createdById ?? session.currentUser.id,
+                createdByName: created.createdByName ?? draft.createdByName ?? session.currentUser.name,
                 buildMode: created.buildMode ?? draft.buildMode,
                 questionIds: created.questionIds ?? draft.questionIds,
+                questionSnapshots: created.questionSnapshots ?? draft.questionSnapshots,
                 skillCodes: created.skillCodes ?? draft.skillCodes,
                 descriptorCodes: created.descriptorCodes ?? draft.descriptorCodes,
                 sourceSummary: created.sourceSummary ?? draft.sourceSummary,
               }
               updateScreenData('evaluations', (current) => ({ ...current, evaluations: [createdWithBlueprint, ...current.evaluations] }))
-              invalidateScreens(['dashboard', 'calendar'])
-            }, 'Prova criada.')}
-            onDelete={(id) => runAction(async () => {
+              invalidateScreens(['dashboard', 'calendar', 'pedagogy'])
+            }, 'Prova criada.') : blockUnauthorizedAction('Seu perfil pode acompanhar provas, mas nao criar novas avaliacoes.')}
+            onDelete={(id) => isAdminProfile(roleProfile) ? runAction(async () => {
               await deleteEvaluation(token, id)
               updateScreenData('evaluations', (current) => ({ ...current, evaluations: removeById(current.evaluations, id) }))
-              invalidateScreens(['dashboard', 'calendar'])
-            }, 'Prova excluida.')}
+              invalidateScreens(['dashboard', 'calendar', 'pedagogy'])
+            }, 'Prova excluida.') : blockUnauthorizedAction('Somente ADMIN pode excluir provas.')}
             onCreateQuestion={async (draft) => {
+              if (!canManageEvaluations) {
+                await blockUnauthorizedAction('Seu perfil pode acompanhar questoes, mas nao criar novas.')
+                throw new Error('Acao nao permitida para este perfil.')
+              }
+
               let createdQuestion: Question | undefined
               await runAction(async () => {
                 createdQuestion = await createQuestion(token, draft)
@@ -550,10 +1427,51 @@ export default function App() {
                   ...current,
                   questionBank: [createdQuestion as Question, ...(current.questionBank ?? [])],
                 }))
+                invalidateScreens(['pedagogy'])
               }, 'Questao salva no banco.')
 
               if (!createdQuestion) throw new Error('A API nao retornou a questao criada.')
               return createdQuestion
+            }}
+            onGenerateQuestions={async (draft) => {
+              if (!canManageEvaluations) {
+                await blockUnauthorizedAction('Seu perfil pode acompanhar questoes, mas nao gerar selecoes.')
+                throw new Error('Acao nao permitida para este perfil.')
+              }
+
+              try {
+                return await generateQuestionSelection(token, draft)
+              } catch (error) {
+                if (error instanceof ApiError && error.statusCode === 404) {
+                  return buildLocalQuestionSelection(scopedData.questionBank ?? [], draft)
+                }
+
+                throw error
+              }
+            }}
+            onDeleteQuestion={async (id) => {
+              if (!canManageEvaluations) {
+                await blockUnauthorizedAction('Seu perfil pode acompanhar questoes, mas nao excluir.')
+                throw new Error('Acao nao permitida para este perfil.')
+              }
+
+              await runAction(async () => {
+                await deleteQuestion(token, id)
+                updateScreenData('evaluations', (current) => ({
+                  ...current,
+                  questionBank: (current.questionBank ?? []).filter((question) => question.id !== id),
+                  evaluations: current.evaluations.map((evaluation) => (
+                    evaluation.questionIds?.includes(id) && !evaluation.questionSnapshots?.some((question) => question.id === id)
+                      ? {
+                          ...evaluation,
+                          questionIds: evaluation.questionIds.filter((questionId) => questionId !== id),
+                          questions: Math.max(0, evaluation.questionIds.filter((questionId) => questionId !== id).length || evaluation.questions - 1),
+                        }
+                      : evaluation
+                  )),
+                }))
+                invalidateScreens(['dashboard', 'pedagogy'])
+              }, 'Questao excluida.')
             }}
           />
         )
@@ -562,30 +1480,40 @@ export default function App() {
       case 'calendar': {
         const data = screenData.calendar
         if (!data) return renderMissingScreen('calendar')
+        const scopedData = getScopedCalendarData(data)
+        const canCreateCalendar = roleProfile === 'ADMIN' || roleProfile === 'PROFESSOR'
+        const currentCalendarCreatorIds = new Set([
+          session.currentUser.id,
+          session.currentUser.linkedTeacherId,
+          session.currentUser.linkedStudentId,
+          session.currentUser.linkedGuardianId,
+        ].filter((id): id is string => Boolean(id)))
+        const canManageCalendarEvent = (id: string) => {
+          if (roleProfile === 'ADMIN') return true
+          const event = data.calendarEvents.find((item) => item.id === id)
+          return Boolean(event?.createdById && currentCalendarCreatorIds.has(event.createdById))
+        }
 
         return (
           <CalendarView
             currentUser={session.currentUser}
             currentRole={userRole}
-            calendarEvents={data.calendarEvents}
-            schools={data.schools}
-            classes={data.classes}
-            evaluations={data.evaluations}
-            onCreate={(draft) => runAction(async () => {
-              const created = await createCalendarEvent(token, draft)
-              updateScreenData('calendar', (current) => ({ ...current, calendarEvents: [created, ...current.calendarEvents] }))
-              void loadScreen('calendar', token)
-            }, 'Evento adicionado ao calendario.')}
-            onUpdate={(id, draft) => runAction(async () => {
-              const updated = await updateCalendarEvent(token, id, draft)
-              updateScreenData('calendar', (current) => ({ ...current, calendarEvents: replaceById(current.calendarEvents, updated) }))
-              void loadScreen('calendar', token)
-            }, 'Evento atualizado no calendario.')}
-            onDelete={(id) => runAction(async () => {
+            calendarEvents={scopedData.calendarEvents}
+            schools={scopedData.schools}
+            classes={scopedData.classes}
+            evaluations={scopedData.evaluations}
+            onCreate={(draft) => canCreateCalendar ? runAction(async () => {
+              await createCalendarEvent(token, draft)
+              await loadScreen('calendar', token)
+            }, 'Evento adicionado ao calendario.') : blockUnauthorizedAction('Seu perfil visualiza calendario, mas nao edita eventos.')}
+            onUpdate={(id, draft) => canManageCalendarEvent(id) ? runAction(async () => {
+              await updateCalendarEvent(token, id, draft)
+              await loadScreen('calendar', token)
+            }, 'Evento atualizado no calendario.') : blockUnauthorizedAction('Apenas o criador do evento ou um Admin pode editar este evento.')}
+            onDelete={(id) => canManageCalendarEvent(id) ? runAction(async () => {
               await deleteCalendarEvent(token, id)
-              updateScreenData('calendar', (current) => ({ ...current, calendarEvents: removeById(current.calendarEvents, id) }))
-              void loadScreen('calendar', token)
-            }, 'Evento removido do calendario.')}
+              await loadScreen('calendar', token)
+            }, 'Evento removido do calendario.') : blockUnauthorizedAction('Apenas o criador do evento ou um Admin pode excluir este evento.')}
           />
         )
       }
@@ -593,28 +1521,80 @@ export default function App() {
       case 'meals': {
         const data = screenData.meals
         if (!data) return renderMissingScreen('meals')
+        const scopedData = getScopedMealsData(data)
+        const canManageMeals = roleProfile === 'ADMIN'
+        const canCreateFoodRequest = roleProfile === 'ADMIN' || roleProfile === 'DIRETOR'
+        const canAddRequestToStock = roleProfile === 'ADMIN'
 
         return (
           <MealsView
+            currentUser={session.currentUser}
             currentRole={userRole}
-            schools={data.schools}
-            mealManagements={data.mealManagements}
-            onLoadSchoolPage={(page, limit) => listMealManagementSchoolPage(token, page, limit)}
+            schools={scopedData.schools}
+            mealManagements={scopedData.mealManagements}
+            foodRequests={scopedData.foodRequests ?? []}
+            mealRequestHistory={scopedData.mealRequestHistory ?? []}
+            onLoadSchoolPage={(page, limit) => (
+              roleProfile === 'ADMIN' || roleProfile === 'NUTRITIONIST'
+                ? listMealManagementSchoolPage(token, page, limit)
+                : Promise.resolve(buildMealManagementsPagePayload(scopedData, page, limit))
+            )}
             onSearchFoods={(query, limit) => searchMealFoods(token, query, limit)}
-            onCreateItem={(managementId, draft) => runAction(async () => {
+            onCreateFoodRequest={(draft) => canCreateFoodRequest ? runAction(async () => {
+              await createMealFoodRequest(token, draft)
+              await loadScreen('meals', token)
+            }, 'Solicitacao enviada ao nutricionista.') : blockUnauthorizedAction('Seu perfil nao pode criar solicitacoes de merenda.')}
+            onUpdateFoodRequest={(id, draft) => canCreateFoodRequest ? runAction(async () => {
+              await updateMealFoodRequest(token, id, draft)
+              await loadScreen('meals', token)
+            }, 'Solicitacao atualizada e reenviada ao nutricionista.') : blockUnauthorizedAction('Seu perfil nao pode editar solicitacoes de merenda.')}
+            onDeleteFoodRequest={(id) => canCreateFoodRequest ? runAction(async () => {
+              await deleteMealFoodRequest(token, id)
+              await loadScreen('meals', token)
+            }, 'Solicitacao excluida.') : blockUnauthorizedAction('Seu perfil nao pode excluir solicitacoes de merenda.')}
+            onAddFoodRequestToStock={(id, draft) => canAddRequestToStock ? runAction(async () => {
+              await addMealFoodRequestToStock(token, id, draft)
+              await loadScreen('meals', token)
+            }, 'Solicitacao adicionada ao estoque oficial.') : blockUnauthorizedAction('Apenas Admin pode adicionar solicitacoes ao estoque.')}
+            onCreateManagement={(draft: CreateMealManagementPayload) => canManageMeals ? runAction(async () => {
+              const created = await createMealManagement(token, draft)
+              updateScreenData('meals', (current) => ({
+                ...current,
+                mealManagements: upsertById(current.mealManagements, created),
+              }))
+            }, 'Gestao alimentar criada para a escola.') : blockUnauthorizedAction('Apenas Admin pode criar gestao alimentar.')}
+            onCreateItem={(managementId, draft) => canManageMeals ? runAction(async () => {
               const updated = await createMealItem(token, managementId, draft)
               updateScreenData('meals', (current) => ({
                 ...current,
                 mealManagements: replaceById(current.mealManagements, updated),
               }))
-            }, 'Item adicionado ao estoque da merenda.')}
-            onUpdateBudget={(managementId, draft) => runAction(async () => {
+            }, 'Item adicionado ao estoque da merenda.') : blockUnauthorizedAction('Seu perfil pode acompanhar merenda, mas nao alterar estoque.')}
+            onUpdateBudget={(managementId, draft) => canManageMeals ? runAction(async () => {
               const updated = await updateMealBudget(token, managementId, draft)
               updateScreenData('meals', (current) => ({
                 ...current,
                 mealManagements: replaceById(current.mealManagements, updated),
               }))
-            }, 'Orcamento atualizado.')}
+            }, 'Orcamento atualizado.') : blockUnauthorizedAction('Seu perfil pode acompanhar merenda, mas nao alterar orcamento.')}
+          />
+        )
+      }
+
+      case 'food-requests': {
+        const data = screenData['food-requests']
+        if (!data) return renderMissingScreen('food-requests')
+        const scopedData = getScopedMealsData(data)
+
+        return (
+          <NutritionRequestsView
+            schools={scopedData.schools}
+            mealManagements={scopedData.mealManagements}
+            foodRequests={scopedData.foodRequests ?? []}
+            onReview={(id, draft) => runAction(async () => {
+              await reviewMealFoodRequest(token, id, draft)
+              await loadScreen('food-requests', token)
+            }, 'Solicitacao avaliada.')}
           />
         )
       }
@@ -622,6 +1602,7 @@ export default function App() {
       case 'access': {
         const data = screenData.access
         if (!data) return renderMissingScreen('access')
+        if (!isAdminProfile(roleProfile)) return <ScreenErrorState title="Acesso restrito" description="Apenas ADMIN pode gerenciar cargos e permissoes." onRetry={() => navigateToSection(fallbackSection, 'replace')} />
 
         return (
           <AccessView
@@ -644,6 +1625,23 @@ export default function App() {
                 } : current)
               }
             }, 'Cargo do usuario atualizado.')}
+          />
+        )
+      }
+
+      case 'notifications': {
+        const data = screenData.notifications
+        if (!data) return renderMissingScreen('notifications')
+        const scopedData = getScopedNotificationsData(data)
+
+        return (
+          <NotificationsView
+            notifications={scopedData.notifications}
+            unreadCount={scopedData.unreadCount}
+            totalCount={scopedData.totalCount}
+            onMarkRead={handleMarkNotificationRead}
+            onMarkUnread={handleMarkNotificationUnread}
+            onMarkAllRead={handleMarkAllNotificationsRead}
           />
         )
       }
@@ -698,10 +1696,19 @@ export default function App() {
     )
   }
 
+  if (isLandingPath(route)) return <LandingPage />
+
   if (!token && !isLoginPath(route)) return <LandingPage />
 
   if (!token) {
-    return <LoginView errorMessage={authError} isSubmitting={isSubmitting} onSubmit={handleLogin} />
+    return (
+      <LoginView
+        errorMessage={authError}
+        isSubmitting={isSubmitting}
+        onBackToLanding={() => navigateToPath('/landing')}
+        onSubmit={handleLogin}
+      />
+    )
   }
 
   if (isSessionLoading || !session) {
@@ -713,11 +1720,13 @@ export default function App() {
     )
   }
 
+  const scopedNotificationsData = screenData.notifications ? getScopedNotificationsData(screenData.notifications) : null
+
   return (
     <div className="relative flex min-h-screen font-['DM_Sans'] text-slate-900">
       <Sidebar
         appName={appName}
-        items={navItems}
+        items={visibleNavItems}
         activeSection={activeSection}
         mobileOpen={mobileOpen}
         collapsed={sidebarCollapsed}
@@ -735,10 +1744,18 @@ export default function App() {
           avatarUrl={resolveApiAssetUrl(session.currentUser.avatarUrl, profileAssetVersion.avatar)}
           bannerUrl={resolveApiAssetUrl(session.currentUser.bannerUrl, profileAssetVersion.banner)}
           initials={userInitials}
-          alertCount={screenData.dashboard?.dashboard.alerts.length ?? session.alertCount}
+          alertCount={scopedNotificationsData?.unreadCount ?? session.alertCount}
+          notifications={(scopedNotificationsData?.notifications ?? []).filter((notification) => !notification.readAt).slice(0, 5)}
+          notificationsLoading={Boolean(screenLoading.notifications)}
           onOpenMenu={() => setMobileOpen((current) => !current)}
           sidebarCollapsed={sidebarCollapsed}
           onToggleSidebar={() => setSidebarCollapsed((current) => !current)}
+          onOpenNotifications={() => {
+            if (!screenData.notifications && !screenLoading.notifications) void loadScreen('notifications')
+          }}
+          onViewAllNotifications={() => handleSectionChange('notifications')}
+          onMarkNotificationRead={handleMarkNotificationRead}
+          onMarkAllNotificationsRead={handleMarkAllNotificationsRead}
           onOpenProfile={() => handleSectionChange('settings')}
           onLogout={handleLogout}
         />

@@ -1,5 +1,6 @@
 ﻿import { FormEvent, useState } from 'react'
 import { motion } from 'motion/react'
+import { z } from 'zod'
 import {
   AlertTriangle,
   ArrowRight,
@@ -19,8 +20,14 @@ import {
 import type { ReactNode } from 'react'
 
 import { appName } from '../data'
+import { FieldMessage, zodFieldErrors, type FieldErrors } from '../components/ui/form-field'
 
 const loginBg = '/FundoPreto.jpg'
+const loginSchema = z.object({
+  email: z.string().trim().min(3, 'Informe e-mail, login ou matrícula.'),
+  password: z.string().min(1, 'Informe sua senha.'),
+})
+type LoginFormField = keyof z.infer<typeof loginSchema>
 
 function AnimatedBackground() {
   return (
@@ -46,17 +53,26 @@ function AnimatedBackground() {
 interface LoginViewProps {
   errorMessage: string | null
   isSubmitting: boolean
+  onBackToLanding: () => void
   onSubmit: (credentials: { email: string; password: string }) => Promise<void>
 }
 
-export default function LoginView({ errorMessage, isSubmitting, onSubmit }: LoginViewProps) {
+export default function LoginView({ errorMessage, isSubmitting, onBackToLanding, onSubmit }: LoginViewProps) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors<LoginFormField>>({})
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    await onSubmit({ email: email.trim(), password })
+    const result = loginSchema.safeParse({ email, password })
+    if (!result.success) {
+      setFieldErrors(zodFieldErrors<LoginFormField>(result.error))
+      return
+    }
+
+    setFieldErrors({})
+    await onSubmit(result.data)
   }
 
   return (
@@ -289,14 +305,15 @@ export default function LoginView({ errorMessage, isSubmitting, onSubmit }: Logi
 
           {/* Topo: voltar + badge */}
           <div className="mobile-hero-toprow">
-            <a
-              href="/"
+            <button
+              type="button"
+              onClick={onBackToLanding}
               className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[11px] font-medium transition-all"
-              style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.12)', color: 'rgba(255,255,255,0.60)' }}
+              style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.12)', color: 'rgba(255,255,255,0.60)', cursor: 'pointer' }}
             >
               <MoveLeft className="h-3 w-3" />
               <span>Voltar</span>
-            </a>
+            </button>
             <div className="flex items-center gap-1.5 rounded-full px-2.5 py-1" style={{ background: 'rgba(212,175,90,0.10)', border: '1px solid rgba(212,175,90,0.22)' }}>
               <span className="w-1.5 h-1.5 rounded-full" style={{ background: '#d4af5a', boxShadow: '0 0 5px rgba(212,175,90,0.6)' }} />
               <span className="text-[9.5px] font-semibold tracking-[0.14em] uppercase" style={{ color: 'rgba(212,175,90,0.90)' }}>Plataforma ativa</span>
@@ -345,13 +362,16 @@ export default function LoginView({ errorMessage, isSubmitting, onSubmit }: Logi
 
           <div className="relative z-10 flex flex-col gap-6">
             <div className="flex items-center justify-between">
-              <a href="/" className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-medium transition-all"
-                style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.12)', color: 'rgba(255,255,255,0.60)' }}
+              <button
+                type="button"
+                onClick={onBackToLanding}
+                className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-medium transition-all"
+                style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.12)', color: 'rgba(255,255,255,0.60)', cursor: 'pointer' }}
                 onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.14)'; (e.currentTarget as HTMLElement).style.color = 'rgba(255,255,255,0.90)' }}
                 onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.08)'; (e.currentTarget as HTMLElement).style.color = 'rgba(255,255,255,0.60)' }}
               >
                 <MoveLeft className="h-3 w-3" /><span>Voltar</span>
-              </a>
+              </button>
               <div className="flex items-center gap-1.5 rounded-full px-3 py-1" style={{ background: 'rgba(212,175,90,0.10)', border: '1px solid rgba(212,175,90,0.22)' }}>
                 <span className="w-1.5 h-1.5 rounded-full" style={{ background: '#d4af5a', boxShadow: '0 0 6px rgba(212,175,90,0.65)' }} />
                 <span className="text-[10px] font-semibold tracking-[0.15em] uppercase" style={{ color: 'rgba(212,175,90,0.90)' }}>Plataforma ativa</span>
@@ -420,28 +440,38 @@ export default function LoginView({ errorMessage, isSubmitting, onSubmit }: Logi
               </p>
             </div>
 
-            <form onSubmit={handleSubmit} className="login-form-body flex flex-col gap-3.5">
-              <FieldShell label="E-mail, login ou matrícula">
+            <form onSubmit={handleSubmit} className="login-form-body flex flex-col gap-3.5" noValidate>
+              <FieldShell
+                label="E-mail, login ou matrícula"
+                hint="Digite o e-mail, login cadastrado ou matrícula do aluno."
+                error={fieldErrors.email}
+              >
                 <Mail className="h-4 w-4 shrink-0" style={{ color: '#bbb8b3' }} />
                 <input
                   type="text"
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  onChange={(e) => {
+                    setEmail(e.target.value)
+                    setFieldErrors((current) => ({ ...current, email: undefined }))
+                  }}
                   placeholder="Digite seu e-mail, login ou matrícula"
-                  required
+                  aria-invalid={Boolean(fieldErrors.email) || undefined}
                   className="h-full w-full bg-transparent text-sm font-medium outline-none"
                   style={{ fontFamily: "'DM Sans', sans-serif", color: '#0e1117' }}
                 />
               </FieldShell>
 
-              <FieldShell label="Senha">
+              <FieldShell label="Senha" hint="Digite a senha da sua conta." error={fieldErrors.password}>
                 <KeyRound className="h-4 w-4 shrink-0" style={{ color: '#bbb8b3' }} />
                 <input
                   type={showPassword ? 'text' : 'password'}
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  onChange={(e) => {
+                    setPassword(e.target.value)
+                    setFieldErrors((current) => ({ ...current, password: undefined }))
+                  }}
                   placeholder="Digite sua senha"
-                  required
+                  aria-invalid={Boolean(fieldErrors.password) || undefined}
                   className="h-full w-full bg-transparent text-sm font-medium outline-none"
                   style={{ fontFamily: "'DM Sans', sans-serif", color: '#0e1117' }}
                 />
@@ -495,7 +525,17 @@ export default function LoginView({ errorMessage, isSubmitting, onSubmit }: Logi
 
 // ─── Sub-componentes ────────────────────────────────────────────────────────
 
-function FieldShell({ label, children }: { label: string; children: ReactNode }) {
+function FieldShell({
+  label,
+  children,
+  hint,
+  error,
+}: {
+  label: string
+  children: ReactNode
+  hint?: string
+  error?: string | null
+}) {
   return (
     <label className="block">
       <span className="mb-1.5 block text-[11.5px] font-medium tracking-[0.04em]" style={{ fontFamily: "'DM Sans', sans-serif", color: '#706e6a' }}>
@@ -503,12 +543,13 @@ function FieldShell({ label, children }: { label: string; children: ReactNode })
       </span>
       <span
         className="login-field-control flex h-11 items-center gap-3 rounded-[10px] px-4 transition-all duration-200"
-        style={{ border: '1px solid #d8d6cf', background: '#ffffff' }}
-        onFocusCapture={e => { (e.currentTarget as HTMLElement).style.borderColor = '#c9a94e'; (e.currentTarget as HTMLElement).style.boxShadow = '0 0 0 3px rgba(201,169,78,0.14)' }}
-        onBlurCapture={e => { (e.currentTarget as HTMLElement).style.borderColor = '#d8d6cf'; (e.currentTarget as HTMLElement).style.boxShadow = 'none' }}
+        style={{ border: `1px solid ${error ? '#f5c2c7' : '#d8d6cf'}`, background: error ? '#fff5f5' : '#ffffff' }}
+        onFocusCapture={e => { (e.currentTarget as HTMLElement).style.borderColor = '#6366f1'; (e.currentTarget as HTMLElement).style.boxShadow = '0 0 0 3px rgba(201,169,78,0.14)' }}
+        onBlurCapture={e => { (e.currentTarget as HTMLElement).style.borderColor = error ? '#f5c2c7' : '#d8d6cf'; (e.currentTarget as HTMLElement).style.boxShadow = 'none' }}
       >
         {children}
       </span>
+      <FieldMessage hint={hint} error={error} className="mt-1.5" />
     </label>
   )
 }

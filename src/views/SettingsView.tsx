@@ -8,6 +8,8 @@ import { z } from 'zod'
 import { resolveApiAssetUrl } from '../api'
 import { AvatarHoverPreview } from '../components/profile/AvatarSign'
 import DateInput from '../components/ui/date-input'
+import { FieldMessage, fieldStateClass } from '../components/ui/form-field'
+import { PageTitleBar } from '../components/ui/page-title-bar'
 import type { UserAccount } from '../types'
 
 interface SettingsViewProps {
@@ -113,11 +115,7 @@ function Field({
         {label}
       </span>
       {children}
-      {error
-        ? <span className="flex items-center gap-1 text-[11px] font-bold text-red-600 normal-case tracking-normal"><AlertCircle size={11} />{error}</span>
-        : hint
-        ? <span className="text-[11px] text-slate-400 normal-case tracking-normal">{hint}</span>
-        : null}
+      <FieldMessage hint={hint} error={error} />
     </label>
   )
 }
@@ -403,6 +401,11 @@ export default function SettingsView({ currentUser, assetVersion, onSave }: Sett
     .map((c) => c[0]?.toUpperCase() ?? '')
     .join('')
 
+  function updateDraftField<K extends keyof ProfileFormDraft>(field: K, value: ProfileFormDraft[K]) {
+    setErrors((current) => ({ ...current, [field]: undefined }))
+    setDraft((current) => ({ ...current, [field]: value }))
+  }
+
   function handleAvatarChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0] ?? null
     if (!file) return
@@ -621,23 +624,18 @@ export default function SettingsView({ currentUser, assetVersion, onSave }: Sett
       <div className="sv-page grid min-h-screen gap-4 bg-slate-50 px-[clamp(12px,2.5vw,40px)] py-6 pb-12 text-slate-900">
 
         {/* ═══ HEADER BAR ═══ */}
-        <div className="sv-section flex items-center justify-between gap-4 rounded-xl border border-slate-400 bg-white px-5 py-3.5 shadow-sm">
-          <div className="flex items-center gap-3">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-600 shadow-sm">
-              <UserRound size={15} className="text-white" />
-            </div>
-            <div>
-              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-indigo-500">Conta</p>
-              <p className="text-sm font-bold text-slate-800 leading-none mt-0.5">Configurações de perfil</p>
-            </div>
-          </div>
-          {hasChanges && (
+        <PageTitleBar
+          className="sv-section"
+          label="Conta"
+          title="Configurações de perfil"
+          icon={<UserRound />}
+          actions={hasChanges && (
             <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-300 bg-amber-50 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-amber-700">
               <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
               Alterações pendentes
             </span>
           )}
-        </div>
+        />
 
         {loading ? (
           <>
@@ -689,7 +687,7 @@ export default function SettingsView({ currentUser, assetVersion, onSave }: Sett
               onBannerRestore={() => setRemoveBannerPending(false)}
             />
 
-            <form onSubmit={handleSubmit} className="relative z-0 grid gap-4">
+            <form onSubmit={handleSubmit} className="relative z-0 grid gap-4" noValidate>
 
               {/* ─ Dados pessoais ─ */}
               <SectionCard label="Dados pessoais" title="Identificação" icon={UserRound} iconColor="bg-indigo-600">
@@ -698,24 +696,26 @@ export default function SettingsView({ currentUser, assetVersion, onSave }: Sett
                   <div className="col-span-2 max-[580px]:col-span-1">
                     <Field label="Nome completo" icon={UserRound} error={errors.name} hint="Mínimo 3 caracteres, máximo 120.">
                       <input
-                        className={inputCls}
+                        className={`${inputCls} ${fieldStateClass(errors.name)}`}
                         value={draft.name}
-                        onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+                        onChange={(e) => updateDraftField('name', e.target.value)}
                         placeholder="Seu nome completo"
+                        aria-invalid={Boolean(errors.name) || undefined}
                         required
                       />
                     </Field>
                   </div>
 
                   <div className="col-span-2 max-[580px]:col-span-1">
-                    <Field label="E-mail" icon={Mail} error={errors.email}>
+                    <Field label="E-mail" icon={Mail} error={errors.email} hint="Digite um e-mail válido para acesso e notificações.">
                       <div className="sv-input-wrap">
                         <input
-                          className={inputIconCls}
+                          className={`${inputIconCls} ${fieldStateClass(errors.email)}`}
                           type="email"
                           value={draft.email}
-                          onChange={(e) => setDraft({ ...draft, email: e.target.value })}
+                          onChange={(e) => updateDraftField('email', e.target.value)}
                           placeholder="Digite seu e-mail"
+                          aria-invalid={Boolean(errors.email) || undefined}
                           required
                         />
                         <Mail size={13} className="sv-input-icon" />
@@ -726,22 +726,23 @@ export default function SettingsView({ currentUser, assetVersion, onSave }: Sett
                   <Field label="Telefone" icon={Phone} error={errors.phone} hint="Com DDD.">
                     <div className="sv-input-wrap">
                       <input
-                        className={inputIconCls}
+                        className={`${inputIconCls} ${fieldStateClass(errors.phone)}`}
                         inputMode="tel"
                         maxLength={15}
                         value={draft.phone}
-                        onChange={(e) => setDraft({ ...draft, phone: formatPhone(e.target.value) })}
+                        onChange={(e) => updateDraftField('phone', formatPhone(e.target.value))}
                         placeholder="(00) 00000-0000"
+                        aria-invalid={Boolean(errors.phone) || undefined}
                       />
                       <Phone size={13} className="sv-input-icon" />
                     </div>
                   </Field>
 
-                  <Field label="Data de nascimento" icon={Calendar} error={errors.birthDate}>
+                  <Field label="Data de nascimento" icon={Calendar} error={errors.birthDate} hint="Opcional: selecione sua data de nascimento.">
                     <DateInput
-                      className={inputCls}
+                      className={`${inputCls} ${fieldStateClass(errors.birthDate)}`}
                       value={draft.birthDate}
-                      onChange={(e) => setDraft({ ...draft, birthDate: e.target.value })}
+                      onChange={(e) => updateDraftField('birthDate', e.target.value)}
                     />
                   </Field>
 
@@ -756,12 +757,13 @@ export default function SettingsView({ currentUser, assetVersion, onSave }: Sett
                     <Field label="CPF" icon={CreditCard} error={errors.cpf} hint="Somente números ou formato 000.000.000-00.">
                       <div className="sv-input-wrap">
                         <input
-                          className={inputIconCls}
+                          className={`${inputIconCls} ${fieldStateClass(errors.cpf)}`}
                           inputMode="numeric"
                           maxLength={14}
                           value={draft.cpf}
-                          onChange={(e) => setDraft({ ...draft, cpf: formatCpf(e.target.value) })}
+                          onChange={(e) => updateDraftField('cpf', formatCpf(e.target.value))}
                           placeholder="000.000.000-00"
+                          aria-invalid={Boolean(errors.cpf) || undefined}
                         />
                         <CreditCard size={13} className="sv-input-icon" />
                       </div>

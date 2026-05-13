@@ -13,8 +13,13 @@ RUN npm run build
 
 FROM nginx:1.27-alpine AS production
 
-COPY nginx.conf /etc/nginx/conf.d/default.conf
-COPY --from=build /app/dist /usr/share/nginx/html
+RUN touch /var/run/nginx.pid \
+  && chown -R nginx:nginx /var/cache/nginx /var/run/nginx.pid /usr/share/nginx/html
 
-EXPOSE 80
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build --chown=nginx:nginx /app/dist /usr/share/nginx/html
+
+USER nginx
+
+EXPOSE 8080
 

@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+import { z } from 'zod'
 import {
   AlertTriangle,
   Apple,
@@ -29,6 +30,7 @@ import {
   Soup,
   ToggleLeft,
   ToggleRight,
+  Trash2,
   TrendingUp,
   Utensils,
   Wallet,
@@ -38,29 +40,54 @@ import {
 } from 'lucide-react'
 
 import DateInput from '../components/ui/date-input'
+import { CompactSelect, type CompactSelectOption } from '../components/ui/compact-select'
+import { ConfirmDialog } from '../components/ui/confirm-dialog'
+import { PageTitleBar } from '../components/ui/page-title-bar'
+import { FieldMessage, fieldStateClass, zodFieldErrors, type FieldErrors } from '../components/ui/form-field'
+import { formatCurrencyInput, formatCurrencyInputValue } from '../lib/currency'
+import { formatMealUnit, mealUnitLabels, mealUnitOrder } from '../lib/meal-formatters'
 import type {
+  AddMealFoodRequestToStockPayload,
+  CreateMealManagementPayload,
+  CreateMealFoodRequestPayload,
   CreateMealItemPayload,
+  FoodRequestStatus,
+  FoodRequestUrgency,
   MealBudgetStatus,
   MealFood,
+  MealFoodRequest,
+  MealItem,
   MealManagement,
   MealManagementsPagePayload,
   MealMenu,
+  MealRequestHistory,
   MealStockItem,
   MealStockStatus,
+  MealUnit,
   Role,
   School,
   UpdateMealBudgetPayload,
+  UpdateMealFoodRequestPayload,
+  UserAccount,
 } from '../types'
 
 /* ─────────────────────────────────────────────
    Types
 ───────────────────────────────────────────── */
 interface MealsViewProps {
+  currentUser: UserAccount
   currentRole: Role | null
   schools: School[]
   mealManagements: MealManagement[]
+  foodRequests: MealFoodRequest[]
+  mealRequestHistory: MealRequestHistory[]
   onLoadSchoolPage: (page: number, limit: number) => Promise<MealManagementsPagePayload>
   onSearchFoods: (query: string, limit?: number) => Promise<MealFood[]>
+  onCreateFoodRequest: (draft: CreateMealFoodRequestPayload) => Promise<void>
+  onUpdateFoodRequest: (id: string, draft: UpdateMealFoodRequestPayload) => Promise<void>
+  onDeleteFoodRequest: (id: string) => Promise<void>
+  onAddFoodRequestToStock: (id: string, draft: AddMealFoodRequestToStockPayload) => Promise<void>
+  onCreateManagement: (draft: CreateMealManagementPayload) => Promise<void>
   onCreateItem: (managementId: string, draft: CreateMealItemPayload) => Promise<void>
   onUpdateBudget: (managementId: string, draft: UpdateMealBudgetPayload) => Promise<void>
 }
@@ -75,6 +102,60 @@ type MealFormState = {
   quantidadeMinima: string
   possuiValidade: boolean
 }
+
+type FoodRequestFormState = {
+  itemName: string
+  quantity: string
+  unit: MealUnit
+  unitPrice: string
+  reason: string
+  urgencyLevel: FoodRequestUrgency
+  expirationDate: string
+  observation: string
+}
+type FoodRequestFormField = keyof FoodRequestFormState
+
+const mealUnitOptions: Array<CompactSelectOption<MealUnit>> = mealUnitOrder.map((unit) => ({ value: unit, label: mealUnitLabels[unit] }))
+
+const foodRequestStatusLabels: Record<FoodRequestStatus, string> = {
+  PENDING_NUTRITIONIST_APPROVAL: 'Aguardando aprovação do nutricionista',
+  APPROVED_BY_NUTRITIONIST: 'Aprovado pelo nutricionista',
+  REJECTED_BY_NUTRITIONIST: 'Reprovado pelo nutricionista',
+  NEEDS_ADJUSTMENT: 'Necessita ajuste',
+  PENDING_PURCHASE: 'Aguardando compra',
+  PURCHASED: 'Comprado',
+  ADDED_TO_STOCK: 'Adicionado ao estoque',
+  CANCELLED: 'Cancelado',
+}
+
+const foodRequestUrgencyLabels: Record<FoodRequestUrgency, string> = {
+  LOW: 'Baixa',
+  MEDIUM: 'Média',
+  HIGH: 'Alta',
+  URGENT: 'Urgente',
+}
+
+const foodRequestUrgencyOptions: Array<CompactSelectOption<FoodRequestUrgency>> = (
+  Object.keys(foodRequestUrgencyLabels) as FoodRequestUrgency[]
+).map((urgency) => ({ value: urgency, label: foodRequestUrgencyLabels[urgency] }))
+
+const creatorFoodRequestMutationStatuses = new Set<FoodRequestStatus>([
+  'PENDING_NUTRITIONIST_APPROVAL',
+  'NEEDS_ADJUSTMENT',
+  'REJECTED_BY_NUTRITIONIST',
+])
+
+const foodRequestSchema = z.object({
+  itemName: z.string().trim().min(1, 'Informe o alimento.'),
+  quantity: z.coerce.number().positive('Quantidade deve ser maior que zero.'),
+  unit: z.enum(['KG', 'G', 'L', 'ML', 'UNIT', 'BOX', 'PACKAGE', 'DOZEN']),
+  unitPrice: z.preprocess((value) => typeof value === 'string' ? value : '', z.string().trim())
+    .refine((value) => !value || (Number.isFinite(parseDecimalInput(value)) && parseDecimalInput(value) > 0), 'Valor unitário deve ser maior que zero.'),
+  reason: z.string().trim().min(1, 'Informe o motivo da solicitação.'),
+  urgencyLevel: z.enum(['LOW', 'MEDIUM', 'HIGH', 'URGENT']),
+  expirationDate: z.string().trim().optional(),
+  observation: z.string().trim().optional(),
+})
 
 type MovementsModalState = {
   management: MealManagement
@@ -204,7 +285,8 @@ const mealTypeOrder: Record<MealMenu['tipoRefeicao'], number> = {
 
 const defaultSupplier = 'Distribuidora Alimentos Brasil'
 const schoolSelectorPageSize = 5
-const foodSuggestionLimit = 4
+const foodSuggestionLimit = 5
+const virtualMealManagementPrefix = 'virtual-meal-management-'
 
 function formatMonthReference(monthReference: string) {
   const [year, month] = monthReference.split('-').map(Number)
@@ -229,6 +311,139 @@ function getWeekdayIndex(value: string) {
   if (normalized.includes('sexta')) return 5
   if (normalized.includes('sabado')) return 6
   return -1
+}
+
+function getCurrentMonthReference() {
+  const now = new Date()
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+}
+
+const demoMealFoods: MealFood[] = [
+  { id: 101, nome: 'Arroz Branco', categoria: 'Cereal', unidadeMedida: 'KG', iconKey: 'wheat', ativo: true, criadoEm: '2026-05-01T12:00:00.000Z' },
+  { id: 102, nome: 'Feijão Carioca', categoria: 'Leguminosa', unidadeMedida: 'KG', iconKey: 'bean', ativo: true, criadoEm: '2026-05-01T12:00:00.000Z' },
+  { id: 103, nome: 'Frango Desfiado', categoria: 'Proteína', unidadeMedida: 'KG', iconKey: 'drumstick', ativo: true, criadoEm: '2026-05-01T12:00:00.000Z' },
+  { id: 104, nome: 'Macarrão', categoria: 'Massa', unidadeMedida: 'KG', iconKey: 'wheat', ativo: true, criadoEm: '2026-05-01T12:00:00.000Z' },
+  { id: 105, nome: 'Leite Integral', categoria: 'Laticínio', unidadeMedida: 'L', iconKey: 'milk', ativo: true, criadoEm: '2026-05-01T12:00:00.000Z' },
+  { id: 106, nome: 'Banana Prata', categoria: 'Fruta', unidadeMedida: 'KG', iconKey: 'banana', ativo: true, criadoEm: '2026-05-01T12:00:00.000Z' },
+  { id: 107, nome: 'Maçã Nacional', categoria: 'Fruta', unidadeMedida: 'KG', iconKey: 'apple', ativo: true, criadoEm: '2026-05-01T12:00:00.000Z' },
+  { id: 108, nome: 'Iogurte', categoria: 'Laticínio', unidadeMedida: 'L', iconKey: 'milk', ativo: true, criadoEm: '2026-05-01T12:00:00.000Z' },
+  { id: 109, nome: 'Carne Moída', categoria: 'Proteína', unidadeMedida: 'KG', iconKey: 'beef', ativo: true, criadoEm: '2026-05-01T12:00:00.000Z' },
+  { id: 110, nome: 'Cenoura', categoria: 'Hortaliça', unidadeMedida: 'KG', iconKey: 'carrot', ativo: true, criadoEm: '2026-05-01T12:00:00.000Z' },
+]
+
+const demoWeekdayNames = ['Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira']
+
+function createEmptyMealManagement(schoolId: string, monthReference = getCurrentMonthReference(), withDemoData = false): MealManagement {
+  const schoolSeed = Array.from(schoolId).reduce((sum, char) => sum + char.charCodeAt(0), 0) % 7
+  const stockQuantities = [570, 320, 185, 210, 240, 160, 145, 120, 170, 130].map((value) => value + schoolSeed * 6)
+  const mealItems = withDemoData
+    ? demoMealFoods.map((food, index) => ({
+        id: `${virtualMealManagementPrefix}item-${schoolId}-${food.id}`,
+        alimentoId: food.id,
+        nomeAlimento: food.nome,
+        categoria: food.categoria,
+        quantidade: stockQuantities[index],
+        unidadeMedida: food.unidadeMedida,
+        valorUnitario: [6.2, 8.9, 14.5, 5.8, 4.6, 3.9, 5.2, 6.8, 19.5, 4.1][index],
+        valorTotal: stockQuantities[index] * [6.2, 8.9, 14.5, 5.8, 4.6, 3.9, 5.2, 6.8, 19.5, 4.1][index],
+        dataValidade: `2026-${String(7 + (index % 4)).padStart(2, '0')}-${String(10 + index).padStart(2, '0')}`,
+        possuiValidade: true,
+        lote: `DEMO-${schoolSeed + 1}${String(index + 1).padStart(2, '0')}`,
+        fornecedor: { id: `${virtualMealManagementPrefix}supplier-${schoolId}`, nome: defaultSupplier },
+        statusEstoque: index === 7 ? 'BAIXO' : 'DISPONIVEL',
+        adicionadoPorId: 'demo-diretor',
+        adicionadoEm: '2026-05-01T12:00:00.000Z',
+      } satisfies MealItem))
+    : []
+  const stockItems = mealItems.map((item, index) => ({
+    id: `${virtualMealManagementPrefix}stock-${schoolId}-${item.alimentoId}`,
+    itemMerendaId: item.id,
+    alimentoId: item.alimentoId,
+    nomeAlimento: item.nomeAlimento,
+    quantidadeAtual: item.quantidade,
+    quantidadeMinima: index === 7 ? item.quantidade + 20 : Math.max(20, Math.round(item.quantidade * 0.18)),
+    unidadeMedida: item.unidadeMedida,
+    dataValidade: item.dataValidade,
+    status: item.statusEstoque,
+  } satisfies MealStockItem))
+  const menus = withDemoData
+    ? demoWeekdayNames.flatMap((weekday, weekdayIndex) => [
+        { tipoRefeicao: 'CAFE_DA_MANHA' as const, turno: 'MANHA' as const, titulo: weekdayIndex % 2 === 0 ? 'Leite com fruta e cereal' : 'Iogurte com fruta', alimentoIds: weekdayIndex % 2 === 0 ? [105, 106, 101] : [108, 107] },
+        { tipoRefeicao: 'LANCHE' as const, turno: 'MANHA' as const, titulo: weekdayIndex % 2 === 0 ? 'Fruta da estação' : 'Vitamina de banana', alimentoIds: weekdayIndex % 2 === 0 ? [106, 107] : [105, 106] },
+        { tipoRefeicao: 'ALMOCO' as const, turno: 'INTEGRAL' as const, titulo: weekdayIndex % 2 === 0 ? 'Arroz, feijão e frango' : 'Massa com acompanhamento', alimentoIds: weekdayIndex % 2 === 0 ? [101, 102, 103, 110] : [104, 109, 110] },
+        { tipoRefeicao: 'JANTAR' as const, turno: 'NOITE' as const, titulo: weekdayIndex % 2 === 0 ? 'Sopa nutritiva' : 'Arroz com carne e legumes', alimentoIds: weekdayIndex % 2 === 0 ? [103, 110, 104] : [101, 109, 110] },
+      ].map((menu, index) => ({
+        id: `${virtualMealManagementPrefix}menu-${schoolId}-${weekdayIndex}-${index}`,
+        diaSemana: weekday,
+        tipoRefeicao: menu.tipoRefeicao,
+        turno: menu.turno,
+        titulo: menu.titulo,
+        alimentoIds: menu.alimentoIds,
+        observacao: 'Cardápio aprovado pelo nutricionista para visualização.',
+        status: 'APROVADO' as const,
+      })))
+    : []
+  const usedValue = mealItems.reduce((sum, item) => sum + item.valorTotal, 0)
+  const budgetLimit = withDemoData ? Math.max(30000, Math.round(usedValue * 1.25)) : 0
+
+  return {
+    id: `${virtualMealManagementPrefix}${schoolId}`,
+    escolaId: schoolId,
+    mesReferencia: monthReference,
+    status: 'ATIVO',
+    orcamentoMensal: {
+      id: `${virtualMealManagementPrefix}budget-${schoolId}`,
+      valorLimite: budgetLimit,
+      valorUtilizado: usedValue,
+      valorDisponivel: Math.max(0, budgetLimit - usedValue),
+      percentualUtilizado: budgetLimit > 0 ? (usedValue / budgetLimit) * 100 : 0,
+      status: 'DENTRO_DO_LIMITE',
+      alertaAoAtingirPercentual: 80,
+      permitirUltrapassarLimite: false,
+    },
+    responsaveisGestao: {
+      diretorId: '',
+      nutricionistaId: '',
+      merendeiroId: '',
+      responsavelFinanceiroId: '',
+    },
+    alimentosCadastrados: withDemoData ? demoMealFoods : [],
+    cardapios: menus,
+    itensMerenda: mealItems,
+    movimentacoesOrcamento: [],
+    estoqueMerenda: stockItems,
+    resumo: {
+      totalItens: mealItems.length,
+      totalKgComprado: stockItems.filter((item) => item.unidadeMedida === 'KG').reduce((sum, item) => sum + item.quantidadeAtual, 0),
+      valorTotalComprado: usedValue,
+      orcamentoInicial: budgetLimit,
+      orcamentoRestante: Math.max(0, budgetLimit - usedValue),
+      percentualUtilizado: budgetLimit > 0 ? (usedValue / budgetLimit) * 100 : 0,
+      statusOrcamento: 'DENTRO_DO_LIMITE',
+      itensBaixoEstoque: stockItems.filter((item) => item.status === 'BAIXO').length,
+      itensVencidos: 0,
+    },
+  }
+}
+
+function isVirtualMealManagement(management: MealManagement | null) {
+  return Boolean(management?.id.startsWith(virtualMealManagementPrefix))
+}
+
+function normalizeFoodSearchText(value: string) {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9]+/g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toLowerCase()
+}
+
+function findFoodByName(foods: MealFood[], name: string) {
+  const normalizedName = normalizeFoodSearchText(name)
+  if (!normalizedName) return null
+  return foods.find((food) => normalizeFoodSearchText(food.nome) === normalizedName) ?? null
 }
 
 function buildMenuMonthCells(monthReference: string, menus: MealMenu[]): MenuCalendarCell[] {
@@ -367,8 +582,36 @@ function formatNumber(value: number) {
   return new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 2 }).format(value)
 }
 
+function formatQuantity(value: number, unit?: MealUnit | null) {
+  return `${formatNumber(value)} ${formatMealUnit(unit)}`
+}
+
 function formatStockDate(value: string) {
   return new Date(`${value}T12:00:00`).toLocaleDateString('pt-BR')
+}
+
+function formatRequestDate(value: string) {
+  return new Date(value).toLocaleDateString('pt-BR')
+}
+
+function getFoodRequestUnitPrice(request: MealFoodRequest) {
+  return request.suggestedUnitPrice ?? request.unitPrice ?? null
+}
+
+function canCreatorMutateFoodRequest(request: MealFoodRequest, userId: string) {
+  return request.requestedBy === userId && creatorFoodRequestMutationStatuses.has(request.status)
+}
+
+function normalizeRoleValue(value?: string | null) {
+  return (value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+}
+
+function roleMatches(role: Role | null, tokens: string[]) {
+  const roleText = normalizeRoleValue(`${role?.code ?? ''} ${role?.name ?? ''} ${role?.description ?? ''}`)
+  return tokens.some((token) => roleText.includes(token))
 }
 
 /* ─────────────────────────────────────────────
@@ -453,10 +696,74 @@ function createInitialForm(foodId = 0): MealFormState {
   }
 }
 
+function foodRequestStatusTone(status: FoodRequestStatus) {
+  if (status === 'APPROVED_BY_NUTRITIONIST' || status === 'ADDED_TO_STOCK' || status === 'PURCHASED') return 'border-emerald-400 bg-emerald-50 text-emerald-700'
+  if (status === 'REJECTED_BY_NUTRITIONIST' || status === 'CANCELLED') return 'border-red-400 bg-red-50 text-red-700'
+  if (status === 'NEEDS_ADJUSTMENT') return 'border-amber-400 bg-amber-50 text-amber-700'
+  return 'border-indigo-300 bg-indigo-50 text-indigo-700'
+}
+
+function foodRequestUrgencyTone(urgency: FoodRequestUrgency) {
+  if (urgency === 'URGENT') return 'border-red-400 bg-red-50 text-red-700'
+  if (urgency === 'HIGH') return 'border-orange-400 bg-orange-50 text-orange-700'
+  if (urgency === 'MEDIUM') return 'border-amber-400 bg-amber-50 text-amber-700'
+  return 'border-slate-300 bg-slate-50 text-slate-600'
+}
+
+function parseDecimalInput(value: string) {
+  const normalized = value.trim().replace(/[^\d,.-]/g, '')
+  return Number(
+    normalized.includes(',')
+      ? normalized.replace(/\./g, '').replace(',', '.')
+      : normalized,
+  )
+}
+
+function formatCurrencyFromInput(value: string, fallback = '—') {
+  const parsed = parseDecimalInput(value)
+  return Number.isFinite(parsed) && parsed > 0 ? formatCurrency(parsed) : fallback
+}
+
+const requiredMealText = (message: string) =>
+  z.preprocess((value) => typeof value === 'string' ? value : '', z.string().trim().min(1, message))
+
+const positiveDecimalText = (message: string) =>
+  requiredMealText(message).refine((value) => Number.isFinite(parseDecimalInput(value)) && parseDecimalInput(value) > 0, message)
+
+const optionalPositiveDecimalText = (message: string) =>
+  z.preprocess((value) => typeof value === 'string' ? value : '', z.string().trim())
+    .refine((value) => !value || (Number.isFinite(parseDecimalInput(value)) && parseDecimalInput(value) >= 0), message)
+
+const budgetFormSchema = z.object({
+  valorLimite: positiveDecimalText('Informe um valor maior que zero.'),
+})
+
+const purchaseFormSchema = z.object({
+  alimentoId: z.number().min(1, 'Selecione um alimento para registrar a compra.'),
+  quantidade: positiveDecimalText('Informe uma quantidade maior que zero.'),
+  valorUnitario: positiveDecimalText('Informe um valor unitário maior que zero.'),
+  fornecedorNome: requiredMealText('Informe o nome do fornecedor.'),
+  dataValidade: z.preprocess((value) => typeof value === 'string' ? value : '', z.string().trim()),
+  lote: z.preprocess((value) => typeof value === 'string' ? value : '', z.string().trim().max(80, 'Lote deve ter no máximo 80 caracteres.')),
+  quantidadeMinima: optionalPositiveDecimalText('Quantidade mínima deve ser zero ou maior.'),
+  possuiValidade: z.boolean(),
+}).superRefine((value, context) => {
+  if (value.possuiValidade && !/^\d{4}-\d{2}-\d{2}$/.test(value.dataValidade)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['dataValidade'],
+      message: 'Informe a data de validade do alimento.',
+    })
+  }
+})
+
+type BudgetFormField = keyof z.infer<typeof budgetFormSchema>
+type PurchaseFormField = keyof z.infer<typeof purchaseFormSchema>
+
 const inputCls =
   'min-h-9 w-full min-w-0 rounded-lg border border-slate-400 bg-white px-3 text-sm font-semibold text-slate-900 outline-none transition-all placeholder:font-normal placeholder:text-slate-400 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100'
 
-function Field({ label, hint, children, className }: { label: string; hint?: string; children: ReactNode; className?: string }) {
+function Field({ label, hint, error, children, className }: { label: string; hint?: string; error?: string | null; children: ReactNode; className?: string }) {
   return (
     <label className={`flex min-w-0 flex-col gap-1.5 ${className ?? ''}`}>
       <span className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600">
@@ -471,6 +778,7 @@ function Field({ label, hint, children, className }: { label: string; hint?: str
         )}
       </span>
       {children}
+      <FieldMessage hint={hint} error={error} />
     </label>
   )
 }
@@ -643,11 +951,13 @@ function BudgetPanel({
   const [isEditingBudget, setIsEditingBudget] = useState(false)
   const [budgetDraft, setBudgetDraft] = useState(() => String(management.orcamentoMensal.valorLimite))
   const [budgetError, setBudgetError] = useState('')
+  const [budgetFieldErrors, setBudgetFieldErrors] = useState<FieldErrors<BudgetFormField>>({})
   const [isSavingBudget, setIsSavingBudget] = useState(false)
 
   useEffect(() => {
     setBudgetDraft(String(management.orcamentoMensal.valorLimite))
     setBudgetError('')
+    setBudgetFieldErrors({})
     setIsEditingBudget(false)
     setIsSavingBudget(false)
   }, [management.id, management.orcamentoMensal.valorLimite])
@@ -656,19 +966,18 @@ function BudgetPanel({
     event.preventDefault()
     if (!canEdit) return
 
-    const normalizedDraft = budgetDraft.trim().replace(/[^\d,.-]/g, '')
-    const nextLimit = Number(
-      normalizedDraft.includes(',')
-        ? normalizedDraft.replace(/\./g, '').replace(',', '.')
-        : normalizedDraft,
-    )
-    if (!Number.isFinite(nextLimit) || nextLimit <= 0) {
-      setBudgetError('Informe um valor maior que zero.')
+    const result = budgetFormSchema.safeParse({ valorLimite: budgetDraft })
+    if (!result.success) {
+      const errors = zodFieldErrors<BudgetFormField>(result.error)
+      setBudgetFieldErrors(errors)
+      setBudgetError(Object.values(errors)[0] ?? 'Revise o limite mensal.')
       return
     }
+    const nextLimit = parseDecimalInput(result.data.valorLimite)
 
     setIsSavingBudget(true)
     setBudgetError('')
+    setBudgetFieldErrors({})
     try {
       await onUpdateBudget(management.id, { valorLimite: nextLimit })
       setIsEditingBudget(false)
@@ -792,18 +1101,23 @@ function BudgetPanel({
           if (isSavingBudget) return
           setBudgetDraft(String(management.orcamentoMensal.valorLimite))
           setBudgetError('')
+          setBudgetFieldErrors({})
           setIsEditingBudget(false)
         }}
         maxWidth="420px"
       >
-        <form onSubmit={handleBudgetSubmit} className="grid gap-4 p-5">
-          <Field label="Limite mensal (R$)">
+        <form onSubmit={handleBudgetSubmit} className="grid gap-4 p-5" noValidate>
+          <Field label="Limite mensal (R$)" hint="Digite o valor total disponível para a merenda neste mês." error={budgetFieldErrors.valorLimite}>
             <input
-              className={inputCls}
+              className={`${inputCls} ${fieldStateClass(budgetFieldErrors.valorLimite)}`}
               inputMode="decimal"
               value={budgetDraft}
-              onChange={(event) => setBudgetDraft(event.target.value)}
+              onChange={(event) => {
+                setBudgetFieldErrors((current) => ({ ...current, valorLimite: undefined }))
+                setBudgetDraft(event.target.value)
+              }}
               aria-label="Valor limite mensal do orçamento"
+              aria-invalid={Boolean(budgetFieldErrors.valorLimite) || undefined}
               autoFocus
             />
           </Field>
@@ -815,6 +1129,7 @@ function BudgetPanel({
               onClick={() => {
                 setBudgetDraft(String(management.orcamentoMensal.valorLimite))
                 setBudgetError('')
+                setBudgetFieldErrors({})
                 setIsEditingBudget(false)
               }}
               className="inline-flex min-h-9 items-center rounded-lg border border-slate-300 bg-white px-4 text-sm font-bold text-slate-600 transition-all hover:border-slate-400 hover:bg-slate-50 disabled:opacity-50"
@@ -935,13 +1250,13 @@ function StockCard({
             <div className="rounded-lg border border-slate-300 bg-slate-50 px-2 py-1.5">
               <div className="text-[9px] font-semibold uppercase tracking-widest text-slate-400">Disponível</div>
               <strong className="text-sm font-black text-slate-800">
-                {formatNumber(stock.quantidadeAtual)} <span className="text-[10px] font-semibold text-slate-400">{stock.unidadeMedida}</span>
+                {formatNumber(stock.quantidadeAtual)} <span className="text-[10px] font-semibold text-slate-400">{formatMealUnit(stock.unidadeMedida)}</span>
               </strong>
             </div>
             <div className="rounded-lg border border-slate-300 bg-slate-50 px-2 py-1.5">
               <div className="text-[9px] font-semibold uppercase tracking-widest text-slate-400">Mínimo</div>
               <strong className="text-sm font-black text-slate-500">
-                {formatNumber(stock.quantidadeMinima)} <span className="text-[10px] font-semibold text-slate-400">{stock.unidadeMedida}</span>
+                {formatNumber(stock.quantidadeMinima)} <span className="text-[10px] font-semibold text-slate-400">{formatMealUnit(stock.unidadeMedida)}</span>
               </strong>
             </div>
           </div>
@@ -1034,7 +1349,7 @@ function StockCompactCard({
         </div>
         <div className="flex min-w-0 flex-nowrap items-center gap-x-2 text-[11px] font-semibold text-slate-500">
           <span className="font-black text-slate-700">
-            {formatNumber(stock.quantidadeAtual)} {stock.unidadeMedida}
+            {formatQuantity(stock.quantidadeAtual, stock.unidadeMedida)}
           </span>
           <span className="min-w-0 truncate">
             {supplierName ?? 'Fornecedor não informado'}
@@ -1080,17 +1395,17 @@ function Modal({
     <div
       role="presentation"
       onMouseDown={onClose}
-      className="mv-backdrop fixed inset-0 z-[1000] flex items-center justify-center overflow-y-auto px-4 py-6"
+      className="mv-backdrop fixed inset-0 z-[1000] flex items-start justify-center overflow-y-auto px-3 py-3 sm:items-center sm:px-4 sm:py-6"
     >
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby={id}
         onMouseDown={(e) => e.stopPropagation()}
-        className="mv-modal w-full overflow-hidden rounded-2xl border border-slate-300 bg-white shadow-2xl"
+        className="mv-modal flex max-h-[calc(100svh-24px)] w-full flex-col overflow-hidden rounded-2xl border border-slate-300 bg-white shadow-2xl sm:max-h-[calc(100svh-48px)]"
         style={{ maxWidth }}
       >
-        <div className="flex items-center justify-between gap-4 border-b border-slate-300 bg-slate-50 px-5 py-4">
+        <div className="flex shrink-0 items-center justify-between gap-4 border-b border-slate-300 bg-slate-50 px-4 py-3 sm:px-5 sm:py-4">
           <div>
             {subtitle && (
               <p className="mb-0.5 text-[10px] font-bold uppercase tracking-widest text-indigo-500">{subtitle}</p>
@@ -1454,8 +1769,8 @@ function MenuCalendarModal({
                       <strong className="min-w-0 truncate text-xs font-black text-slate-900">{stock.nomeAlimento}</strong>
                     </div>
                     <div className="grid grid-cols-2 gap-1.5">
-                      <Stat label="Para o dia" value={`${formatNumber(dailyQuantity)} ${stock.unidadeMedida}`} size="sm" />
-                      <Stat label="Total" value={`${formatNumber(stock.quantidadeAtual)} ${stock.unidadeMedida}`} size="sm" />
+                      <Stat label="Para o dia" value={formatQuantity(dailyQuantity, stock.unidadeMedida)} size="sm" />
+                      <Stat label="Total" value={formatQuantity(stock.quantidadeAtual, stock.unidadeMedida)} size="sm" />
                     </div>
                   </div>
                 ))}
@@ -1500,8 +1815,8 @@ function StockDetailModal({
 
         <div className="grid grid-cols-2 gap-2">
           {[
-            { label: 'Quantidade atual', value: `${formatNumber(stock.quantidadeAtual)} ${stock.unidadeMedida}` },
-            { label: 'Quantidade mínima', value: `${formatNumber(stock.quantidadeMinima)} ${stock.unidadeMedida}` },
+            { label: 'Quantidade atual', value: formatQuantity(stock.quantidadeAtual, stock.unidadeMedida) },
+            { label: 'Quantidade mínima', value: formatQuantity(stock.quantidadeMinima, stock.unidadeMedida) },
             { label: 'Fornecedor', value: supplierName ?? 'Não informado' },
             {
               label: 'Data de validade',
@@ -1560,11 +1875,11 @@ function StockOverviewModal({
       totals[row.unit] += row.totalQuantity
       return totals
     },
-    { KG: 0, UN: 0, L: 0 },
+    { KG: 0, G: 0, L: 0, ML: 0, UNIT: 0, BOX: 0, PACKAGE: 0, DOZEN: 0 },
   )
   const totalsText = (Object.entries(unitTotals) as Array<[MealStockItem['unidadeMedida'], number]>)
     .filter(([, total]) => total > 0)
-    .map(([unit, total]) => `${formatNumber(total)} ${unit}`)
+    .map(([unit, total]) => formatQuantity(total, unit))
     .join(' · ')
 
   return (
@@ -1615,7 +1930,7 @@ function StockOverviewModal({
                       Quantidade total
                     </span>
                     <strong className="text-sm font-black text-slate-900">
-                      {formatNumber(row.totalQuantity)} {row.unit}
+                      {formatQuantity(row.totalQuantity, row.unit)}
                     </strong>
                   </div>
 
@@ -1728,12 +2043,18 @@ function ConfirmRow({ label, value, accent }: { label: string; value: string; ac
 ───────────────────────────────────────────── */
 function PurchaseForm({
   management,
+  schoolId,
+  mode = 'stock',
   onSearchFoods,
   onCreateItem,
+  onCreateFoodRequest,
 }: {
   management: MealManagement
+  schoolId?: string
+  mode?: 'stock' | 'request'
   onSearchFoods: (query: string, limit?: number) => Promise<MealFood[]>
-  onCreateItem: (managementId: string, draft: CreateMealItemPayload) => Promise<void>
+  onCreateItem?: (managementId: string, draft: CreateMealItemPayload) => Promise<void>
+  onCreateFoodRequest?: (draft: CreateMealFoodRequestPayload) => Promise<void>
 }) {
   const [step, setStep] = useState<WizardStep>(1)
   const [query, setQuery] = useState('')
@@ -1744,6 +2065,7 @@ function PurchaseForm({
   const [isSaving, setIsSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [form, setForm] = useState<MealFormState>(() => createInitialForm())
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors<PurchaseFormField>>({})
 
   useEffect(() => {
     const search = query.trim()
@@ -1797,28 +2119,109 @@ function PurchaseForm({
     setSelectedFood(null)
     setFoodSearchError('')
     setIsSearchingFoods(false)
+    setFieldErrors({})
     setForm(createInitialForm())
   }, [management.id])
 
   const foodSearchTerm = query.trim()
   const shouldShowFoodOptions = !selectedFood || foodSearchTerm !== selectedFood.nome
-  const estimatedTotal = Number(form.quantidade || 0) * Number(form.valorUnitario || 0)
+  const estimatedTotal = parseDecimalInput(form.quantidade || '0') * parseDecimalInput(form.valorUnitario || '0')
   const step2Valid = !!form.quantidade && !!form.valorUnitario && !!form.fornecedorNome
+  const isRequestMode = mode === 'request'
+  const actionCopy = isRequestMode
+    ? {
+        eyebrow: 'Solicitar alimento',
+        title: 'Enviar para avaliacao nutricional',
+        selectHint: 'Selecione o alimento para solicitar:',
+        successEyebrow: 'Solicitacao enviada',
+        successTitle: 'Pedido encaminhado ao nutricionista',
+        successMessage: 'O nutricionista ira avaliar o estoque e os itens solicitados antes da entrada oficial.',
+        resetLabel: 'Solicitar novo alimento',
+        reviewLabel: 'Revisar solicitacao',
+        confirmLabel: 'Enviar solicitacao',
+        savingLabel: 'Enviando...',
+        selectedSectionLabel: 'Alimento solicitado',
+        dataSectionLabel: 'Dados da solicitacao',
+        totalLabel: 'Valor estimado',
+      }
+    : {
+        eyebrow: 'Registrar Compra',
+        title: 'Adicionar alimento ao estoque',
+        selectHint: 'Selecione o alimento comprado:',
+        successEyebrow: 'Compra registrada',
+        successTitle: 'Alimento adicionado ao estoque',
+        successMessage: '',
+        resetLabel: 'Registrar nova compra',
+        reviewLabel: 'Revisar compra',
+        confirmLabel: 'Confirmar compra',
+        savingLabel: 'Registrando...',
+        selectedSectionLabel: 'Alimento selecionado',
+        dataSectionLabel: 'Dados da compra',
+        totalLabel: 'Total da compra',
+      }
+
+  function updateFormField<K extends keyof MealFormState>(field: K, value: MealFormState[K]) {
+    setFieldErrors((current) => ({ ...current, [field]: undefined }))
+    setForm((current) => ({ ...current, [field]: value }))
+  }
+
+  function validatePurchaseForm(targetStep?: 1 | 2 | 3) {
+    const result = purchaseFormSchema.safeParse({ ...form, alimentoId: selectedFood?.id ?? form.alimentoId })
+    if (result.success) {
+      setFieldErrors({})
+      return result.data
+    }
+
+    const errors = zodFieldErrors<PurchaseFormField>(result.error)
+    setFieldErrors(errors)
+    if (targetStep) setStep(targetStep)
+    return null
+  }
 
   async function handleSubmit() {
-    if (!selectedFood) return
+    const parsed = validatePurchaseForm()
+    if (!parsed) {
+      setStep(selectedFood ? 2 : 1)
+      return
+    }
+    if (!selectedFood) {
+      setStep(1)
+      return
+    }
     setIsSaving(true)
     try {
-      await onCreateItem(management.id, {
-        alimentoId: selectedFood.id,
-        quantidade: Number(form.quantidade),
-        valorUnitario: Number(form.valorUnitario),
-        fornecedorNome: form.fornecedorNome,
-        dataValidade: form.possuiValidade ? form.dataValidade || null : null,
-        possuiValidade: form.possuiValidade,
-        lote: form.lote || null,
-        quantidadeMinima: form.quantidadeMinima ? Number(form.quantidadeMinima) : undefined,
-      })
+      if (isRequestMode) {
+        if (!onCreateFoodRequest) return
+        const details = [
+          `Fornecedor sugerido: ${parsed.fornecedorNome}`,
+          parsed.lote ? `Lote informado: ${parsed.lote}` : '',
+          parsed.quantidadeMinima ? `Quantidade minima sugerida: ${parsed.quantidadeMinima} ${formatMealUnit(selectedFood.unidadeMedida)}` : '',
+        ].filter(Boolean).join(' | ')
+
+        await onCreateFoodRequest({
+          schoolId,
+          itemName: selectedFood.nome,
+          quantity: parseDecimalInput(parsed.quantidade),
+          unit: selectedFood.unidadeMedida,
+          unitPrice: parseDecimalInput(parsed.valorUnitario),
+          reason: 'Solicitacao do diretor para avaliacao de estoque e necessidade de reposicao.',
+          urgencyLevel: 'MEDIUM',
+          expirationDate: parsed.possuiValidade ? parsed.dataValidade || null : null,
+          observation: details || null,
+        })
+      } else {
+        if (!onCreateItem) return
+        await onCreateItem(management.id, {
+          alimentoId: selectedFood.id,
+          quantidade: parseDecimalInput(parsed.quantidade),
+          valorUnitario: parseDecimalInput(parsed.valorUnitario),
+          fornecedorNome: parsed.fornecedorNome,
+          dataValidade: parsed.possuiValidade ? parsed.dataValidade || null : null,
+          possuiValidade: parsed.possuiValidade,
+          lote: parsed.lote || null,
+          quantidadeMinima: parsed.quantidadeMinima ? parseDecimalInput(parsed.quantidadeMinima) : undefined,
+        })
+      }
       setSaved(true)
     } catch {
       // The parent action already shows the API error as a toast.
@@ -1834,6 +2237,7 @@ function PurchaseForm({
     setSelectedFood(null)
     setFoodSearchError('')
     setSaved(false)
+    setFieldErrors({})
     setForm(createInitialForm())
   }
 
@@ -1845,8 +2249,8 @@ function PurchaseForm({
             <CheckCircle2 className="h-4 w-4 text-white" />
           </div>
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-600">Compra registrada</p>
-            <h2 className="text-sm font-black text-slate-800">Alimento adicionado ao estoque</h2>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-600">{actionCopy.successEyebrow}</p>
+            <h2 className="text-sm font-black text-slate-800">{actionCopy.successTitle}</h2>
           </div>
         </div>
         <div className="grid place-items-center gap-4 p-6 text-center">
@@ -1858,7 +2262,7 @@ function PurchaseForm({
               {selectedFood?.nome ?? 'Item'} registrado com sucesso!
             </p>
             <p className="mt-1 text-sm text-slate-500">
-              {formatCurrency(estimatedTotal)} · {form.quantidade} {selectedFood?.unidadeMedida}
+              {formatCurrency(estimatedTotal)} · {form.quantidade} {formatMealUnit(selectedFood?.unidadeMedida)}
             </p>
           </div>
           <button
@@ -1867,7 +2271,7 @@ function PurchaseForm({
             className="inline-flex min-h-9 items-center gap-2 rounded-xl bg-indigo-600 px-5 text-sm font-black text-white transition-all hover:bg-indigo-700"
           >
             <Plus className="h-4 w-4" />
-            Registrar nova compra
+            {actionCopy.resetLabel}
           </button>
         </div>
       </section>
@@ -1881,8 +2285,8 @@ function PurchaseForm({
           <Plus className="h-4 w-4 text-white" />
         </div>
         <div>
-          <p className="text-[10px] font-bold uppercase tracking-wider text-indigo-600">Registrar Compra</p>
-          <h2 className="text-sm font-black text-slate-800">Adicionar alimento ao estoque</h2>
+          <p className="text-[10px] font-bold uppercase tracking-wider text-indigo-600">{actionCopy.eyebrow}</p>
+          <h2 className="text-sm font-black text-slate-800">{actionCopy.title}</h2>
         </div>
       </div>
 
@@ -1892,20 +2296,24 @@ function PurchaseForm({
       {step === 1 && (
         <div>
           <div className="border-b border-slate-300 bg-white px-4 py-3">
-            <p className="mb-2 text-xs font-semibold text-slate-500">Selecione o alimento comprado:</p>
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
-              <input
-                className="min-h-9 w-full rounded-lg border border-slate-400 bg-slate-50 pl-9 pr-3 text-sm font-semibold outline-none transition-all placeholder:font-normal placeholder:text-slate-400 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
-                value={query}
-                onChange={(e) => {
-                  setQuery(e.target.value)
-                  setSelectedFood(null)
-                  setForm((c) => ({ ...c, alimentoId: 0 }))
-                }}
-                placeholder="Buscar por nome ou categoria..."
-                autoFocus
-              />
+            <p className="mb-2 text-xs font-semibold text-slate-500">{actionCopy.selectHint}</p>
+            <div>
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+                <input
+                  className="min-h-9 w-full rounded-lg border border-slate-400 bg-slate-50 pl-9 pr-3 text-sm font-semibold outline-none transition-all placeholder:font-normal placeholder:text-slate-400 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+                  value={query}
+                  onChange={(e) => {
+                    setFieldErrors((current) => ({ ...current, alimentoId: undefined }))
+                    setQuery(e.target.value)
+                    setSelectedFood(null)
+                    setForm((c) => ({ ...c, alimentoId: 0 }))
+                  }}
+                  placeholder="Buscar por nome ou categoria..."
+                  autoFocus
+                />
+              </div>
+              <FieldMessage hint="Busque pelo nome ou categoria e selecione um alimento da lista." error={fieldErrors.alimentoId} className="mt-1.5" />
             </div>
           </div>
 
@@ -1919,9 +2327,9 @@ function PurchaseForm({
                 {foodSuggestionLimit} alimentos
               </span>
             </div>
-              <div className="grid h-[162px] grid-rows-[repeat(4,36px)] gap-1.5 overflow-hidden">
+              <div className="grid h-[204px] grid-rows-[repeat(5,36px)] gap-1.5 overflow-hidden">
               {isSearchingFoods && (
-                <div className="row-span-4 grid place-items-center rounded-xl border border-dashed border-slate-300 bg-slate-50">
+                <div className="row-span-5 grid place-items-center rounded-xl border border-dashed border-slate-300 bg-slate-50">
                   <p className="text-sm font-semibold text-slate-400">Buscando alimentos...</p>
                 </div>
               )}
@@ -1933,6 +2341,7 @@ function PurchaseForm({
                     key={food.id}
                     type="button"
                     onClick={() => {
+                      setFieldErrors((current) => ({ ...current, alimentoId: undefined }))
                       setSelectedFood(food)
                       setQuery(food.nome)
                       setFoodOptions([])
@@ -1951,7 +2360,7 @@ function PurchaseForm({
                     <span className="min-w-0 flex-1">
                       <strong className="block truncate text-sm font-black leading-4 text-slate-900">{food.nome}</strong>
                       <span className="mt-0.5 block truncate text-[10px] font-semibold leading-3 text-slate-400">
-                        {food.categoria} · {food.unidadeMedida}
+                        {food.categoria} · {formatMealUnit(food.unidadeMedida)}
                       </span>
                     </span>
                     {isSelected && <CheckCircle2 className="ml-auto h-4 w-4 shrink-0 text-indigo-500" />}
@@ -1959,12 +2368,12 @@ function PurchaseForm({
                 )
               })}
               {!isSearchingFoods && foodSearchError && (
-                <div className="row-span-4 grid place-items-center rounded-xl border border-dashed border-red-300 bg-red-50 px-3 text-center">
+                <div className="row-span-5 grid place-items-center rounded-xl border border-dashed border-red-300 bg-red-50 px-3 text-center">
                   <p className="text-sm font-semibold text-red-500">{foodSearchError}</p>
                 </div>
               )}
               {!isSearchingFoods && !foodSearchError && foodOptions.length === 0 && !selectedFood && (
-                <div className="row-span-4 grid place-items-center rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 text-center">
+                <div className="row-span-5 grid place-items-center rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 text-center">
                   <p className="text-sm text-slate-400">Nenhum alimento retornado pelo endpoint</p>
                 </div>
               )}
@@ -1989,7 +2398,13 @@ function PurchaseForm({
             <button
               type="button"
               disabled={!selectedFood}
-              onClick={() => setStep(2)}
+              onClick={() => {
+                if (!selectedFood) {
+                  setFieldErrors((current) => ({ ...current, alimentoId: 'Selecione um alimento para registrar a compra.' }))
+                  return
+                }
+                setStep(2)
+              }}
               className="inline-flex min-h-9 shrink-0 items-center gap-2 rounded-sm bg-indigo-600 px-4 text-sm font-black text-white transition-all hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-40"
             >
               Próximo
@@ -2009,7 +2424,7 @@ function PurchaseForm({
               </span>
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-black text-slate-900">{selectedFood.nome}</p>
-                <p className="text-[10px] font-semibold text-indigo-500">{selectedFood.categoria} · {selectedFood.unidadeMedida}</p>
+                <p className="text-[10px] font-semibold text-indigo-500">{selectedFood.categoria} · {formatMealUnit(selectedFood.unidadeMedida)}</p>
               </div>
               <button
                 type="button"
@@ -2025,35 +2440,36 @@ function PurchaseForm({
             <div className="grid gap-2.5">
               <SectionDivider label="Quantidade e valor" />
               <div className="grid grid-cols-2 gap-3">
-                <Field label={`Quantidade (${selectedFood?.unidadeMedida ?? 'un'})`} hint="Quantidade total comprada">
+                <Field label={`Quantidade (${formatMealUnit(selectedFood?.unidadeMedida) || 'un'})`} hint="Digite a quantidade total comprada." error={fieldErrors.quantidade}>
                   <input
-                    className={inputCls}
+                    className={`${inputCls} ${fieldStateClass(fieldErrors.quantidade)}`}
                     type="number"
                     min="0.01"
                     step="0.01"
                     required
                     placeholder="0,00"
                     value={form.quantidade}
-                    onChange={(e) => setForm({ ...form, quantidade: e.target.value })}
+                    onChange={(e) => updateFormField('quantidade', e.target.value)}
+                    aria-invalid={Boolean(fieldErrors.quantidade) || undefined}
                   />
                 </Field>
-                <Field label="Valor unitário (R$)" hint="Preço por unidade">
+                <Field label="Valor unitário (R$)" hint="Digite o preço pago por unidade." error={fieldErrors.valorUnitario}>
                   <input
-                    className={inputCls}
-                    type="number"
-                    min="0.01"
-                    step="0.01"
+                    className={`${inputCls} ${fieldStateClass(fieldErrors.valorUnitario)}`}
+                    type="text"
+                    inputMode="numeric"
                     required
-                    placeholder="0,00"
+                    placeholder="R$ 0,00"
                     value={form.valorUnitario}
-                    onChange={(e) => setForm({ ...form, valorUnitario: e.target.value })}
+                    onChange={(e) => updateFormField('valorUnitario', formatCurrencyInput(e.target.value))}
+                    aria-invalid={Boolean(fieldErrors.valorUnitario) || undefined}
                   />
                 </Field>
               </div>
               <div className="flex items-center justify-between rounded-xl border border-indigo-300 bg-indigo-50 px-4 py-2.5">
                 <div>
                   <p className="text-[10px] font-semibold uppercase tracking-widest text-indigo-400">Total da compra</p>
-                  <p className="text-[11px] text-indigo-400">{form.quantidade || '0'} × {form.valorUnitario ? formatCurrency(Number(form.valorUnitario)) : 'R$ —'}</p>
+                  <p className="text-[11px] text-indigo-400">{form.quantidade || '0'} × {formatCurrencyFromInput(form.valorUnitario, 'R$ —')}</p>
                 </div>
                 <strong className="font-['Sora',system-ui,sans-serif] text-xl font-black text-indigo-700">
                   {formatCurrency(Number.isFinite(estimatedTotal) ? estimatedTotal : 0)}
@@ -2064,23 +2480,25 @@ function PurchaseForm({
             <div className="grid gap-2.5">
               <SectionDivider label="Estoque e rastreio" />
               <div className="grid grid-cols-2 gap-3">
-                <Field label="Qtd. mínima" hint="Alerta quando atingir este valor">
+                <Field label="Qtd. mínima" hint="Opcional: alerta quando o estoque atingir este valor." error={fieldErrors.quantidadeMinima}>
                   <input
-                    className={inputCls}
+                    className={`${inputCls} ${fieldStateClass(fieldErrors.quantidadeMinima)}`}
                     type="number"
                     min="0"
                     step="0.01"
                     placeholder="Automático"
                     value={form.quantidadeMinima}
-                    onChange={(e) => setForm({ ...form, quantidadeMinima: e.target.value })}
+                    onChange={(e) => updateFormField('quantidadeMinima', e.target.value)}
+                    aria-invalid={Boolean(fieldErrors.quantidadeMinima) || undefined}
                   />
                 </Field>
-                <Field label="Lote" hint="Código de rastreamento">
+                <Field label="Lote" hint="Opcional: código de rastreamento do fornecedor." error={fieldErrors.lote}>
                   <input
-                    className={inputCls}
+                    className={`${inputCls} ${fieldStateClass(fieldErrors.lote)}`}
                     placeholder="Ex: LT202605001"
                     value={form.lote}
-                    onChange={(e) => setForm({ ...form, lote: e.target.value })}
+                    onChange={(e) => updateFormField('lote', e.target.value)}
+                    aria-invalid={Boolean(fieldErrors.lote) || undefined}
                   />
                 </Field>
               </div>
@@ -2091,13 +2509,14 @@ function PurchaseForm({
 
               <button
                 type="button"
-                onClick={() =>
+                onClick={() => {
+                  setFieldErrors((current) => ({ ...current, possuiValidade: undefined, dataValidade: undefined }))
                   setForm((c) => ({
                     ...c,
                     possuiValidade: !c.possuiValidade,
                     dataValidade: !c.possuiValidade ? c.dataValidade : '',
                   }))
-                }
+                }}
                 className={`flex items-center gap-3 rounded-xl border px-3.5 py-2.5 text-left transition-all ${
                   form.possuiValidade ? 'border-indigo-400 bg-indigo-50' : 'border-slate-300 bg-slate-50'
                 }`}
@@ -2114,23 +2533,25 @@ function PurchaseForm({
                   </p>
                 </div>
               </button>
+              <FieldMessage hint="Use quando o alimento tiver validade controlada pelo estoque." error={fieldErrors.possuiValidade} />
 
               <div className={`grid gap-3 ${form.possuiValidade ? 'grid-cols-2' : 'grid-cols-1'}`}>
                 {form.possuiValidade && (
-                  <Field label="Data de validade">
+                  <Field label="Data de validade" hint="Selecione a data impressa na embalagem." error={fieldErrors.dataValidade}>
                     <DateInput
-                      className={inputCls}
+                      className={`${inputCls} ${fieldStateClass(fieldErrors.dataValidade)}`}
                       value={form.dataValidade}
-                      onChange={(e) => setForm({ ...form, dataValidade: e.target.value })}
+                      onChange={(e) => updateFormField('dataValidade', e.target.value)}
                     />
                   </Field>
                 )}
-                <Field label="Fornecedor">
+                <Field label="Fornecedor" hint="Digite o nome do fornecedor da compra." error={fieldErrors.fornecedorNome}>
                   <input
-                    className={inputCls}
+                    className={`${inputCls} ${fieldStateClass(fieldErrors.fornecedorNome)}`}
                     required
                     value={form.fornecedorNome}
-                    onChange={(e) => setForm({ ...form, fornecedorNome: e.target.value })}
+                    onChange={(e) => updateFormField('fornecedorNome', e.target.value)}
+                    aria-invalid={Boolean(fieldErrors.fornecedorNome) || undefined}
                   />
                 </Field>
               </div>
@@ -2149,10 +2570,12 @@ function PurchaseForm({
             <button
               type="button"
               disabled={!step2Valid}
-              onClick={() => setStep(3)}
+              onClick={() => {
+                if (validatePurchaseForm(2)) setStep(3)
+              }}
               className="inline-flex min-h-9 flex-1 items-center justify-center gap-2 rounded-sm bg-indigo-600 px-4 text-sm font-black text-white transition-all hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-40"
             >
-              Revisar compra
+              {actionCopy.reviewLabel}
               <ChevronRight className="h-4 w-4" />
             </button>
           </div>
@@ -2166,7 +2589,7 @@ function PurchaseForm({
             <div className="overflow-hidden rounded-xl border border-slate-300 bg-slate-50">
               <div className="flex items-center gap-2 border-b border-slate-300 px-4 py-2">
                 <Package className="h-3.5 w-3.5 text-slate-400" />
-                <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Alimento selecionado</span>
+                <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{actionCopy.selectedSectionLabel}</span>
               </div>
               {selectedFood && (
                 <div className="flex items-center gap-3 px-4 py-3">
@@ -2175,7 +2598,7 @@ function PurchaseForm({
                   </span>
                   <div>
                     <p className="font-bold text-slate-900">{selectedFood.nome}</p>
-                    <p className="text-[10px] font-semibold text-slate-400">{selectedFood.categoria} · {selectedFood.unidadeMedida}</p>
+                    <p className="text-[10px] font-semibold text-slate-400">{selectedFood.categoria} · {formatMealUnit(selectedFood.unidadeMedida)}</p>
                   </div>
                 </div>
               )}
@@ -2183,12 +2606,12 @@ function PurchaseForm({
 
             <div className="overflow-hidden rounded-xl border border-slate-300 bg-white">
               <div className="border-b border-slate-300 bg-slate-50 px-4 py-2">
-                <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Dados da compra</span>
+                <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{actionCopy.dataSectionLabel}</span>
               </div>
               <div className="divide-y divide-slate-100 px-4">
-                <ConfirmRow label="Quantidade" value={`${form.quantidade || '—'} ${selectedFood?.unidadeMedida ?? ''}`} />
-                <ConfirmRow label="Valor unitário" value={form.valorUnitario ? formatCurrency(Number(form.valorUnitario)) : '—'} />
-                <ConfirmRow label="Qtd. mínima" value={form.quantidadeMinima ? `${form.quantidadeMinima} ${selectedFood?.unidadeMedida ?? ''}` : 'Automático'} />
+                <ConfirmRow label="Quantidade" value={`${form.quantidade || '—'} ${formatMealUnit(selectedFood?.unidadeMedida)}`} />
+                <ConfirmRow label="Valor unitário" value={formatCurrencyFromInput(form.valorUnitario)} />
+                <ConfirmRow label="Qtd. mínima" value={form.quantidadeMinima ? `${form.quantidadeMinima} ${formatMealUnit(selectedFood?.unidadeMedida)}` : 'Automático'} />
                 <ConfirmRow label="Lote" value={form.lote || '—'} />
                 <ConfirmRow
                   label="Data de validade"
@@ -2204,9 +2627,9 @@ function PurchaseForm({
 
             <div className="flex items-center justify-between rounded-xl border border-indigo-400 bg-indigo-50 px-4 py-3">
               <div>
-                <p className="text-[10px] font-bold uppercase tracking-widest text-indigo-400">Total da compra</p>
+                <p className="text-[10px] font-bold uppercase tracking-widest text-indigo-400">{actionCopy.totalLabel}</p>
                 <p className="mt-0.5 text-xs text-indigo-400">
-                  {form.quantidade} {selectedFood?.unidadeMedida} × {form.valorUnitario ? formatCurrency(Number(form.valorUnitario)) : '—'}
+                  {form.quantidade} {formatMealUnit(selectedFood?.unidadeMedida)} × {formatCurrencyFromInput(form.valorUnitario)}
                 </p>
               </div>
               <strong className="font-['Sora',system-ui,sans-serif] text-xl font-black text-indigo-700">
@@ -2231,7 +2654,7 @@ function PurchaseForm({
               className="inline-flex min-h-9 flex-1 items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 text-sm font-black text-white transition-all hover:bg-indigo-700 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-50"
             >
               <CheckCircle2 className="h-4 w-4" />
-              {isSaving ? 'Registrando...' : 'Confirmar compra'}
+              {isSaving ? actionCopy.savingLabel : actionCopy.confirmLabel}
             </button>
           </div>
         </div>
@@ -2243,12 +2666,592 @@ function PurchaseForm({
 /* ═════════════════════════════════════════════
    Main Component — MealsView
 ═════════════════════════════════════════════ */
+function createRequestFormState(request?: MealFoodRequest | null): FoodRequestFormState {
+  return {
+    itemName: request?.itemName ?? '',
+    quantity: request ? String(request.quantity) : '',
+    unit: request?.unit ?? 'KG',
+    unitPrice: formatCurrencyInputValue(request?.unitPrice),
+    reason: request?.reason ?? '',
+    urgencyLevel: request?.urgencyLevel ?? 'MEDIUM',
+    expirationDate: request?.expirationDate ?? '',
+    observation: request?.observation ?? '',
+  }
+}
+
+function FoodRequestModal({
+  schoolId,
+  request,
+  onClose,
+  onSearchFoods,
+  onCreate,
+  onUpdate,
+}: {
+  schoolId: string
+  request?: MealFoodRequest | null
+  onClose: () => void
+  onSearchFoods: (query: string, limit?: number) => Promise<MealFood[]>
+  onCreate: (draft: CreateMealFoodRequestPayload) => Promise<void>
+  onUpdate: (id: string, draft: UpdateMealFoodRequestPayload) => Promise<void>
+}) {
+  const [form, setForm] = useState<FoodRequestFormState>(() => createRequestFormState(request))
+  const [foodQuery, setFoodQuery] = useState(request?.itemName ?? '')
+  const [foodOptions, setFoodOptions] = useState<MealFood[]>([])
+  const [selectedFood, setSelectedFood] = useState<MealFood | null>(null)
+  const [isSearchingFoods, setIsSearchingFoods] = useState(false)
+  const [foodSearchError, setFoodSearchError] = useState('')
+  const [errors, setErrors] = useState<FieldErrors<FoodRequestFormField>>({})
+  const [isSaving, setIsSaving] = useState(false)
+  const requestInputCls = inputCls.replace('rounded-lg', 'rounded-sm')
+
+  useEffect(() => {
+    const initialForm = createRequestFormState(request)
+    setForm(initialForm)
+    setFoodQuery(initialForm.itemName)
+    setFoodOptions([])
+    setSelectedFood(null)
+    setIsSearchingFoods(false)
+    setFoodSearchError('')
+    setErrors({})
+  }, [request])
+
+  useEffect(() => {
+    const search = foodQuery.trim()
+
+    if (!search) {
+      setFoodOptions([])
+      setSelectedFood(null)
+      setIsSearchingFoods(false)
+      setFoodSearchError('')
+      return
+    }
+
+    let isCurrent = true
+    setIsSearchingFoods(true)
+    setFoodSearchError('')
+
+    const timeoutId = window.setTimeout(() => {
+      onSearchFoods(search, foodSuggestionLimit)
+        .then((foods) => {
+          if (!isCurrent) return
+          const options = foods.slice(0, foodSuggestionLimit)
+          const exactFood = findFoodByName(options, search)
+
+          setFoodOptions(options)
+          setSelectedFood(exactFood)
+          setForm((current) => ({
+            ...current,
+            itemName: exactFood?.nome ?? '',
+            unit: exactFood?.unidadeMedida ?? current.unit,
+          }))
+        })
+        .catch(() => {
+          if (!isCurrent) return
+          setFoodOptions([])
+          setSelectedFood(null)
+          setFoodSearchError('Nao foi possivel buscar alimentos no banco agora.')
+        })
+        .finally(() => {
+          if (isCurrent) setIsSearchingFoods(false)
+        })
+    }, search ? 250 : 0)
+
+    return () => {
+      isCurrent = false
+      window.clearTimeout(timeoutId)
+    }
+  }, [foodQuery, onSearchFoods])
+
+  function setField<K extends keyof FoodRequestFormState>(field: K, value: FoodRequestFormState[K]) {
+    setErrors((current) => ({ ...current, [field]: undefined }))
+    setForm((current) => ({ ...current, [field]: value }))
+  }
+
+  function selectFood(food: MealFood) {
+    setErrors((current) => ({ ...current, itemName: undefined, unit: undefined }))
+    setSelectedFood(food)
+    setFoodQuery(food.nome)
+    setForm((current) => ({ ...current, itemName: food.nome, unit: food.unidadeMedida }))
+  }
+
+  function updateFoodQuery(value: string) {
+    setFoodQuery(value)
+    setSelectedFood(null)
+    setFoodSearchError('')
+    setErrors((current) => ({ ...current, itemName: undefined }))
+    setForm((current) => ({
+      ...current,
+      itemName: '',
+    }))
+  }
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const selectedCatalogFood = selectedFood
+
+    if (!selectedCatalogFood) {
+      setErrors((current) => ({ ...current, itemName: 'Selecione um alimento retornado pelo banco.' }))
+      return
+    }
+
+    const nextForm = { ...form, itemName: selectedCatalogFood.nome }
+    const parsed = foodRequestSchema.safeParse(nextForm)
+    if (!parsed.success) {
+      setErrors(zodFieldErrors<FoodRequestFormField>(parsed.error))
+      return
+    }
+    const payload: CreateMealFoodRequestPayload = {
+      schoolId,
+      itemName: selectedCatalogFood.nome,
+      quantity: parsed.data.quantity,
+      unit: parsed.data.unit,
+      unitPrice: parsed.data.unitPrice ? parseDecimalInput(parsed.data.unitPrice) : null,
+      reason: parsed.data.reason,
+      urgencyLevel: parsed.data.urgencyLevel,
+      expirationDate: nextForm.expirationDate || null,
+      observation: nextForm.observation.trim() || null,
+    }
+    setIsSaving(true)
+    try {
+      if (request) await onUpdate(request.id, payload)
+      else await onCreate(payload)
+      onClose()
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  return (
+    <Modal id="mv-food-request-title" title={request ? 'Corrigir solicitação' : 'Solicitar alimento'} subtitle="Fluxo nutricional" onClose={onClose} maxWidth="520px">
+      <form onSubmit={handleSubmit} className="grid min-h-0 grid-rows-[1fr_auto] overflow-hidden" noValidate>
+        <div className="mv-scroll grid max-h-[calc(100svh-156px)] gap-3 overflow-y-auto p-4 sm:max-h-[calc(100svh-196px)] sm:p-5">
+        <div className="flex min-w-0 flex-col gap-1.5">
+          <span className="text-[11px] font-bold text-slate-600">Alimento</span>
+          <div className="grid gap-2">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+              <input
+                className={`${requestInputCls} pl-9 pr-10 ${fieldStateClass(errors.itemName)}`}
+                value={foodQuery}
+                onChange={(event) => updateFoodQuery(event.target.value)}
+                placeholder="Buscar alimento cadastrado..."
+                autoFocus
+                aria-invalid={Boolean(errors.itemName) || undefined}
+              />
+              {foodQuery && (
+                <button
+                  type="button"
+                  onClick={() => updateFoodQuery('')}
+                  className="absolute right-2 top-1/2 grid h-6 w-6 -translate-y-1/2 place-items-center rounded-full text-slate-400 transition-all hover:bg-slate-100 hover:text-slate-700"
+                  aria-label="Limpar busca"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+            <div className="flex h-5 items-center justify-between gap-3">
+              <span className="truncate text-[10px] font-black uppercase tracking-wider text-slate-400">
+                {foodQuery.trim() ? 'Resultados mais proximos' : 'Sugestoes de alimentos'}
+              </span>
+              <span className="shrink-0 rounded-full border border-slate-300 bg-slate-50 px-2 py-0.5 text-[10px] font-bold text-slate-500">
+                {foodSuggestionLimit} opcoes
+              </span>
+            </div>
+            <div className={`grid gap-1.5 overflow-hidden ${foodQuery.trim() ? 'h-[178px] grid-rows-[repeat(5,32px)]' : 'h-11'}`}>
+              {!foodQuery.trim() ? (
+                <div className="grid place-items-center rounded-sm border border-dashed border-slate-300 bg-slate-50 px-3 text-center">
+                  <p className="text-xs font-semibold text-slate-400">Digite para buscar no banco de alimentos.</p>
+                </div>
+              ) : isSearchingFoods ? (
+                <div className="row-span-5 grid place-items-center rounded-sm border border-dashed border-slate-300 bg-slate-50 px-3 text-center">
+                  <p className="text-sm font-semibold text-slate-400">Buscando alimentos no banco...</p>
+                </div>
+              ) : foodSearchError ? (
+                <div className="row-span-5 grid place-items-center rounded-sm border border-dashed border-red-300 bg-red-50 px-3 text-center">
+                  <p className="text-sm font-semibold text-red-500">{foodSearchError}</p>
+                </div>
+              ) : foodOptions.length === 0 ? (
+                <div className="row-span-5 grid place-items-center rounded-sm border border-dashed border-slate-300 bg-slate-50 px-3 text-center">
+                  <p className="text-sm font-semibold text-slate-400">Nenhum alimento retornado pelo endpoint.</p>
+                </div>
+              ) : foodOptions.map((food) => {
+                const isSelected = selectedFood?.id === food.id
+                return (
+                  <button
+                    key={food.id}
+                    type="button"
+                    onClick={() => selectFood(food)}
+                    className={`flex h-8 min-w-0 items-center gap-2 overflow-hidden rounded-sm border px-2 text-left transition-all ${
+                      isSelected
+                        ? 'border-indigo-500 bg-indigo-50 shadow-[0_0_0_2px_rgba(99,102,241,0.1)]'
+                        : 'border-slate-300 bg-white hover:border-indigo-400 hover:bg-indigo-50/40'
+                    }`}
+                  >
+                    <span className="grid h-6 w-6 shrink-0 place-items-center rounded-sm border border-slate-300 bg-white shadow-sm">
+                      <FoodIcon food={food} className="h-4 w-4" />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <strong className="block truncate text-[13px] font-black leading-4 text-slate-900">{food.nome}</strong>
+                      <span className="block truncate text-[10px] font-semibold leading-3 text-slate-400">
+                        {food.categoria} - {formatMealUnit(food.unidadeMedida)}
+                      </span>
+                    </span>
+                    {isSelected && <CheckCircle2 className="ml-auto h-3.5 w-3.5 shrink-0 text-indigo-500" />}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+          <FieldMessage error={errors.itemName} />
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Quantidade" error={errors.quantity}>
+            <input className={requestInputCls} type="number" min="0" step="0.01" value={form.quantity} onChange={(event) => setField('quantity', event.target.value)} />
+          </Field>
+          <Field label="Unidade">
+            <CompactSelect<MealUnit>
+              value={form.unit}
+              options={mealUnitOptions}
+              onChange={(unit) => setField('unit', unit)}
+              className={`${requestInputCls} ${fieldStateClass(errors.unit)}`}
+              error={errors.unit}
+              dropdownWidth="trigger"
+              dropdownMinWidth={180}
+            />
+          </Field>
+        </div>
+        <Field label="Valor unitário (R$)" hint="Opcional: preço estimado por unidade." error={errors.unitPrice}>
+          <input
+            className={`${requestInputCls} ${fieldStateClass(errors.unitPrice)}`}
+            type="text"
+            inputMode="numeric"
+            value={form.unitPrice}
+            onChange={(event) => setField('unitPrice', formatCurrencyInput(event.target.value))}
+            placeholder="R$ 0,00"
+            aria-invalid={Boolean(errors.unitPrice) || undefined}
+          />
+        </Field>
+        <Field label="Motivo" error={errors.reason}>
+          <textarea className={`${requestInputCls} min-h-16 py-2`} value={form.reason} onChange={(event) => setField('reason', event.target.value)} />
+        </Field>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Urgência">
+            <CompactSelect<FoodRequestUrgency>
+              value={form.urgencyLevel}
+              options={foodRequestUrgencyOptions}
+              onChange={(urgencyLevel) => setField('urgencyLevel', urgencyLevel)}
+              className={`${requestInputCls} ${fieldStateClass(errors.urgencyLevel)}`}
+              error={errors.urgencyLevel}
+              dropdownWidth="trigger"
+              dropdownMinWidth={180}
+            />
+          </Field>
+          <Field label="Validade prevista" hint="Opcional">
+            <DateInput value={form.expirationDate} onChange={(event) => setField('expirationDate', event.target.value)} className={requestInputCls} />
+          </Field>
+        </div>
+        <Field label="Observação" hint="Opcional">
+          <textarea className={`${requestInputCls} min-h-14 py-2`} value={form.observation} onChange={(event) => setField('observation', event.target.value)} />
+        </Field>
+        </div>
+        <div className="flex shrink-0 justify-end gap-2 border-t border-slate-200 bg-white px-4 py-3 sm:px-5">
+          <button type="button" onClick={onClose} className="min-h-10 rounded-sm border border-slate-300 bg-white px-4 text-sm font-bold text-slate-600 hover:bg-slate-50">Cancelar</button>
+          <button type="submit" disabled={isSaving} className="min-h-10 rounded-sm bg-indigo-600 px-4 text-sm font-black text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60">
+            {isSaving ? 'Salvando...' : request ? 'Reenviar solicitação' : 'Enviar solicitação'}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
+
+function AddRequestToStockModal({
+  request,
+  schoolName,
+  onClose,
+  onConfirm,
+}: {
+  request: MealFoodRequest
+  schoolName: string
+  onClose: () => void
+  onConfirm: (id: string, draft: AddMealFoodRequestToStockPayload) => Promise<void>
+}) {
+  const quantity = request.suggestedQuantity && request.suggestedQuantity > 0 ? request.suggestedQuantity : request.quantity
+  const unit = request.suggestedUnit ?? request.unit
+  const requestUnitPrice = getFoodRequestUnitPrice(request)
+  const [form, setForm] = useState({ fornecedorNome: '', valorUnitario: formatCurrencyInputValue(requestUnitPrice), dataCompra: '', dataValidade: request.expirationDate ?? '', observacao: '', quantidadeMinima: '' })
+  const [isSaving, setIsSaving] = useState(false)
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setIsSaving(true)
+    try {
+      await onConfirm(request.id, {
+        fornecedorNome: form.fornecedorNome.trim() || null,
+        valorUnitario: form.valorUnitario ? parseDecimalInput(form.valorUnitario) : null,
+        dataCompra: form.dataCompra || null,
+        dataValidade: form.dataValidade || null,
+        observacao: form.observacao.trim() || null,
+        quantidadeMinima: form.quantidadeMinima ? parseDecimalInput(form.quantidadeMinima) : null,
+      })
+      onClose()
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  return (
+    <Modal id="mv-add-request-stock-title" title="Adicionar ao estoque" subtitle={schoolName} onClose={onClose} maxWidth="560px">
+      <form onSubmit={handleSubmit} className="grid gap-4 p-5">
+        <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-4">
+          <p className="text-sm font-black text-slate-900">{request.itemName}</p>
+          <p className="mt-1 text-xs font-semibold text-indigo-700">
+            {formatQuantity(quantity, unit)} aprovados pelo nutricionista
+            {requestUnitPrice ? ` · ${formatCurrency(requestUnitPrice)} por unidade` : ''}
+          </p>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Fornecedor" hint="Opcional">
+            <input className={inputCls} value={form.fornecedorNome} onChange={(event) => setForm((current) => ({ ...current, fornecedorNome: event.target.value }))} />
+          </Field>
+          <Field label="Valor unitário" hint="Opcional">
+            <input className={inputCls} type="text" inputMode="numeric" placeholder="R$ 0,00" value={form.valorUnitario} onChange={(event) => setForm((current) => ({ ...current, valorUnitario: formatCurrencyInput(event.target.value) }))} />
+          </Field>
+          <Field label="Data da compra" hint="Opcional">
+            <DateInput value={form.dataCompra} onChange={(event) => setForm((current) => ({ ...current, dataCompra: event.target.value }))} className={inputCls} />
+          </Field>
+          <Field label="Data de validade" hint="Opcional">
+            <DateInput value={form.dataValidade} onChange={(event) => setForm((current) => ({ ...current, dataValidade: event.target.value }))} className={inputCls} />
+          </Field>
+        </div>
+        <Field label="Quantidade mínima" hint="Opcional">
+          <input className={inputCls} type="number" min="0" step="0.01" value={form.quantidadeMinima} onChange={(event) => setForm((current) => ({ ...current, quantidadeMinima: event.target.value }))} />
+        </Field>
+        <Field label="Observação" hint="Opcional">
+          <textarea className={`${inputCls} min-h-20 py-2`} value={form.observacao} onChange={(event) => setForm((current) => ({ ...current, observacao: event.target.value }))} />
+        </Field>
+        <div className="flex justify-end gap-2 border-t border-slate-200 pt-4">
+          <button type="button" onClick={onClose} className="min-h-10 rounded-sm border border-slate-300 bg-white px-4 text-sm font-bold text-slate-600 hover:bg-slate-50">Cancelar</button>
+          <button type="submit" disabled={isSaving} className="min-h-10 rounded-sm bg-emerald-600 px-4 text-sm font-black text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60">
+            {isSaving ? 'Adicionando...' : 'Confirmar entrada'}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
+
+function FoodRequestsPanel({
+  requests,
+  currentUserId,
+  isDirector,
+  isAdmin,
+  onCreateClick,
+  onEditClick,
+  onDeleteClick,
+  onAddToStockClick,
+}: {
+  requests: MealFoodRequest[]
+  currentUserId: string
+  isDirector: boolean
+  isAdmin: boolean
+  onCreateClick: () => void
+  onEditClick: (request: MealFoodRequest) => void
+  onDeleteClick: (request: MealFoodRequest) => void
+  onAddToStockClick: (request: MealFoodRequest) => void
+}) {
+  const adminVisibleStatuses = new Set<FoodRequestStatus>(['APPROVED_BY_NUTRITIONIST', 'ADDED_TO_STOCK', 'PENDING_PURCHASE', 'PURCHASED'])
+  const visibleRequests = isAdmin
+    ? requests.filter((request) => adminVisibleStatuses.has(request.status) || request.requestedBy === currentUserId)
+    : requests
+
+  return (
+    <section className="overflow-hidden rounded-xl border border-slate-300 bg-white shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-300 bg-slate-50 px-4 py-3">
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-wider text-indigo-600">Solicitações</p>
+          <h2 className="text-sm font-black text-slate-800">{isAdmin ? 'Aprovadas para estoque' : 'Acompanhamento da escola'}</h2>
+        </div>
+        {isDirector && (
+          <button type="button" onClick={onCreateClick} className="inline-flex min-h-9 items-center gap-2 rounded-sm bg-indigo-600 px-3 text-[11px] font-black uppercase tracking-wider text-white hover:bg-indigo-700">
+            <Plus className="h-4 w-4" />
+            Solicitar alimento
+          </button>
+        )}
+      </div>
+      <div className="mv-scroll grid max-h-[280px] gap-2 overflow-y-auto p-3">
+        {visibleRequests.length === 0 ? (
+          <div className="grid min-h-[90px] place-items-center rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4 text-center">
+            <p className="text-sm font-semibold text-slate-400">Nenhuma solicitação para exibir.</p>
+          </div>
+        ) : visibleRequests.map((request) => {
+          const requestUnitPrice = getFoodRequestUnitPrice(request)
+          const canMutateAsCreator = canCreatorMutateFoodRequest(request, currentUserId)
+          return (
+            <article key={request.id} className="rounded-xl border border-slate-300 bg-white p-3">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <h3 className="truncate text-sm font-black text-slate-900">{request.itemName}</h3>
+                  <p className="mt-0.5 text-xs font-semibold text-slate-500">
+                    {formatQuantity(request.quantity, request.unit)} · {formatRequestDate(request.createdAt)}
+                    {requestUnitPrice ? ` · ${formatCurrency(requestUnitPrice)} por unidade` : ''}
+                  </p>
+                </div>
+                <span className={`rounded-full border px-2 py-0.5 text-[10px] font-black ${foodRequestUrgencyTone(request.urgencyLevel)}`}>
+                  {foodRequestUrgencyLabels[request.urgencyLevel]}
+                </span>
+              </div>
+              <p className="mt-2 line-clamp-2 text-xs leading-5 text-slate-500">{request.reason}</p>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <span className={`rounded-full border px-2 py-0.5 text-[10px] font-black ${foodRequestStatusTone(request.status)}`}>
+                  {foodRequestStatusLabels[request.status]}
+                </span>
+                {request.nutritionistObservation && (
+                  <span className="truncate text-[11px] font-semibold text-slate-400">Obs.: {request.nutritionistObservation}</span>
+                )}
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {canMutateAsCreator && (
+                  <button type="button" onClick={() => onEditClick(request)} className="inline-flex min-h-8 items-center gap-1.5 rounded-sm border border-amber-300 bg-amber-50 px-3 text-[11px] font-black text-amber-700 hover:bg-amber-100">
+                    <Pencil className="h-3.5 w-3.5" />
+                    {request.status === 'NEEDS_ADJUSTMENT' ? 'Corrigir' : 'Editar'}
+                  </button>
+                )}
+                {canMutateAsCreator && (
+                  <button type="button" onClick={() => onDeleteClick(request)} className="inline-flex min-h-8 items-center gap-1.5 rounded-sm border border-red-300 bg-red-50 px-3 text-[11px] font-black text-red-700 hover:bg-red-100">
+                    <Trash2 className="h-3.5 w-3.5" />
+                    Excluir
+                  </button>
+                )}
+                {isAdmin && request.status === 'APPROVED_BY_NUTRITIONIST' && (
+                  <button type="button" onClick={() => onAddToStockClick(request)} className="inline-flex min-h-8 items-center gap-1.5 rounded-sm border border-emerald-300 bg-emerald-50 px-3 text-[11px] font-black text-emerald-700 hover:bg-emerald-100">
+                    <PackageCheck className="h-3.5 w-3.5" />
+                    Adicionar ao estoque
+                  </button>
+                )}
+              </div>
+            </article>
+          )
+        })}
+      </div>
+    </section>
+  )
+}
+
+function CreateManagementModal({
+  school,
+  onClose,
+  onCreate,
+}: {
+  school: School
+  onClose: () => void
+  onCreate: (draft: CreateMealManagementPayload) => Promise<void>
+}) {
+  const [monthReference, setMonthReference] = useState(getCurrentMonthReference())
+  const [budgetLimit, setBudgetLimit] = useState('30000')
+  const [alertPercent, setAlertPercent] = useState('80')
+  const [allowOverLimit, setAllowOverLimit] = useState(false)
+  const [error, setError] = useState('')
+  const [isSaving, setIsSaving] = useState(false)
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const parsedBudget = parseDecimalInput(budgetLimit)
+    const parsedAlert = parseDecimalInput(alertPercent)
+    if (!monthReference || !Number.isFinite(parsedBudget) || parsedBudget <= 0) {
+      setError('Informe mês e orçamento maior que zero.')
+      return
+    }
+    if (!Number.isFinite(parsedAlert) || parsedAlert <= 0 || parsedAlert > 100) {
+      setError('O alerta deve ficar entre 1% e 100%.')
+      return
+    }
+
+    setIsSaving(true)
+    setError('')
+    try {
+      await onCreate({
+        escolaId: school.id,
+        mesReferencia: monthReference,
+        valorLimite: parsedBudget,
+        alertaAoAtingirPercentual: parsedAlert,
+        permitirUltrapassarLimite: allowOverLimit,
+      })
+      onClose()
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  return (
+    <Modal id="mv-create-management-title" title="Criar gestão alimentar" subtitle={school.name} onClose={onClose} maxWidth="460px">
+      <form onSubmit={handleSubmit} className="grid gap-4 p-5" noValidate>
+        <Field label="Mês de referência">
+          <input
+            className={inputCls}
+            type="month"
+            value={monthReference}
+            onChange={(event) => setMonthReference(event.target.value)}
+          />
+        </Field>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Orçamento mensal (R$)">
+            <input
+              className={inputCls}
+              inputMode="decimal"
+              value={budgetLimit}
+              onChange={(event) => setBudgetLimit(event.target.value)}
+              placeholder="30000"
+            />
+          </Field>
+          <Field label="Alerta (%)">
+            <input
+              className={inputCls}
+              inputMode="decimal"
+              value={alertPercent}
+              onChange={(event) => setAlertPercent(event.target.value)}
+              placeholder="80"
+            />
+          </Field>
+        </div>
+        <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-slate-300 bg-slate-50 px-3.5 py-3">
+          <input
+            type="checkbox"
+            checked={allowOverLimit}
+            onChange={(event) => setAllowOverLimit(event.target.checked)}
+            className="h-4 w-4 accent-indigo-600"
+          />
+          <span className="text-sm font-bold text-slate-700">Permitir ultrapassar limite do orçamento</span>
+        </label>
+        {error && <p className="text-xs font-semibold text-red-600">{error}</p>}
+        <div className="flex justify-end gap-2 border-t border-slate-200 pt-4">
+          <button type="button" disabled={isSaving} onClick={onClose} className="min-h-10 rounded-sm border border-slate-300 bg-white px-4 text-sm font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-60">
+            Cancelar
+          </button>
+          <button type="submit" disabled={isSaving} className="inline-flex min-h-10 items-center gap-2 rounded-sm bg-indigo-600 px-4 text-sm font-black text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60">
+            <CheckCircle2 className="h-4 w-4" />
+            {isSaving ? 'Criando...' : 'Criar gestão'}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
+
 export default function MealsView({
+  currentUser,
   currentRole,
   schools,
   mealManagements,
+  foodRequests,
+  mealRequestHistory: _mealRequestHistory,
   onLoadSchoolPage,
   onSearchFoods,
+  onCreateFoodRequest,
+  onUpdateFoodRequest,
+  onDeleteFoodRequest,
+  onAddFoodRequestToStock,
+  onCreateManagement,
   onCreateItem,
   onUpdateBudget,
 }: MealsViewProps) {
@@ -2257,24 +3260,39 @@ export default function MealsView({
   const [schoolPageData, setSchoolPageData] = useState<MealManagementsPagePayload | null>(null)
   const [isSchoolPageLoading, setIsSchoolPageLoading] = useState(false)
   const [schoolPageError, setSchoolPageError] = useState('')
+  const displayManagements = useMemo(
+    () => {
+      const bySchoolId = new Map(mealManagements.map((management) => [management.escolaId, management]))
+      const schoolManagements = schools.map((school, index) => bySchoolId.get(school.id) ?? createEmptyMealManagement(school.id, getCurrentMonthReference(), index < 3))
+      return schoolManagements.length > 0 ? schoolManagements : mealManagements
+    },
+    [mealManagements, schools],
+  )
   const selectedManagement = useMemo(
-    () => mealManagements.find((m) => m.id === selectedManagementId) ?? mealManagements[0] ?? null,
-    [mealManagements, selectedManagementId],
+    () => displayManagements.find((m) => m.id === selectedManagementId) ?? displayManagements[0] ?? null,
+    [displayManagements, selectedManagementId],
   )
 
   const [movementsModal, setMovementsModal] = useState<MovementsModalState | null>(null)
   const [menuCalendarModal, setMenuCalendarModal] = useState<MenuCalendarModalState | null>(null)
   const [stockOverviewModal, setStockOverviewModal] = useState<StockOverviewModalState | null>(null)
   const [stockDetail, setStockDetail] = useState<StockDetailState | null>(null)
+  const [foodRequestModal, setFoodRequestModal] = useState<MealFoodRequest | 'new' | null>(null)
+  const [stockRequestModal, setStockRequestModal] = useState<MealFoodRequest | null>(null)
+  const [deleteRequestTarget, setDeleteRequestTarget] = useState<MealFoodRequest | null>(null)
+  const [createManagementModalOpen, setCreateManagementModalOpen] = useState(false)
+  const [isDeletingRequest, setIsDeletingRequest] = useState(false)
 
-  const canManagePurchases = currentRole?.code === 'ADMIN' || currentRole?.name === 'ADMIN'
+  const isAdmin = roleMatches(currentRole, ['ADMIN', 'ADMINISTRADOR', 'ADMINISTRADORA'])
+  const isDirector = roleMatches(currentRole, ['DIRETOR', 'DIRETORA', 'DIRECAO', 'DIRETORIA'])
+  const canManagePurchases = isAdmin
 
   useEffect(() => {
-    if (!mealManagements.length) return
-    if (!mealManagements.some((m) => m.id === selectedManagementId)) {
-      setSelectedManagementId(mealManagements[0].id)
+    if (!displayManagements.length) return
+    if (!displayManagements.some((m) => m.id === selectedManagementId)) {
+      setSelectedManagementId(displayManagements[0].id)
     }
-  }, [mealManagements, selectedManagementId])
+  }, [displayManagements, selectedManagementId])
 
   useEffect(() => {
     let isCurrent = true
@@ -2285,7 +3303,7 @@ export default function MealsView({
       .then((data) => {
         if (!isCurrent) return
         setSchoolPageData(data)
-        if (data.pagination.page !== schoolPage) setSchoolPage(data.pagination.page)
+        if (data.mealManagements.length > 0 && data.pagination.page !== schoolPage) setSchoolPage(data.pagination.page)
       })
       .catch(() => {
         if (!isCurrent) return
@@ -2306,35 +3324,61 @@ export default function MealsView({
     setMenuCalendarModal(null)
     setStockOverviewModal(null)
     setStockDetail(null)
+    setFoodRequestModal(null)
+    setStockRequestModal(null)
+    setDeleteRequestTarget(null)
+    setCreateManagementModalOpen(false)
   }, [selectedManagementId])
 
   const schoolById = useMemo(
     () => new Map([...schools, ...(schoolPageData?.schools ?? [])].map((s) => [s.id, s])),
     [schools, schoolPageData?.schools],
   )
-  const schoolSelectorManagements = schoolPageData?.mealManagements ?? mealManagements.slice(0, schoolSelectorPageSize)
-  const schoolSelectorPagination = schoolPageData?.pagination ?? {
-    page: 1,
+  const hasRemoteSchoolPage = Boolean(schoolPageData && schoolPageData.mealManagements.length > 0)
+  const schoolSelectorManagements = hasRemoteSchoolPage
+    ? schoolPageData?.mealManagements ?? []
+    : displayManagements.slice((schoolPage - 1) * schoolSelectorPageSize, schoolPage * schoolSelectorPageSize)
+  const schoolSelectorPagination = hasRemoteSchoolPage && schoolPageData?.pagination ? schoolPageData.pagination : {
+    page: schoolPage,
     limit: schoolSelectorPageSize,
-    total: mealManagements.length,
-    totalPages: Math.max(1, Math.ceil(mealManagements.length / schoolSelectorPageSize)),
+    total: displayManagements.length,
+    totalPages: Math.max(1, Math.ceil(displayManagements.length / schoolSelectorPageSize)),
   }
   const selectedSchool = selectedManagement ? schoolById.get(selectedManagement.escolaId) ?? null : null
+  const selectedSchoolId = selectedManagement?.escolaId ?? currentUser.schoolId ?? ''
+  const selectedManagementConfigured = !isVirtualMealManagement(selectedManagement)
+  const selectedFoodRequests = foodRequests
+    .filter((request) => request.schoolId === selectedSchoolId)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
   const selectedMenus = selectedManagement?.cardapios ?? []
+  const selectedMenusPreview = selectedMenus.slice(0, 4)
+  const hiddenMenuCount = Math.max(0, selectedMenus.length - selectedMenusPreview.length)
   const selectedStock = selectedManagement?.estoqueMerenda ?? []
   const selectedStockPreview = selectedStock.slice(0, 4)
   const hiddenStockCount = Math.max(0, selectedStock.length - selectedStockPreview.length)
 
+  async function handleDeleteFoodRequest() {
+    if (!deleteRequestTarget) return
+
+    setIsDeletingRequest(true)
+    try {
+      await onDeleteFoodRequest(deleteRequestTarget.id)
+      setDeleteRequestTarget(null)
+    } finally {
+      setIsDeletingRequest(false)
+    }
+  }
+
   const networkSummary = useMemo(() => {
     const schoolIds = new Set(mealManagements.map((m) => m.escolaId))
     return {
-      schools: schoolIds.size,
+      schools: Math.max(schoolIds.size, schools.length),
       value: mealManagements.reduce((s, m) => s + m.orcamentoMensal.valorUtilizado, 0),
       available: mealManagements.reduce((s, m) => s + m.orcamentoMensal.valorDisponivel, 0),
       items: mealManagements.reduce((s, m) => s + m.resumo.totalItens, 0),
       alerts: mealManagements.reduce((s, m) => s + m.resumo.itensBaixoEstoque + m.resumo.itensVencidos, 0),
     }
-  }, [mealManagements])
+  }, [mealManagements, schools.length])
 
   if (!selectedManagement) {
     return (
@@ -2400,35 +3444,39 @@ export default function MealsView({
       <div className="mv-page mx-auto grid min-h-screen w-full max-w-[1680px] gap-4 bg-slate-100 px-[clamp(12px,2.5vw,40px)] py-5 pb-12 text-slate-900">
 
         {/* ══ HEADER BAR ══ */}
-        <header className="mv-section flex flex-wrap items-center justify-between gap-4 rounded-xl border border-slate-300 bg-white px-5 py-3.5 shadow-sm">
-          <div className="flex items-center gap-3">
-            <div className="grid h-9 w-9 place-items-center rounded-xl bg-indigo-600 shadow-sm">
-              <Utensils className="h-4 w-4 text-white" />
-            </div>
-            <div>
-              <p className="text-[10px] font-bold uppercase tracking-wider text-indigo-600">Gestão Alimentar</p>
-              <h1 className="font-['Sora',system-ui,sans-serif] text-lg font-black leading-tight text-slate-950">
-                Merenda Escolar
-              </h1>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
+        <PageTitleBar
+          className="mv-section"
+          label="Gestão alimentar"
+          title="Merenda Escolar"
+          icon={<Utensils />}
+          actions={(
+            <div className="flex flex-wrap items-center gap-2">
+            {isAdmin && !selectedManagementConfigured && selectedSchool && (
+              <button
+                type="button"
+                onClick={() => setCreateManagementModalOpen(true)}
+                className="inline-flex min-h-8 items-center gap-2 rounded-sm border border-indigo-300 bg-white px-3 text-[11px] font-black uppercase tracking-wider text-indigo-700 transition-all hover:bg-indigo-50"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                Criar gestão
+              </button>
+            )}
             <span className="rounded-full border border-slate-300 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-500">
               {selectedManagement.mesReferencia}
             </span>
             <span
               className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-bold ${
-                canManagePurchases
+                canManagePurchases || isDirector
                   ? 'border-indigo-400 bg-indigo-50 text-indigo-700'
                   : 'border-slate-300 bg-slate-100 text-slate-500'
               }`}
             >
-              {canManagePurchases ? <ShieldCheck className="h-3.5 w-3.5" /> : <Lock className="h-3.5 w-3.5" />}
-              {canManagePurchases ? 'Administrador' : 'Somente leitura'}
+              {canManagePurchases || isDirector ? <ShieldCheck className="h-3.5 w-3.5" /> : <Lock className="h-3.5 w-3.5" />}
+              {canManagePurchases ? 'Administrador' : isDirector ? 'Diretor: solicita avaliacao' : 'Somente leitura'}
             </span>
-          </div>
-        </header>
+            </div>
+          )}
+        />
 
         {/* ══ NETWORK METRICS ══ */}
         <div className="mv-section grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -2481,11 +3529,11 @@ export default function MealsView({
                 <p className="text-[10px] font-bold uppercase tracking-wider text-indigo-600">Escolas</p>
                 <h2 className="mt-0.5 text-sm font-black text-slate-800">Selecione a unidade</h2>
                 <p className="mt-1 text-[11px] font-medium text-slate-400">
-                  {mealManagements.length} escola{mealManagements.length !== 1 ? 's' : ''} disponível{mealManagements.length !== 1 ? 'is' : ''}
+                  {displayManagements.length} escola{displayManagements.length !== 1 ? 's' : ''} disponível{displayManagements.length !== 1 ? 'is' : ''}
                 </p>
               </div>
 
-              <div className="mv-scroll grid max-h-[calc(100vh-280px)] gap-2 overflow-y-auto p-3 xl:min-h-0 xl:flex-1">
+              <div className="mv-scroll grid auto-rows-max content-start max-h-[calc(100vh-280px)] gap-2 overflow-y-auto p-3 xl:min-h-0 xl:flex-1">
                 {schoolPageError && (
                   <div className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-center text-xs font-bold text-red-600">
                     {schoolPageError}
@@ -2591,7 +3639,7 @@ export default function MealsView({
 
               <div className="mv-scroll grid auto-rows-fr grid-cols-[repeat(auto-fit,minmax(220px,1fr))] gap-2.5 overflow-y-auto p-4 xl:max-h-[266px]">
                 {selectedMenus.length > 0 ? (
-                  selectedMenus.map((menu) => (
+                  selectedMenusPreview.map((menu) => (
                     <MenuCard key={menu.id} menu={menu} foods={selectedManagement.alimentosCadastrados} />
                   ))
                 ) : (
@@ -2601,6 +3649,20 @@ export default function MealsView({
                       <p className="mt-2 text-sm font-semibold text-slate-400">Nenhum cardápio cadastrado</p>
                     </div>
                   </div>
+                )}
+                {hiddenMenuCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setMenuCalendarModal({
+                        management: selectedManagement,
+                        schoolName: selectedSchool?.name ?? 'Escola',
+                      })
+                    }
+                    className="grid min-h-[96px] place-items-center rounded-lg border border-dashed border-amber-300 bg-amber-50 px-3 text-center text-sm font-black text-amber-700 transition-all hover:border-amber-400 hover:bg-amber-100"
+                  >
+                    +{hiddenMenuCount} cardapio{hiddenMenuCount !== 1 ? 's' : ''} no calendario do mes
+                  </button>
                 )}
               </div>
             </section>
@@ -2676,12 +3738,34 @@ export default function MealsView({
 
           {/* ── RIGHT: PURCHASE + BUDGET ── */}
           <aside className="grid min-w-0 content-start gap-4 xl:sticky xl:top-4">
-            {canManagePurchases ? (
+            {canManagePurchases && selectedManagementConfigured ? (
               <PurchaseForm
                 management={selectedManagement}
                 onSearchFoods={onSearchFoods}
                 onCreateItem={onCreateItem}
               />
+            ) : isDirector ? (
+              <PurchaseForm
+                management={selectedManagement}
+                schoolId={selectedSchoolId}
+                mode="request"
+                onSearchFoods={onSearchFoods}
+                onCreateFoodRequest={onCreateFoodRequest}
+              />
+            ) : canManagePurchases ? (
+              <section className="flex flex-col items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 p-5 shadow-sm">
+                <div className="grid h-10 w-10 place-items-center rounded-xl border border-amber-300 bg-white">
+                  <AlertTriangle className="h-5 w-5 text-amber-600" />
+                </div>
+                <div>
+                  <h2 className="font-['Sora',system-ui,sans-serif] text-sm font-black text-slate-900">
+                    Gestão mensal ainda não criada
+                  </h2>
+                  <p className="mt-1 text-sm leading-6 text-slate-600">
+                    A escola existe, mas não há gestão alimentar ativa para orçamento, estoque e compras neste mês.
+                  </p>
+                </div>
+              </section>
             ) : (
               <section className="flex flex-col items-start gap-3 rounded-xl border border-slate-300 bg-white p-5 shadow-sm">
                 <div className="grid h-10 w-10 place-items-center rounded-xl border border-slate-300 bg-slate-100">
@@ -2698,10 +3782,21 @@ export default function MealsView({
               </section>
             )}
 
+            <FoodRequestsPanel
+              requests={selectedFoodRequests}
+              currentUserId={currentUser.id}
+              isDirector={isDirector}
+              isAdmin={isAdmin}
+              onCreateClick={() => setFoodRequestModal('new')}
+              onEditClick={(request) => setFoodRequestModal(request)}
+              onDeleteClick={(request) => setDeleteRequestTarget(request)}
+              onAddToStockClick={(request) => setStockRequestModal(request)}
+            />
+
             <BudgetPanel
               management={selectedManagement}
               schoolName={selectedSchool?.name ?? 'Rede municipal'}
-              canEdit={canManagePurchases}
+              canEdit={canManagePurchases && selectedManagementConfigured}
               onUpdateBudget={onUpdateBudget}
               onShowMovements={() =>
                 setMovementsModal({
@@ -2715,6 +3810,48 @@ export default function MealsView({
       </div>
 
       {/* ══ MODALS ══ */}
+      {createManagementModalOpen && selectedSchool && (
+        <CreateManagementModal
+          school={selectedSchool}
+          onClose={() => setCreateManagementModalOpen(false)}
+          onCreate={onCreateManagement}
+        />
+      )}
+
+      {foodRequestModal && (
+        <FoodRequestModal
+          schoolId={selectedSchoolId}
+          request={foodRequestModal === 'new' ? null : foodRequestModal}
+          onClose={() => setFoodRequestModal(null)}
+          onSearchFoods={onSearchFoods}
+          onCreate={onCreateFoodRequest}
+          onUpdate={onUpdateFoodRequest}
+        />
+      )}
+
+      {stockRequestModal && (
+        <AddRequestToStockModal
+          request={stockRequestModal}
+          schoolName={selectedSchool?.name ?? 'Escola'}
+          onClose={() => setStockRequestModal(null)}
+          onConfirm={onAddFoodRequestToStock}
+        />
+      )}
+
+      {deleteRequestTarget && (
+        <ConfirmDialog
+          title="Excluir solicitação"
+          description={`A solicitação de ${deleteRequestTarget.itemName} será cancelada e deixará de seguir para aprovação.`}
+          confirmLabel="Excluir solicitação"
+          loading={isDeletingRequest}
+          tone="danger"
+          onCancel={() => {
+            if (!isDeletingRequest) setDeleteRequestTarget(null)
+          }}
+          onConfirm={handleDeleteFoodRequest}
+        />
+      )}
+
       {movementsModal && (
         <MovementsModal
           management={movementsModal.management}

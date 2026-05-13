@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
+import { z } from 'zod'
 import {
   BookOpen, Building2, Clock3, Eye, GraduationCap, MoreHorizontal,
   Pencil, Plus, Save, Search, UserRound, Users, X, AlertTriangle,
@@ -9,7 +10,10 @@ import {
 
 import { CompactSelect, type CompactSelectOption } from '../components/ui/compact-select'
 import { AvatarHoverPreview } from '../components/profile/AvatarSign'
+import { PageTitleBar } from '../components/ui/page-title-bar'
+import { FieldMessage, fieldStateClass, zodFieldErrors, type FieldErrors } from '../components/ui/form-field'
 import { resolveApiAssetUrl } from '../api'
+import { formatClassGrade, getClassGradeOptions } from '../class-grade-options'
 import type { ClassRoom, Desempenho, Guardian, Role, School, Student, Teacher, UserAccount } from '../types'
 
 /* ─── Types ─── */
@@ -21,6 +25,8 @@ interface SchoolsViewProps {
   students: Student[]
   teachers: Teacher[]
   guardians: Guardian[]
+  assetVersion?: ProfileAssetVersion
+  readOnly?: boolean
   onCreate: (draft: Partial<School>) => Promise<void>
   onUpdate: (id: string, draft: Partial<School>) => Promise<void>
   onCreateClass: (draft: Partial<ClassRoom>) => Promise<void>
@@ -41,6 +47,70 @@ const emptyClass: Partial<ClassRoom> = { name: '', grade: '', shift: 'Manha', sc
 const emptyTeacher: Partial<Teacher> & { classId?: string; password?: string; phone?: string } = { name: '', email: '', schoolId: '', specialty: '', classId: '', phone: '', password: '', active: true }
 const emptyStudent: Partial<Student> & { password?: string } = { name: '', registrationNumber: '', schoolId: '', classId: '', guardianIds: [], status: 'matriculado', attendanceRate: 100, averageScore: 0, desempenho: 'Otimo', password: '' }
 const emptyGuardian: Partial<Guardian> & { password?: string } = { name: '', email: '', phone: '', schoolId: '', studentIds: [], password: '' }
+
+const requiredText = (message: string) =>
+  z.preprocess((value) => typeof value === 'string' ? value : '', z.string().trim().min(1, message))
+const optionalText = z.preprocess((value) => typeof value === 'string' ? value : '', z.string().trim())
+const stringList = z.preprocess((value) => Array.isArray(value) ? value : [], z.array(z.string()))
+const optionalPhone = optionalText.refine((value) => {
+  const digits = value.replace(/\D/g, '')
+  return !digits || (digits.length >= 10 && digits.length <= 11)
+}, 'Informe telefone com DDD e 10 ou 11 dígitos.')
+
+const schoolFormSchema = z.object({
+  name: requiredText('Informe o nome da escola.').pipe(z.string().min(3, 'Nome deve ter pelo menos 3 caracteres.')),
+  city: requiredText('Informe a cidade da escola.'),
+  address: requiredText('Informe o endereço da escola.'),
+  director: requiredText('Informe o nome do diretor ou diretora.'),
+  inepCode: requiredText('Informe o código INEP.').pipe(z.string().min(6, 'Código INEP deve ter pelo menos 6 dígitos.')),
+})
+
+const classFormSchema = z.object({
+  name: requiredText('Informe o nome da turma.'),
+  grade: requiredText('Selecione a série/ano da turma.'),
+  schoolId: requiredText('Selecione uma escola para a turma.'),
+  teacherId: requiredText('Selecione um professor responsável.'),
+  shift: z.enum(['Manha', 'Tarde', 'Noite']),
+  academicYear: z.coerce.number().int('Informe um ano letivo válido.').min(2000, 'Ano letivo muito antigo.').max(currentYear + 1, 'Ano letivo fora do período permitido.'),
+  schedule: requiredText('Informe o horário da turma.'),
+  bnccFocus: stringList,
+  teacherIds: stringList,
+})
+
+const teacherFormSchema = z.object({
+  name: requiredText('Informe o nome completo do professor.'),
+  email: requiredText('Informe o e-mail do professor.').pipe(z.string().email('Informe um e-mail válido.')),
+  specialty: requiredText('Informe as disciplinas do professor.'),
+  phone: optionalPhone,
+  schoolId: requiredText('Selecione a escola do professor.'),
+  classId: optionalText,
+  password: requiredText('Informe uma senha inicial.').pipe(z.string().min(8, 'Senha deve ter pelo menos 8 caracteres.')),
+})
+
+const studentFormSchema = z.object({
+  name: requiredText('Informe o nome completo do aluno.'),
+  registrationNumber: optionalText,
+  schoolId: requiredText('Selecione a escola do aluno.'),
+  classId: requiredText('Selecione a turma do aluno.'),
+  desempenho: z.enum(['Otimo', 'Medio', 'Baixo']),
+  password: requiredText('Informe uma senha inicial.').pipe(z.string().min(8, 'Senha deve ter pelo menos 8 caracteres.')),
+  guardianIds: stringList,
+})
+
+const guardianFormSchema = z.object({
+  name: requiredText('Informe o nome completo do responsável.'),
+  email: requiredText('Informe o e-mail do responsável.').pipe(z.string().email('Informe um e-mail válido.')),
+  phone: optionalPhone,
+  schoolId: requiredText('Selecione a escola do responsável.'),
+  password: requiredText('Informe uma senha inicial.').pipe(z.string().min(8, 'Senha deve ter pelo menos 8 caracteres.')),
+  studentIds: stringList,
+})
+
+type SchoolFormField = keyof z.infer<typeof schoolFormSchema>
+type ClassFormField = keyof z.infer<typeof classFormSchema>
+type TeacherFormField = keyof z.infer<typeof teacherFormSchema>
+type StudentFormField = keyof z.infer<typeof studentFormSchema>
+type GuardianFormField = keyof z.infer<typeof guardianFormSchema>
 
 /* ─── Skeleton ─── */
 function SkeletonCard() {
@@ -188,18 +258,36 @@ function PerformancePill({ level }: { level?: string | null }) {
 }
 
 /* ─── Field ─── */
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({
+  label,
+  children,
+  hint,
+  error,
+}: {
+  label: string
+  children: React.ReactNode
+  hint?: string
+  error?: string | null
+}) {
   return (
     <label className="flex min-w-0 flex-col gap-1.5">
       <span className="text-[11px] font-bold uppercase tracking-widest text-slate-500">{label}</span>
       {children}
+      <FieldMessage hint={hint} error={error} />
     </label>
   )
 }
 
 const inputCls = "min-h-10 w-full min-w-0 rounded-sm border border-slate-400 bg-white px-3 text-sm text-slate-900 outline-none transition-all placeholder:text-slate-400 focus:border-indigo-400 focus:ring-3 focus:ring-indigo-100"
 
+type ProfileAssetVersion = {
+  avatar?: string | number
+  banner?: string | number
+}
+
 type ProfilePreviewEntity = {
+  id?: string
+  userId?: string
   name: string
   email?: string
   login?: string
@@ -228,31 +316,36 @@ function getProfileEmail(entity: ProfilePreviewEntity) {
   return entity.email ?? entity.user?.email ?? entity.login ?? entity.user?.login ?? entity.registrationNumber ?? 'Sem e-mail cadastrado'
 }
 
-function getProfileAvatarUrl(entity: ProfilePreviewEntity) {
-  return resolveApiAssetUrl(entity.avatarUrl ?? entity.user?.avatarUrl)
+function getProfileAvatarUrl(entity: ProfilePreviewEntity, version?: string | number) {
+  return resolveApiAssetUrl(entity.avatarUrl ?? entity.user?.avatarUrl, version)
 }
 
-function getProfileBannerUrl(entity: ProfilePreviewEntity) {
-  return resolveApiAssetUrl(entity.bannerUrl ?? entity.user?.bannerUrl)
+function getProfileBannerUrl(entity: ProfilePreviewEntity, version?: string | number) {
+  return resolveApiAssetUrl(entity.bannerUrl ?? entity.user?.bannerUrl, version)
 }
 
 function ProfileAvatar({
   entity,
   size = 'sm',
+  assetVersion,
 }: {
   entity: ProfilePreviewEntity
   size?: 'sm' | 'md'
+  assetVersion?: ProfileAssetVersion
 }) {
   const wrapperRef = useRef<HTMLDivElement | null>(null)
   const [previewStyle, setPreviewStyle] = useState<CSSProperties | null>(null)
   const name = entity.name || entity.user?.name || 'Usuário'
   const email = getProfileEmail(entity)
   const initials = getInitials(name)
-  const avatarSrc = getProfileAvatarUrl(entity)
-  const bannerSrc = getProfileBannerUrl(entity)
+  const avatarSrc = getProfileAvatarUrl(entity, assetVersion?.avatar)
+  const bannerSrc = getProfileBannerUrl(entity, assetVersion?.banner)
+  const hasProfileImage = Boolean(avatarSrc || bannerSrc)
   const sizeClass = size === 'md' ? 'h-10 w-10 text-[13px]' : 'h-8 w-8 text-[11px]'
 
   function showPreview() {
+    if (!hasProfileImage) return
+
     const rect = wrapperRef.current?.getBoundingClientRect()
     if (!rect) return
 
@@ -281,8 +374,8 @@ function ProfileAvatar({
       onBlur={hidePreview}
     >
       <span
-        tabIndex={0}
-        className={`grid overflow-hidden rounded-full border border-white bg-indigo-600 font-black text-white shadow-sm ring-1 ring-slate-300 outline-none transition focus:ring-2 focus:ring-indigo-500 ${sizeClass}`}
+        tabIndex={hasProfileImage ? 0 : -1}
+        className={`grid overflow-hidden rounded-full border border-white bg-indigo-600 font-black text-white shadow-sm ring-1 ring-slate-300 outline-none transition ${hasProfileImage ? 'cursor-pointer focus:ring-2 focus:ring-indigo-500' : ''} ${sizeClass}`}
       >
         {avatarSrc ? (
           <img src={avatarSrc} alt={name} className="h-full w-full object-cover" draggable={false} />
@@ -290,7 +383,7 @@ function ProfileAvatar({
           <span className="grid h-full w-full place-items-center">{initials || <UserRound size={size === 'md' ? 16 : 13} />}</span>
         )}
       </span>
-      {previewStyle && typeof document !== 'undefined'
+      {hasProfileImage && previewStyle && typeof document !== 'undefined'
         ? createPortal(
             <AvatarHoverPreview
               name={name}
@@ -401,6 +494,8 @@ function EmptyState({ icon: Icon, title, description, action }: { icon: React.El
 ════════════════════════════════════════════════════════════════ */
 export default function SchoolsView({
   currentUser, currentRole, schools, classes, students, teachers, guardians,
+  assetVersion,
+  readOnly = false,
   onCreate, onUpdate, onCreateClass, onUpdateClass,
   onCreateTeacher, onCreateStudent, onCreateGuardian,
 }: SchoolsViewProps) {
@@ -415,20 +510,25 @@ export default function SchoolsView({
   const [schoolEditingId, setSchoolEditingId] = useState<string | null>(null)
   const [isSchoolModalOpen, setIsSchoolModalOpen] = useState(false)
   const [schoolDetailsId, setSchoolDetailsId] = useState<string | null>(null)
+  const [schoolFieldErrors, setSchoolFieldErrors] = useState<FieldErrors<SchoolFormField>>({})
 
   const [classDraft, setClassDraft] = useState<Partial<ClassRoom>>({ ...emptyClass })
   const [classEditingId, setClassEditingId] = useState<string | null>(null)
   const [isClassModalOpen, setIsClassModalOpen] = useState(false)
   const [classFormError, setClassFormError] = useState<string | null>(null)
+  const [classFieldErrors, setClassFieldErrors] = useState<FieldErrors<ClassFormField>>({})
   const [selectedSchoolId, setSelectedSchoolId] = useState(linkedSchoolId)
   const [classDetailsId, setClassDetailsId] = useState<string | null>(null)
 
   const [teacherDraft, setTeacherDraft] = useState<Partial<Teacher> & { classId?: string; password?: string; phone?: string }>({ ...emptyTeacher })
   const [isTeacherModalOpen, setIsTeacherModalOpen] = useState(false)
+  const [teacherFieldErrors, setTeacherFieldErrors] = useState<FieldErrors<TeacherFormField>>({})
   const [studentDraft, setStudentDraft] = useState<Partial<Student> & { password?: string }>({ ...emptyStudent })
   const [isStudentModalOpen, setIsStudentModalOpen] = useState(false)
+  const [studentFieldErrors, setStudentFieldErrors] = useState<FieldErrors<StudentFormField>>({})
   const [guardianDraft, setGuardianDraft] = useState<Partial<Guardian> & { password?: string }>({ ...emptyGuardian })
   const [isGuardianModalOpen, setIsGuardianModalOpen] = useState(false)
+  const [guardianFieldErrors, setGuardianFieldErrors] = useState<FieldErrors<GuardianFormField>>({})
 
   const [query, setQuery] = useState('')
 
@@ -439,6 +539,31 @@ export default function SchoolsView({
   const selectedSchool = useMemo(() => visibleSchools.find(s => s.id === selectedSchoolId) ?? null, [selectedSchoolId, visibleSchools])
   const detailsSchool = useMemo(() => schoolDetailsId ? schools.find(s => s.id === schoolDetailsId) ?? null : null, [schoolDetailsId, schools])
   const detailsClass = useMemo(() => classDetailsId ? classes.find(c => c.id === classDetailsId) ?? null : null, [classDetailsId, classes])
+
+  function isCurrentLinkedProfile(entity: ProfilePreviewEntity) {
+    return Boolean(
+      entity.id
+      && (
+        entity.id === currentUser.linkedStudentId
+        || entity.id === currentUser.linkedTeacherId
+        || entity.userId === currentUser.id
+      ),
+    )
+  }
+
+  function withCurrentUserVisuals<T extends ProfilePreviewEntity>(entity: T): T {
+    if (!isCurrentLinkedProfile(entity)) return entity
+
+    return {
+      ...entity,
+      avatarUrl: currentUser.avatarUrl,
+      bannerUrl: currentUser.bannerUrl,
+    }
+  }
+
+  function getProfileAssetVersion(entity: ProfilePreviewEntity) {
+    return isCurrentLinkedProfile(entity) ? assetVersion : undefined
+  }
 
   useEffect(() => {
     if (isDirectorView) { setSelectedSchoolId(linkedSchoolId); return }
@@ -464,6 +589,14 @@ export default function SchoolsView({
     () => [{ value: '', label: 'Selecione o professor', disabled: true }, ...teachers.filter(t => !classDraft.schoolId || t.schoolId === classDraft.schoolId).map(t => ({ value: t.id, label: t.name, description: t.specialty }))],
     [classDraft.schoolId, teachers],
   )
+  const classTeacherCandidates = useMemo(
+    () => teachers.filter(t => !classDraft.schoolId || t.schoolId === classDraft.schoolId),
+    [classDraft.schoolId, teachers],
+  )
+  const classGradeOptions = useMemo<Array<CompactSelectOption<string>>>(
+    () => getClassGradeOptions(classDraft.grade),
+    [classDraft.grade],
+  )
   const teacherSchoolOptions = useMemo<Array<CompactSelectOption<string>>>(
     () => [{ value: '', label: 'Selecione a escola', disabled: true }, ...visibleSchools.map(s => ({ value: s.id, label: s.name }))],
     [visibleSchools],
@@ -486,45 +619,125 @@ export default function SchoolsView({
     const ids = new Set([cr.teacherId, ...(cr.teacherIds ?? [])].filter(Boolean))
     return teachers.filter(t => ids.has(t.id))
   }
+  function splitDisciplineList(value: string) {
+    return value.split(',').map(x => x.trim()).filter(Boolean)
+  }
+  function getClassDisciplines(classId?: string) {
+    return classes.find(c => c.id === classId)?.bnccFocus ?? []
+  }
   function getGuardianName(id: string) { return guardians.find(g => g.id === id)?.name ?? 'Responsável pendente' }
   function getDefaultSchoolId() { return selectedSchoolId || linkedSchoolId }
 
-  function openCreateSchoolModal() { setSchoolEditingId(null); setSchoolDraft({ ...emptySchool }); setIsSchoolModalOpen(true) }
-  function openEditSchoolModal(s: School) { setSchoolEditingId(s.id); setSchoolDraft({ ...s }); setIsSchoolModalOpen(true) }
-  function closeSchoolModal() { setSchoolEditingId(null); setSchoolDraft({ ...emptySchool }); setIsSchoolModalOpen(false) }
-  async function handleSchoolSubmit(e: FormEvent<HTMLFormElement>) { e.preventDefault(); if (schoolEditingId) await onUpdate(schoolEditingId, schoolDraft); else await onCreate(schoolDraft); closeSchoolModal() }
-
-  function openCreateClassModal() { setClassEditingId(null); setClassFormError(null); setClassDraft({ ...emptyClass, schoolId: getDefaultSchoolId() }); setIsClassModalOpen(true) }
-  function openEditClassModal(cr: ClassRoom) { setClassEditingId(cr.id); setClassFormError(null); setClassDraft({ ...cr }); setIsClassModalOpen(true) }
-  function closeClassModal() { setClassEditingId(null); setClassFormError(null); setClassDraft({ ...emptyClass }); setIsClassModalOpen(false) }
-  async function handleClassSubmit(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault()
-    if (!classDraft.schoolId) { setClassFormError('Selecione uma escola para a turma.'); return }
-    if (!classDraft.teacherId) { setClassFormError('Selecione um professor responsável.'); return }
-    const teacherIds = Array.from(new Set([classDraft.teacherId, ...(classDraft.teacherIds ?? [])].filter(Boolean))) as string[]
-    if (classEditingId) await onUpdateClass(classEditingId, { ...classDraft, teacherIds })
-    else await onCreateClass({ ...classDraft, teacherIds })
-    closeClassModal()
+  function clearSchoolError(field: SchoolFormField) {
+    setSchoolFieldErrors((current) => ({ ...current, [field]: undefined }))
+  }
+  function clearClassError(field: ClassFormField) {
+    setClassFieldErrors((current) => ({ ...current, [field]: undefined }))
+  }
+  function clearTeacherError(field: TeacherFormField) {
+    setTeacherFieldErrors((current) => ({ ...current, [field]: undefined }))
+  }
+  function clearStudentError(field: StudentFormField) {
+    setStudentFieldErrors((current) => ({ ...current, [field]: undefined }))
+  }
+  function clearGuardianError(field: GuardianFormField) {
+    setGuardianFieldErrors((current) => ({ ...current, [field]: undefined }))
   }
 
-  function openCreateTeacherModal(cr?: ClassRoom) { setTeacherDraft({ ...emptyTeacher, schoolId: cr?.schoolId ?? getDefaultSchoolId(), classId: cr?.id ?? '' }); setIsTeacherModalOpen(true) }
-  function closeTeacherModal() { setTeacherDraft({ ...emptyTeacher }); setIsTeacherModalOpen(false) }
-  async function handleTeacherSubmit(e: FormEvent<HTMLFormElement>) { e.preventDefault(); await onCreateTeacher(teacherDraft); closeTeacherModal() }
+  function openCreateSchoolModal() { setSchoolEditingId(null); setSchoolFieldErrors({}); setSchoolDraft({ ...emptySchool }); setIsSchoolModalOpen(true) }
+  function openEditSchoolModal(s: School) { setSchoolEditingId(s.id); setSchoolFieldErrors({}); setSchoolDraft({ ...s }); setIsSchoolModalOpen(true) }
+  function closeSchoolModal() { setSchoolEditingId(null); setSchoolFieldErrors({}); setSchoolDraft({ ...emptySchool }); setIsSchoolModalOpen(false) }
+  async function handleSchoolSubmit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    const result = schoolFormSchema.safeParse(schoolDraft)
+    if (!result.success) {
+      setSchoolFieldErrors(zodFieldErrors<SchoolFormField>(result.error))
+      return
+    }
+    setSchoolFieldErrors({})
+    const payload = { ...schoolDraft, ...result.data }
+    if (schoolEditingId) await onUpdate(schoolEditingId, payload)
+    else await onCreate(payload)
+    closeSchoolModal()
+  }
 
-  function openCreateStudentModal(cr?: ClassRoom) { setStudentDraft({ ...emptyStudent, schoolId: cr?.schoolId ?? getDefaultSchoolId(), classId: cr?.id ?? '', guardianIds: [] }); setIsStudentModalOpen(true) }
-  function closeStudentModal() { setStudentDraft({ ...emptyStudent }); setIsStudentModalOpen(false) }
+  function openCreateClassModal() { setClassEditingId(null); setClassFormError(null); setClassFieldErrors({}); setClassDraft({ ...emptyClass, schoolId: getDefaultSchoolId() }); setIsClassModalOpen(true) }
+  function openEditClassModal(cr: ClassRoom) { setClassEditingId(cr.id); setClassFormError(null); setClassFieldErrors({}); setClassDraft({ ...cr }); setIsClassModalOpen(true) }
+  function closeClassModal() { setClassEditingId(null); setClassFormError(null); setClassFieldErrors({}); setClassDraft({ ...emptyClass }); setIsClassModalOpen(false) }
+  async function handleClassSubmit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    const result = classFormSchema.safeParse(classDraft)
+    if (!result.success) {
+      const errors = zodFieldErrors<ClassFormField>(result.error)
+      setClassFieldErrors(errors)
+      setClassFormError(Object.values(errors)[0] ?? 'Revise os campos da turma.')
+      return
+    }
+    setClassFormError(null)
+    setClassFieldErrors({})
+    const parsedClassTeacherIds = Array.from(new Set([result.data.teacherId, ...result.data.teacherIds].filter((id): id is string => Boolean(id))))
+    const payload = { ...classDraft, ...result.data, teacherIds: parsedClassTeacherIds }
+    if (classEditingId) await onUpdateClass(classEditingId, payload)
+    else await onCreateClass(payload)
+    closeClassModal()
+  }
+  function toggleClassTeacher(teacherId: string) {
+    setClassDraft((current) => {
+      const selected = new Set<string>(
+        [...(current.teacherIds ?? []), current.teacherId].filter((id): id is string => Boolean(id)),
+      )
+      if (teacherId === current.teacherId) selected.add(teacherId)
+      else if (selected.has(teacherId)) selected.delete(teacherId)
+      else selected.add(teacherId)
+      return { ...current, teacherIds: Array.from(selected) }
+    })
+  }
+
+  function openCreateTeacherModal(cr?: ClassRoom) { setTeacherFieldErrors({}); setTeacherDraft({ ...emptyTeacher, schoolId: cr?.schoolId ?? getDefaultSchoolId(), classId: cr?.id ?? '' }); setIsTeacherModalOpen(true) }
+  function closeTeacherModal() { setTeacherFieldErrors({}); setTeacherDraft({ ...emptyTeacher }); setIsTeacherModalOpen(false) }
+  async function handleTeacherSubmit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    const result = teacherFormSchema.safeParse(teacherDraft)
+    if (!result.success) {
+      setTeacherFieldErrors(zodFieldErrors<TeacherFormField>(result.error))
+      return
+    }
+    setTeacherFieldErrors({})
+    await onCreateTeacher({ ...teacherDraft, ...result.data })
+    closeTeacherModal()
+  }
+
+  function openCreateStudentModal(cr?: ClassRoom) { setStudentFieldErrors({}); setStudentDraft({ ...emptyStudent, schoolId: cr?.schoolId ?? getDefaultSchoolId(), classId: cr?.id ?? '', guardianIds: [] }); setIsStudentModalOpen(true) }
+  function closeStudentModal() { setStudentFieldErrors({}); setStudentDraft({ ...emptyStudent }); setIsStudentModalOpen(false) }
   async function handleStudentSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
-    await onCreateStudent({ ...studentDraft, desempenho: getStudentPerformance(studentDraft) })
+    const result = studentFormSchema.safeParse({ ...studentDraft, desempenho: getStudentPerformance(studentDraft) })
+    if (!result.success) {
+      setStudentFieldErrors(zodFieldErrors<StudentFormField>(result.error))
+      return
+    }
+    setStudentFieldErrors({})
+    await onCreateStudent({ ...studentDraft, ...result.data })
     closeStudentModal()
   }
 
   function openCreateGuardianModal(cr?: ClassRoom) {
+    setGuardianFieldErrors({})
     setGuardianDraft({ ...emptyGuardian, schoolId: cr?.schoolId ?? getDefaultSchoolId(), studentIds: cr ? students.filter(s => s.classId === cr.id).map(s => s.id) : [] })
     setIsGuardianModalOpen(true)
   }
-  function closeGuardianModal() { setGuardianDraft({ ...emptyGuardian }); setIsGuardianModalOpen(false) }
-  async function handleGuardianSubmit(e: FormEvent<HTMLFormElement>) { e.preventDefault(); await onCreateGuardian(guardianDraft); closeGuardianModal() }
+  function closeGuardianModal() { setGuardianFieldErrors({}); setGuardianDraft({ ...emptyGuardian }); setIsGuardianModalOpen(false) }
+  async function handleGuardianSubmit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    const result = guardianFormSchema.safeParse(guardianDraft)
+    if (!result.success) {
+      setGuardianFieldErrors(zodFieldErrors<GuardianFormField>(result.error))
+      return
+    }
+    setGuardianFieldErrors({})
+    await onCreateGuardian({ ...guardianDraft, ...result.data })
+    closeGuardianModal()
+  }
 
   function toggleStudentGuardian(id: string) {
     const cur = studentDraft.guardianIds ?? []
@@ -609,24 +822,21 @@ export default function SchoolsView({
       <div className="sv-page grid min-h-screen gap-4 bg-slate-50 px-[clamp(12px,2.5vw,36px)] py-5 pb-10 text-slate-900">
 
         {/* ═══ HEADER BAR ═══ */}
-        <div className="sv-section flex items-center justify-between gap-4 rounded-xl border border-slate-300 bg-white px-5 py-3.5 shadow-sm">
-          <div className="flex items-center gap-3">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-600">
-              <Building2 size={16} className="text-white" />
+        <PageTitleBar
+          className="sv-section"
+          label="Gestão escolar"
+          title="Rede de ensino"
+          icon={<Building2 />}
+          actions={(
+            <div className="flex items-center gap-2 text-xs font-semibold text-slate-500">
+              <span className="hidden sm:block">{visibleSchools.length} escola{visibleSchools.length !== 1 ? 's' : ''}</span>
+              <span className="hidden sm:block text-slate-300">·</span>
+              <span className="hidden sm:block">{classes.length} turma{classes.length !== 1 ? 's' : ''}</span>
+              <span className="hidden sm:block text-slate-300">·</span>
+              <span className="hidden sm:block">{students.length} aluno{students.length !== 1 ? 's' : ''}</span>
             </div>
-            <div>
-              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-indigo-500">Gestão escolar</p>
-              <p className="text-sm font-bold text-slate-800 leading-none mt-0.5">Rede de ensino</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2 text-xs font-semibold text-slate-500">
-            <span className="hidden sm:block">{visibleSchools.length} escola{visibleSchools.length !== 1 ? 's' : ''}</span>
-            <span className="hidden sm:block text-slate-300">·</span>
-            <span className="hidden sm:block">{classes.length} turma{classes.length !== 1 ? 's' : ''}</span>
-            <span className="hidden sm:block text-slate-300">·</span>
-            <span className="hidden sm:block">{students.length} aluno{students.length !== 1 ? 's' : ''}</span>
-          </div>
-        </div>
+          )}
+        />
 
         {/* ═══════════════════════════════════════
             SECTION 1 — SCHOOLS
@@ -640,7 +850,7 @@ export default function SchoolsView({
               title={isDirectorView ? 'Minha escola' : 'Unidades cadastradas'}
               description={isDirectorView ? 'Visualize e gerencie sua unidade.' : `${visibleSchools.length} unidade${visibleSchools.length !== 1 ? 's' : ''} na rede`}
             />
-            {!isDirectorView && (
+            {!isDirectorView && !readOnly && (
               <div className="flex items-center gap-2">
                 <label className="flex h-9 items-center gap-2 rounded-sm border-2 border-slate-400 bg-slate-50 px-3 text-slate-400 transition-all focus-within:border-indigo-400 focus-within:bg-white focus-within:ring-2 focus-within:ring-indigo-100 sm:w-60">
                   <Search size={14} />
@@ -725,11 +935,11 @@ export default function SchoolsView({
                             className="sv-icon-btn grid h-7 w-7 place-items-center rounded-sm border border-slate-400 hover:border-slate-500 hover:text-slate-500 bg-white text-slate-400 transition-all"
                             onClick={e => { e.stopPropagation(); setSchoolDetailsId(school.id) }}
                           ><MoreHorizontal size={13} /></button>
-                          <button
+                          {!readOnly && <button
                             type="button" aria-label="Editar escola"
                             className="sv-icon-btn grid h-7 w-7 place-items-center rounded-sm border border-slate-400 hover:border-slate-500 hover:text-slate-500 bg-white text-slate-400 transition-all"
                             onClick={e => { e.stopPropagation(); openEditSchoolModal(school) }}
-                          ><Pencil size={13} /></button>
+                          ><Pencil size={13} /></button>}
                         </div>
                       </div>
                     </article>
@@ -741,7 +951,7 @@ export default function SchoolsView({
                 icon={Building2}
                 title={isDirectorView ? 'Nenhuma escola vinculada' : query.trim() ? 'Sem resultados' : 'Nenhuma escola cadastrada'}
                 description={isDirectorView ? 'Seu usuário não possui uma escola vinculada.' : query.trim() ? 'Tente ajustar o termo de busca.' : 'Comece cadastrando a primeira escola da rede.'}
-                action={!isDirectorView && !query.trim() ? <PrimaryBtn onClick={openCreateSchoolModal}><Plus size={15} />Cadastrar escola</PrimaryBtn> : undefined}
+                action={!isDirectorView && !readOnly && !query.trim() ? <PrimaryBtn onClick={openCreateSchoolModal}><Plus size={15} />Cadastrar escola</PrimaryBtn> : undefined}
               />
             )}
           </div>
@@ -769,13 +979,13 @@ export default function SchoolsView({
               />
             </div>
             <div className="flex items-center gap-2">
-              <PrimaryBtn disabled={!selectedSchool} onClick={openCreateClassModal}>
+              {!readOnly && <PrimaryBtn disabled={!selectedSchool} onClick={openCreateClassModal}>
                 <Plus size={15} />
                 Nova turma
-              </PrimaryBtn>
+              </PrimaryBtn>}
 
               {/* Quick-add toolbar */}
-              <div className="flex items-center gap-0 rounded-sm border-2 border-slate-200 bg-slate-50 overflow-hidden">
+              {!readOnly && <div className="flex items-center gap-0 rounded-sm border-2 border-slate-200 bg-slate-50 overflow-hidden">
                 <button type="button" title="Cadastrar professor" disabled={!selectedSchool}
                   onClick={() => openCreateTeacherModal()}
                   className="flex h-9 w-9 items-center justify-center text-slate-500 transition-all hover:bg-indigo-50 hover:text-indigo-600 disabled:cursor-not-allowed disabled:opacity-40 border-r-2 border-slate-200">
@@ -791,7 +1001,7 @@ export default function SchoolsView({
                   className="flex h-9 w-9 items-center justify-center text-slate-500 transition-all hover:bg-emerald-50 hover:text-emerald-600 disabled:cursor-not-allowed disabled:opacity-40">
                   <Shield size={14} />
                 </button>
-              </div>
+              </div>}
             </div>
           </div>
 
@@ -822,7 +1032,7 @@ export default function SchoolsView({
 
                       {/* Grade */}
                       <p className="truncate text-xs font-medium text-slate-500 mb-3">
-                        {classRoom.grade} · {getSchoolName(classRoom.schoolId)}
+                        {formatClassGrade(classRoom.grade)} · {getSchoolName(classRoom.schoolId)}
                       </p>
 
                       {/* Teacher line */}
@@ -858,14 +1068,14 @@ export default function SchoolsView({
                           <Eye size={12} className="shrink-0" />
                           <span className="min-w-0 truncate">Ver informações</span>
                         </button>
-                        <button
+                        {!readOnly && <button
                           type="button"
                           onClick={() => openEditClassModal(classRoom)}
                           className="inline-flex h-10 w-full min-w-0 items-center justify-center gap-1.5 rounded-sm border-2 border-slate-400 bg-white px-2 text-center text-[12px] font-bold leading-none text-slate-600 transition-all hover:border-slate-500 hover:bg-slate-50 hover:text-slate-900"
                         >
                           <Pencil size={12} className="shrink-0" />
                           <span className="min-w-0 truncate">Editar</span>
-                        </button>
+                        </button>}
                       </div>
                     </article>
                   )
@@ -876,7 +1086,7 @@ export default function SchoolsView({
                 icon={GraduationCap}
                 title={selectedSchool ? 'Nenhuma turma cadastrada' : 'Escola não selecionada'}
                 description={selectedSchool ? 'Crie uma turma para vincular professores e alunos.' : 'As turmas aparecem aqui após selecionar uma escola acima.'}
-                action={selectedSchool ? <PrimaryBtn onClick={openCreateClassModal}><Plus size={15} />Criar turma</PrimaryBtn> : undefined}
+                action={selectedSchool && !readOnly ? <PrimaryBtn onClick={openCreateClassModal}><Plus size={15} />Criar turma</PrimaryBtn> : undefined}
               />
             )}
           </div>
@@ -923,7 +1133,7 @@ export default function SchoolsView({
                       <div key={cr.id} className="flex items-center justify-between gap-3 rounded-lg border-2 border-slate-300 bg-slate-50 px-4 py-2.5">
                         <div className="min-w-0">
                           <strong className="block text-sm font-bold text-slate-900">{cr.name}</strong>
-                          <span className="text-xs text-slate-500">{cr.grade} · {cr.shift} · {cTeachers.length ? cTeachers.map(t => t.name).join(', ') : getTeacherName(cr.teacherId)}</span>
+                          <span className="text-xs text-slate-500">{formatClassGrade(cr.grade)} · {cr.shift} · {cTeachers.length ? cTeachers.map(t => t.name).join(', ') : getTeacherName(cr.teacherId)}</span>
                         </div>
                         <div className="flex shrink-0 items-center gap-2">
                           <span className="text-xs font-bold text-slate-400">{cStudents.length} alunos</span>
@@ -940,9 +1150,9 @@ export default function SchoolsView({
 
               <div className="flex justify-end gap-2 border-t-2 border-slate-100 pt-4">
                 <SecondaryBtn onClick={() => setSchoolDetailsId(null)}>Fechar</SecondaryBtn>
-                <PrimaryBtn onClick={() => { setSchoolDetailsId(null); openEditSchoolModal(detailsSchool) }}>
+                {!readOnly && <PrimaryBtn onClick={() => { setSchoolDetailsId(null); openEditSchoolModal(detailsSchool) }}>
                   <Pencil size={13} />Editar escola
-                </PrimaryBtn>
+                </PrimaryBtn>}
               </div>
             </div>
           </Modal>
@@ -965,7 +1175,7 @@ export default function SchoolsView({
               subtitle="Detalhes da turma"
               onClose={() => setClassDetailsId(null)}
               maxWidth="1040px"
-              headerAction={
+              headerAction={!readOnly ? (
                 <button
                   type="button"
                   onClick={() => { setClassDetailsId(null); openEditClassModal(detailsClass) }}
@@ -974,7 +1184,7 @@ export default function SchoolsView({
                   <Pencil size={12} />
                   Editar
                 </button>
-              }
+              ) : undefined}
             >
               <div className="grid gap-5 p-6">
 
@@ -1019,7 +1229,7 @@ export default function SchoolsView({
               )}
 
               {/* ── Barra de ações rápidas ── */}
-              <div className="flex items-center gap-2 rounded-xl border border-slate-400 bg-slate-50 p-2">
+              {!readOnly && <div className="flex items-center gap-2 rounded-xl border border-slate-400 bg-slate-50 p-2">
                 <span className="text-[9px] font-black uppercase tracking-[0.18em] text-slate-400 shrink-0 pl-1">Adicionar</span>
                 <div className="flex items-center gap-1.5 flex-wrap">
                   <button
@@ -1047,7 +1257,7 @@ export default function SchoolsView({
                     Responsável
                   </button>
                 </div>
-              </div>
+              </div>}
 
               {/* Professores */}
               <div>
@@ -1055,9 +1265,10 @@ export default function SchoolsView({
                 <div className="grid grid-cols-2 gap-2 max-[640px]:grid-cols-1">
                   {classTeachers.map((t, i) => {
                     const colors = ['bg-indigo-50 border-indigo-300', 'bg-violet-50 border-violet-300', 'bg-sky-50 border-sky-300', 'bg-emerald-50 border-emerald-300']
+                    const teacherProfile = withCurrentUserVisuals(t)
                     return (
                       <div key={t.id} className={`flex items-start gap-2.5 rounded-lg border px-3 py-2.5 ${colors[i % colors.length]}`}>
-                        <ProfileAvatar entity={t} size="md" />
+                        <ProfileAvatar entity={teacherProfile} size="md" assetVersion={getProfileAssetVersion(t)} />
                         <div className="min-w-0">
                           <strong className="block truncate text-sm font-bold text-slate-900">{t.name}</strong>
                           <span className="text-xs text-slate-500 truncate block">{t.specialty || 'Especialidade não informada'}</span>
@@ -1073,13 +1284,15 @@ export default function SchoolsView({
               <div>
                 <p className="mb-2 text-[10px] font-black uppercase tracking-[0.18em] text-indigo-500">Alunos da turma</p>
                 <div className="grid gap-2 rounded-lg border border-slate-400 bg-slate-50 p-2">
-                  {classStudents.map(s => (
+                  {classStudents.map(s => {
+                    const studentProfile = withCurrentUserVisuals(s)
+                    return (
                     <article
                       key={s.id}
                       className="grid min-w-0 items-center gap-3 rounded-md border border-slate-300 bg-white p-3 lg:grid-cols-[minmax(190px,1.25fr)_minmax(160px,1fr)_86px_72px_112px] max-lg:grid-cols-2 max-[560px]:grid-cols-1"
                     >
                       <div className="flex min-w-0 items-center gap-2.5">
-                        <ProfileAvatar entity={s} />
+                        <ProfileAvatar entity={studentProfile} assetVersion={getProfileAssetVersion(s)} />
                         <div className="min-w-0">
                           <strong className="block truncate text-sm font-bold text-slate-900">{s.name}</strong>
                           <span className="block truncate font-mono text-[11px] font-semibold text-slate-400">
@@ -1110,7 +1323,8 @@ export default function SchoolsView({
                         <PerformancePill level={getStudentPerformance(s)} />
                       </div>
                     </article>
-                  ))}
+                    )
+                  })}
                   {classStudents.length === 0 && <div className="py-8 text-center text-sm text-slate-400">Nenhum aluno vinculado.</div>}
                 </div>
               </div>
@@ -1119,7 +1333,7 @@ export default function SchoolsView({
               <div className="grid grid-cols-2 gap-3 max-[640px]:grid-cols-1">
                 {detailsClass.bnccFocus?.length > 0 && (
                   <div className="rounded-lg border border-slate-400 bg-slate-50 p-3">
-                    <p className="mb-2 text-[9px] font-black uppercase tracking-[0.15em] text-slate-400">Focos BNCC</p>
+                    <p className="mb-2 text-[9px] font-black uppercase tracking-[0.15em] text-slate-400">Disciplinas da turma</p>
                     <div className="flex flex-wrap gap-1.5">
                       {detailsClass.bnccFocus.map(f => (
                         <span key={f} className="rounded-sm border border-blue-400 bg-blue-50 px-2 py-0.5 text-[10px] font-bold text-blue-700">{f}</span>
@@ -1146,22 +1360,22 @@ export default function SchoolsView({
       {/* ══ MODAL — Create/Edit School ══ */}
       {isSchoolModalOpen && (
         <Modal id="school-modal-title" title={schoolEditingId ? 'Atualizar unidade' : 'Cadastrar escola'} subtitle={schoolEditingId ? 'Editar escola' : 'Nova escola'} onClose={closeSchoolModal}>
-          <form className="grid gap-4 p-6" onSubmit={handleSchoolSubmit}>
+          <form className="grid gap-4 p-6" onSubmit={handleSchoolSubmit} noValidate>
             <div className="grid grid-cols-2 gap-3 max-[580px]:grid-cols-1">
-              <Field label="Nome da escola">
-                <input className={inputCls} value={schoolDraft.name ?? ''} onChange={e => setSchoolDraft({ ...schoolDraft, name: e.target.value })} required placeholder="E.E. João da Silva" />
+              <Field label="Nome da escola" hint="Digite o nome oficial ou nome usado pela rede." error={schoolFieldErrors.name}>
+                <input className={`${inputCls} ${fieldStateClass(schoolFieldErrors.name)}`} value={schoolDraft.name ?? ''} onChange={e => { clearSchoolError('name'); setSchoolDraft({ ...schoolDraft, name: e.target.value }) }} required placeholder="E.E. João da Silva" aria-invalid={Boolean(schoolFieldErrors.name) || undefined} />
               </Field>
-              <Field label="Cidade">
-                <input className={inputCls} value={schoolDraft.city ?? ''} onChange={e => setSchoolDraft({ ...schoolDraft, city: e.target.value })} required placeholder="São Paulo" />
+              <Field label="Cidade" hint="Digite a cidade onde a escola está localizada." error={schoolFieldErrors.city}>
+                <input className={`${inputCls} ${fieldStateClass(schoolFieldErrors.city)}`} value={schoolDraft.city ?? ''} onChange={e => { clearSchoolError('city'); setSchoolDraft({ ...schoolDraft, city: e.target.value }) }} required placeholder="São Paulo" aria-invalid={Boolean(schoolFieldErrors.city) || undefined} />
               </Field>
-              <Field label="Endereço">
-                <input className={inputCls} value={schoolDraft.address ?? ''} onChange={e => setSchoolDraft({ ...schoolDraft, address: e.target.value })} required placeholder="Rua, número, bairro" />
+              <Field label="Endereço" hint="Informe rua, número, bairro e complemento quando houver." error={schoolFieldErrors.address}>
+                <input className={`${inputCls} ${fieldStateClass(schoolFieldErrors.address)}`} value={schoolDraft.address ?? ''} onChange={e => { clearSchoolError('address'); setSchoolDraft({ ...schoolDraft, address: e.target.value }) }} required placeholder="Rua, número, bairro" aria-invalid={Boolean(schoolFieldErrors.address) || undefined} />
               </Field>
-              <Field label="Diretor(a)">
-                <input className={inputCls} value={schoolDraft.director ?? ''} onChange={e => setSchoolDraft({ ...schoolDraft, director: e.target.value })} required placeholder="Nome completo" />
+              <Field label="Diretor(a)" hint="Digite o nome completo da pessoa responsável pela gestão." error={schoolFieldErrors.director}>
+                <input className={`${inputCls} ${fieldStateClass(schoolFieldErrors.director)}`} value={schoolDraft.director ?? ''} onChange={e => { clearSchoolError('director'); setSchoolDraft({ ...schoolDraft, director: e.target.value }) }} required placeholder="Nome completo" aria-invalid={Boolean(schoolFieldErrors.director) || undefined} />
               </Field>
-              <Field label="Código INEP">
-                <input className={inputCls} value={schoolDraft.inepCode ?? ''} onChange={e => setSchoolDraft({ ...schoolDraft, inepCode: e.target.value })} required placeholder="35000000" />
+              <Field label="Código INEP" hint="Digite o código INEP da escola, somente números quando possível." error={schoolFieldErrors.inepCode}>
+                <input className={`${inputCls} ${fieldStateClass(schoolFieldErrors.inepCode)}`} value={schoolDraft.inepCode ?? ''} onChange={e => { clearSchoolError('inepCode'); setSchoolDraft({ ...schoolDraft, inepCode: e.target.value }) }} required placeholder="35000000" aria-invalid={Boolean(schoolFieldErrors.inepCode) || undefined} />
               </Field>
             </div>
             <div className="flex justify-end gap-2 border-t-2 border-slate-100 pt-4">
@@ -1175,43 +1389,63 @@ export default function SchoolsView({
       {/* ══ MODAL — Create/Edit Class ══ */}
       {isClassModalOpen && (
         <Modal id="class-modal-title" title={classEditingId ? 'Atualizar turma' : 'Cadastrar turma'} subtitle={classEditingId ? 'Editar turma' : 'Nova turma'} onClose={closeClassModal}>
-          <form className="grid gap-4 p-6" onSubmit={handleClassSubmit}>
+          <form className="grid gap-4 p-6" onSubmit={handleClassSubmit} noValidate>
             {classFormError && (
               <div className="flex items-center gap-2 rounded-lg border-2 border-red-200 bg-red-50 px-4 py-2.5 text-sm font-semibold text-red-700">
                 <AlertTriangle size={14} className="shrink-0" />{classFormError}
               </div>
             )}
             <div className="grid grid-cols-2 gap-3 max-[580px]:grid-cols-1">
-              <Field label="Nome da turma">
-                <input className={inputCls} value={classDraft.name ?? ''} onChange={e => setClassDraft({ ...classDraft, name: e.target.value })} required placeholder="5º Ano A" />
+              <Field label="Nome da turma" hint="Digite como a turma aparece na escola, por exemplo 5º Ano A." error={classFieldErrors.name}>
+                <input className={`${inputCls} ${fieldStateClass(classFieldErrors.name)}`} value={classDraft.name ?? ''} onChange={e => { clearClassError('name'); setClassDraft({ ...classDraft, name: e.target.value }) }} required placeholder="5º Ano A" aria-invalid={Boolean(classFieldErrors.name) || undefined} />
               </Field>
               <Field label="Série / Ano">
-                <input className={inputCls} value={classDraft.grade ?? ''} onChange={e => setClassDraft({ ...classDraft, grade: e.target.value })} required placeholder="5º Ano" />
+                <CompactSelect value={classDraft.grade ?? ''} onChange={grade => { clearClassError('grade'); setClassDraft({ ...classDraft, grade }) }} options={classGradeOptions} className={`${inputCls} ${fieldStateClass(classFieldErrors.grade)}`} hint="Selecione a etapa escolar correspondente." error={classFieldErrors.grade} dropdownMinWidth={320} />
               </Field>
               <div className="flex flex-col gap-1.5">
                 <span className="text-[11px] font-bold uppercase tracking-widest text-slate-500">Escola</span>
                 {isDirectorView ? (
                   <div className="flex min-h-10 items-center rounded-lg border-2 border-slate-200 bg-slate-50 px-3 text-sm font-semibold text-slate-900">{getSchoolName(classDraft.schoolId || linkedSchoolId)}</div>
                 ) : (
-                  <CompactSelect value={classDraft.schoolId ?? ''} onChange={sid => setClassDraft({ ...classDraft, schoolId: sid, teacherId: '', teacherIds: [] })} options={schoolOptions} className={inputCls} dropdownMinWidth={280} />
+                  <CompactSelect value={classDraft.schoolId ?? ''} onChange={sid => { clearClassError('schoolId'); clearClassError('teacherId'); setClassDraft({ ...classDraft, schoolId: sid, teacherId: '', teacherIds: [] }) }} options={schoolOptions} className={`${inputCls} ${fieldStateClass(classFieldErrors.schoolId)}`} hint="Escolha a escola à qual a turma pertence." error={classFieldErrors.schoolId} dropdownMinWidth={280} />
                 )}
+                {isDirectorView && <FieldMessage hint="A escola vem do seu vínculo de diretor." error={classFieldErrors.schoolId} />}
               </div>
               <div className="flex flex-col gap-1.5">
                 <span className="text-[11px] font-bold uppercase tracking-widest text-slate-500">Professor responsável</span>
-                <CompactSelect value={classDraft.teacherId ?? ''} onChange={tid => setClassDraft({ ...classDraft, teacherId: tid, teacherIds: Array.from(new Set([tid, ...(classDraft.teacherIds ?? [])].filter(Boolean))) })} options={teacherOptions} className={inputCls} dropdownMinWidth={280} />
+                <CompactSelect value={classDraft.teacherId ?? ''} onChange={tid => { clearClassError('teacherId'); setClassDraft({ ...classDraft, teacherId: tid, teacherIds: Array.from(new Set([tid, ...(classDraft.teacherIds ?? [])].filter(Boolean))) }) }} options={teacherOptions} className={`${inputCls} ${fieldStateClass(classFieldErrors.teacherId)}`} hint="Selecione o professor principal da turma." error={classFieldErrors.teacherId} dropdownMinWidth={280} />
+              </div>
+              <div className="col-span-2 rounded-lg border-2 border-slate-200 bg-slate-50 p-3 max-[580px]:col-span-1">
+                <p className="mb-2 text-[11px] font-bold uppercase tracking-widest text-slate-500">Professores vinculados a esta turma</p>
+                <FieldMessage hint="Opcional: marque professores adicionais que também podem atuar nesta turma." error={classFieldErrors.teacherIds} className="mb-2" />
+                <div className="grid grid-cols-2 gap-2 max-[640px]:grid-cols-1">
+                  {classTeacherCandidates.map((teacher) => {
+                    const checked = teacher.id === classDraft.teacherId || (classDraft.teacherIds ?? []).includes(teacher.id)
+                    return (
+                      <label key={teacher.id} className="flex cursor-pointer items-start gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700">
+                        <input type="checkbox" className="mt-0.5 h-4 w-4 accent-indigo-600" checked={checked} onChange={() => toggleClassTeacher(teacher.id)} />
+                        <span className="min-w-0">
+                          <span className="block truncate">{teacher.name}</span>
+                          <span className="block truncate text-[11px] font-medium text-slate-400">{teacher.specialty || 'Sem disciplina informada'}</span>
+                        </span>
+                      </label>
+                    )
+                  })}
+                  {classTeacherCandidates.length === 0 && <p className="text-sm font-semibold text-slate-400">Cadastre professores nesta escola para vincular.</p>}
+                </div>
               </div>
               <div className="flex flex-col gap-1.5">
                 <span className="text-[11px] font-bold uppercase tracking-widest text-slate-500">Turno</span>
-                <CompactSelect<ClassRoom['shift']> value={classDraft.shift ?? 'Manha'} onChange={shift => setClassDraft({ ...classDraft, shift })} options={shiftOptions} className={inputCls} dropdownMinWidth={180} />
+                <CompactSelect<ClassRoom['shift']> value={classDraft.shift ?? 'Manha'} onChange={shift => { clearClassError('shift'); setClassDraft({ ...classDraft, shift }) }} options={shiftOptions} className={`${inputCls} ${fieldStateClass(classFieldErrors.shift)}`} hint="Escolha o turno de funcionamento." error={classFieldErrors.shift} dropdownMinWidth={180} />
               </div>
-              <Field label="Ano letivo">
-                <input className={inputCls} type="number" value={classDraft.academicYear ?? currentYear} onChange={e => setClassDraft({ ...classDraft, academicYear: Number(e.target.value) })} required />
+              <Field label="Ano letivo" hint={`Digite o ano letivo, por exemplo ${currentYear}.`} error={classFieldErrors.academicYear}>
+                <input className={`${inputCls} ${fieldStateClass(classFieldErrors.academicYear)}`} type="number" value={classDraft.academicYear ?? currentYear} onChange={e => { clearClassError('academicYear'); setClassDraft({ ...classDraft, academicYear: Number(e.target.value) }) }} required aria-invalid={Boolean(classFieldErrors.academicYear) || undefined} />
               </Field>
-              <Field label="Horário">
-                <input className={inputCls} value={classDraft.schedule ?? ''} onChange={e => setClassDraft({ ...classDraft, schedule: e.target.value })} placeholder="Seg a Sex, 07:30–11:30" required />
+              <Field label="Horário" hint="Digite dias e horários, por exemplo: Seg a Sex, 07:30-11:30." error={classFieldErrors.schedule}>
+                <input className={`${inputCls} ${fieldStateClass(classFieldErrors.schedule)}`} value={classDraft.schedule ?? ''} onChange={e => { clearClassError('schedule'); setClassDraft({ ...classDraft, schedule: e.target.value }) }} placeholder="Seg a Sex, 07:30-11:30" required aria-invalid={Boolean(classFieldErrors.schedule) || undefined} />
               </Field>
-              <Field label="Focos BNCC (separados por vírgula)">
-                <input className={inputCls} value={(classDraft.bnccFocus ?? []).join(', ')} onChange={e => setClassDraft({ ...classDraft, bnccFocus: e.target.value.split(',').map(x => x.trim()).filter(Boolean) })} placeholder="EF05LP01, EF05MA07" />
+              <Field label="Disciplinas da turma (separadas por vírgula)" hint="Opcional: separe disciplinas ou focos BNCC por vírgula." error={classFieldErrors.bnccFocus}>
+                <input className={`${inputCls} ${fieldStateClass(classFieldErrors.bnccFocus)}`} value={(classDraft.bnccFocus ?? []).join(', ')} onChange={e => { clearClassError('bnccFocus'); setClassDraft({ ...classDraft, bnccFocus: splitDisciplineList(e.target.value) }) }} placeholder="Matemática, Português, Ciências" aria-invalid={Boolean(classFieldErrors.bnccFocus) || undefined} />
               </Field>
             </div>
             <div className="flex justify-end gap-2 border-t-2 border-slate-100 pt-4">
@@ -1225,33 +1459,34 @@ export default function SchoolsView({
       {/* ══ MODAL — Create Teacher ══ */}
       {isTeacherModalOpen && (
         <Modal id="teacher-modal-title" title="Cadastrar professor" subtitle="Novo professor" onClose={closeTeacherModal}>
-          <form className="grid gap-4 p-6" onSubmit={handleTeacherSubmit}>
+          <form className="grid gap-4 p-6" onSubmit={handleTeacherSubmit} noValidate>
             <div className="grid grid-cols-2 gap-3 max-[580px]:grid-cols-1">
-              <Field label="Nome completo"><input className={inputCls} value={teacherDraft.name ?? ''} onChange={e => setTeacherDraft({ ...teacherDraft, name: e.target.value })} placeholder="Nome Completo" required /></Field>
-              <Field label="E-mail">
+              <Field label="Nome completo" hint="Digite o nome e sobrenome do professor." error={teacherFieldErrors.name}><input className={`${inputCls} ${fieldStateClass(teacherFieldErrors.name)}`} value={teacherDraft.name ?? ''} onChange={e => { clearTeacherError('name'); setTeacherDraft({ ...teacherDraft, name: e.target.value }) }} placeholder="Nome Completo" required aria-invalid={Boolean(teacherFieldErrors.name) || undefined} /></Field>
+              <Field label="E-mail" hint="Digite um e-mail válido para acesso e contato." error={teacherFieldErrors.email}>
                 <div className="relative"><Mail size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input className={`${inputCls} pl-9`} type="email" value={teacherDraft.email ?? ''} onChange={e => setTeacherDraft({ ...teacherDraft, email: e.target.value })} placeholder="Digite o e-mail" required /></div>
+                  <input className={`${inputCls} pl-9 ${fieldStateClass(teacherFieldErrors.email)}`} type="email" value={teacherDraft.email ?? ''} onChange={e => { clearTeacherError('email'); setTeacherDraft({ ...teacherDraft, email: e.target.value }) }} placeholder="Digite o e-mail" required aria-invalid={Boolean(teacherFieldErrors.email) || undefined} /></div>
               </Field>
-              <Field label="Especialidade"><input className={inputCls} value={teacherDraft.specialty ?? ''} onChange={e => setTeacherDraft({ ...teacherDraft, specialty: e.target.value })} required placeholder="Matemática" /></Field>
-              <Field label="Telefone">
+              <Field label="Disciplinas do professor" hint="Digite as disciplinas separadas por vírgula." error={teacherFieldErrors.specialty}><input className={`${inputCls} ${fieldStateClass(teacherFieldErrors.specialty)}`} value={teacherDraft.specialty ?? ''} onChange={e => { clearTeacherError('specialty'); setTeacherDraft({ ...teacherDraft, specialty: e.target.value }) }} required placeholder="Matemática, Física" aria-invalid={Boolean(teacherFieldErrors.specialty) || undefined} /></Field>
+              <Field label="Telefone" hint="Opcional: informe com DDD." error={teacherFieldErrors.phone}>
                 <div className="relative"><Phone size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input className={`${inputCls} pl-9`} value={teacherDraft.phone ?? ''} onChange={e => setTeacherDraft({ ...teacherDraft, phone: e.target.value })} placeholder="(86) 9400-0000" /></div>
+                  <input className={`${inputCls} pl-9 ${fieldStateClass(teacherFieldErrors.phone)}`} value={teacherDraft.phone ?? ''} onChange={e => { clearTeacherError('phone'); setTeacherDraft({ ...teacherDraft, phone: e.target.value }) }} placeholder="(86) 9400-0000" aria-invalid={Boolean(teacherFieldErrors.phone) || undefined} /></div>
               </Field>
               <div className="flex flex-col gap-1.5">
                 <span className="text-[11px] font-bold uppercase tracking-widest text-slate-500">Escola</span>
                 {isDirectorView ? (
                   <div className="flex min-h-10 items-center rounded-lg border-2 border-slate-200 bg-slate-50 px-3 text-sm font-semibold">{getSchoolName(teacherDraft.schoolId || linkedSchoolId)}</div>
                 ) : (
-                  <CompactSelect value={teacherDraft.schoolId ?? ''} onChange={sid => setTeacherDraft({ ...teacherDraft, schoolId: sid, classId: '' })} options={teacherSchoolOptions} className={inputCls} dropdownMinWidth={280} />
+                  <CompactSelect value={teacherDraft.schoolId ?? ''} onChange={sid => { clearTeacherError('schoolId'); setTeacherDraft({ ...teacherDraft, schoolId: sid, classId: '' }) }} options={teacherSchoolOptions} className={`${inputCls} ${fieldStateClass(teacherFieldErrors.schoolId)}`} hint="Selecione a escola em que o professor atua." error={teacherFieldErrors.schoolId} dropdownMinWidth={280} />
                 )}
+                {isDirectorView && <FieldMessage hint="A escola vem do seu vínculo de diretor." error={teacherFieldErrors.schoolId} />}
               </div>
               <div className="flex flex-col gap-1.5">
                 <span className="text-[11px] font-bold uppercase tracking-widest text-slate-500">Vincular turma</span>
-                <CompactSelect value={teacherDraft.classId ?? ''} onChange={cid => setTeacherDraft({ ...teacherDraft, classId: cid })} options={classOptions} className={inputCls} dropdownMinWidth={280} />
+                <CompactSelect value={teacherDraft.classId ?? ''} onChange={cid => { clearTeacherError('classId'); setTeacherDraft({ ...teacherDraft, classId: cid }) }} options={classOptions} className={`${inputCls} ${fieldStateClass(teacherFieldErrors.classId)}`} hint="Opcional: vincule uma turma já cadastrada." error={teacherFieldErrors.classId} dropdownMinWidth={280} />
               </div>
-              <Field label="Senha inicial">
+              <Field label="Senha inicial" hint="Digite uma senha temporária com pelo menos 8 caracteres." error={teacherFieldErrors.password}>
                 <div className="relative"><Lock size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input className={`${inputCls} pl-9`} type="password" minLength={8} value={teacherDraft.password ?? ''} onChange={e => setTeacherDraft({ ...teacherDraft, password: e.target.value })} placeholder="Digite uma senha inicial" required /></div>
+                  <input className={`${inputCls} pl-9 ${fieldStateClass(teacherFieldErrors.password)}`} type="password" minLength={8} value={teacherDraft.password ?? ''} onChange={e => { clearTeacherError('password'); setTeacherDraft({ ...teacherDraft, password: e.target.value }) }} placeholder="Digite uma senha inicial" required aria-invalid={Boolean(teacherFieldErrors.password) || undefined} /></div>
               </Field>
             </div>
             <div className="flex justify-end gap-2 border-t-2 border-slate-100 pt-4">
@@ -1265,29 +1500,39 @@ export default function SchoolsView({
       {/* ══ MODAL — Create Student ══ */}
       {isStudentModalOpen && (
         <Modal id="student-modal-title" title="Cadastrar aluno" subtitle="Novo aluno" onClose={closeStudentModal}>
-          <form className="grid gap-4 p-6" onSubmit={handleStudentSubmit}>
+          <form className="grid gap-4 p-6" onSubmit={handleStudentSubmit} noValidate>
             <div className="grid grid-cols-2 gap-3 max-[580px]:grid-cols-1">
-              <Field label="Nome completo"><input className={inputCls} value={studentDraft.name ?? ''} onChange={e => setStudentDraft({ ...studentDraft, name: e.target.value })} placeholder="Nome Completo" required /></Field>
-              <Field label="Matrícula"><input className={inputCls} value={studentDraft.registrationNumber ?? ''} onChange={e => setStudentDraft({ ...studentDraft, registrationNumber: e.target.value, registration: e.target.value })} placeholder="Digite a matrícula" /></Field>
+              <Field label="Nome completo" hint="Digite o nome completo do aluno." error={studentFieldErrors.name}><input className={`${inputCls} ${fieldStateClass(studentFieldErrors.name)}`} value={studentDraft.name ?? ''} onChange={e => { clearStudentError('name'); setStudentDraft({ ...studentDraft, name: e.target.value }) }} placeholder="Nome Completo" required aria-invalid={Boolean(studentFieldErrors.name) || undefined} /></Field>
+              <Field label="Matrícula" hint="Opcional: informe a matrícula usada pela escola." error={studentFieldErrors.registrationNumber}><input className={`${inputCls} ${fieldStateClass(studentFieldErrors.registrationNumber)}`} value={studentDraft.registrationNumber ?? ''} onChange={e => { clearStudentError('registrationNumber'); setStudentDraft({ ...studentDraft, registrationNumber: e.target.value, registration: e.target.value }) }} placeholder="Digite a matrícula" aria-invalid={Boolean(studentFieldErrors.registrationNumber) || undefined} /></Field>
               <div className="flex flex-col gap-1.5">
                 <span className="text-[11px] font-bold uppercase tracking-widest text-slate-500">Escola</span>
                 {isDirectorView ? (
                   <div className="flex min-h-10 items-center rounded-lg border-2 border-slate-200 bg-slate-50 px-3 text-sm font-semibold">{getSchoolName(studentDraft.schoolId || linkedSchoolId)}</div>
                 ) : (
-                  <CompactSelect value={studentDraft.schoolId ?? ''} onChange={sid => setStudentDraft({ ...studentDraft, schoolId: sid, classId: '', guardianIds: [] })} options={teacherSchoolOptions} className={inputCls} dropdownMinWidth={280} />
+                  <CompactSelect value={studentDraft.schoolId ?? ''} onChange={sid => { clearStudentError('schoolId'); clearStudentError('classId'); setStudentDraft({ ...studentDraft, schoolId: sid, classId: '', guardianIds: [] }) }} options={teacherSchoolOptions} className={`${inputCls} ${fieldStateClass(studentFieldErrors.schoolId)}`} hint="Selecione a escola onde o aluno está matriculado." error={studentFieldErrors.schoolId} dropdownMinWidth={280} />
                 )}
+                {isDirectorView && <FieldMessage hint="A escola vem do seu vínculo de diretor." error={studentFieldErrors.schoolId} />}
               </div>
               <div className="flex flex-col gap-1.5">
                 <span className="text-[11px] font-bold uppercase tracking-widest text-slate-500">Turma</span>
-                <CompactSelect value={studentDraft.classId ?? ''} onChange={cid => setStudentDraft({ ...studentDraft, classId: cid })} options={studentClassOptions} className={inputCls} dropdownMinWidth={280} />
+                <CompactSelect value={studentDraft.classId ?? ''} onChange={cid => { clearStudentError('classId'); setStudentDraft({ ...studentDraft, classId: cid }) }} options={studentClassOptions} className={`${inputCls} ${fieldStateClass(studentFieldErrors.classId)}`} hint="Selecione a turma atual do aluno." error={studentFieldErrors.classId} dropdownMinWidth={280} />
+              </div>
+              <div className="col-span-2 rounded-lg border-2 border-indigo-100 bg-indigo-50 px-3 py-2.5 max-[580px]:col-span-1">
+                <p className="mb-2 text-[9px] font-black uppercase tracking-[0.15em] text-indigo-400">Disciplinas vinculadas pela turma</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {getClassDisciplines(studentDraft.classId).map((discipline) => (
+                    <span key={discipline} className="rounded-full border border-indigo-200 bg-white px-2 py-1 text-[10px] font-black uppercase tracking-widest text-indigo-700">{discipline}</span>
+                  ))}
+                  {getClassDisciplines(studentDraft.classId).length === 0 && <span className="text-xs font-semibold text-indigo-300">Selecione uma turma com disciplinas cadastradas.</span>}
+                </div>
               </div>
               <div className="flex flex-col gap-1.5">
                 <span className="text-[11px] font-bold uppercase tracking-widest text-slate-500">Desempenho</span>
-                <CompactSelect<Desempenho> value={getStudentPerformance(studentDraft)} onChange={desempenho => setStudentDraft({ ...studentDraft, desempenho })} options={performanceOptions} className={inputCls} dropdownMinWidth={180} />
+                <CompactSelect<Desempenho> value={getStudentPerformance(studentDraft)} onChange={desempenho => { clearStudentError('desempenho'); setStudentDraft({ ...studentDraft, desempenho }) }} options={performanceOptions} className={`${inputCls} ${fieldStateClass(studentFieldErrors.desempenho)}`} hint="Informe a leitura inicial de desempenho do aluno." error={studentFieldErrors.desempenho} dropdownMinWidth={180} />
               </div>
-              <Field label="Senha inicial">
+              <Field label="Senha inicial" hint="Digite uma senha temporária com pelo menos 8 caracteres." error={studentFieldErrors.password}>
                 <div className="relative"><Lock size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input className={`${inputCls} pl-9`} type="password" minLength={8} value={studentDraft.password ?? ''} onChange={e => setStudentDraft({ ...studentDraft, password: e.target.value })} placeholder="Digite uma senha inicial" required /></div>
+                  <input className={`${inputCls} pl-9 ${fieldStateClass(studentFieldErrors.password)}`} type="password" minLength={8} value={studentDraft.password ?? ''} onChange={e => { clearStudentError('password'); setStudentDraft({ ...studentDraft, password: e.target.value }) }} placeholder="Digite uma senha inicial" required aria-invalid={Boolean(studentFieldErrors.password) || undefined} /></div>
               </Field>
               <div className="flex flex-col gap-1 justify-center rounded-lg border-2 border-indigo-100 bg-indigo-50 px-3 py-2.5">
                 <p className="text-[9px] font-black uppercase tracking-[0.15em] text-indigo-400">Login gerado</p>
@@ -1299,6 +1544,7 @@ export default function SchoolsView({
 
             <div className="rounded-lg border-2 border-slate-200 bg-slate-50 p-4">
               <p className="mb-2.5 text-[9px] font-black uppercase tracking-[0.15em] text-slate-400">Responsáveis vinculados</p>
+              <FieldMessage hint="Opcional: marque os responsáveis que acompanharão este aluno." error={studentFieldErrors.guardianIds} className="mb-2" />
               <div className="grid grid-cols-2 gap-2 max-[640px]:grid-cols-1">
                 {studentSchoolGuardians.map(g => (
                   <label key={g.id} className="flex cursor-pointer items-center gap-2.5 rounded-lg border-2 border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition-all hover:border-indigo-300">
@@ -1320,33 +1566,35 @@ export default function SchoolsView({
       {/* ══ MODAL — Create Guardian ══ */}
       {isGuardianModalOpen && (
         <Modal id="guardian-modal-title" title="Cadastrar responsável" subtitle="Novo responsável" onClose={closeGuardianModal}>
-          <form className="grid gap-4 p-6" onSubmit={handleGuardianSubmit}>
+          <form className="grid gap-4 p-6" onSubmit={handleGuardianSubmit} noValidate>
             <div className="grid grid-cols-2 gap-3 max-[580px]:grid-cols-1">
-              <Field label="Nome completo"><input className={inputCls} value={guardianDraft.name ?? ''} onChange={e => setGuardianDraft({ ...guardianDraft, name: e.target.value })} placeholder="Nome completo" required /></Field>
-              <Field label="E-mail">
+              <Field label="Nome completo" hint="Digite o nome completo do responsável." error={guardianFieldErrors.name}><input className={`${inputCls} ${fieldStateClass(guardianFieldErrors.name)}`} value={guardianDraft.name ?? ''} onChange={e => { clearGuardianError('name'); setGuardianDraft({ ...guardianDraft, name: e.target.value }) }} placeholder="Nome completo" required aria-invalid={Boolean(guardianFieldErrors.name) || undefined} /></Field>
+              <Field label="E-mail" hint="Digite um e-mail válido para acesso e contato." error={guardianFieldErrors.email}>
                 <div className="relative"><Mail size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input className={`${inputCls} pl-9`} type="email" value={guardianDraft.email ?? ''} onChange={e => setGuardianDraft({ ...guardianDraft, email: e.target.value })} placeholder="Digite o e-mail" required /></div>
+                  <input className={`${inputCls} pl-9 ${fieldStateClass(guardianFieldErrors.email)}`} type="email" value={guardianDraft.email ?? ''} onChange={e => { clearGuardianError('email'); setGuardianDraft({ ...guardianDraft, email: e.target.value }) }} placeholder="Digite o e-mail" required aria-invalid={Boolean(guardianFieldErrors.email) || undefined} /></div>
               </Field>
-              <Field label="Telefone">
+              <Field label="Telefone" hint="Opcional: informe com DDD." error={guardianFieldErrors.phone}>
                 <div className="relative"><Phone size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input className={`${inputCls} pl-9`} value={guardianDraft.phone ?? ''} onChange={e => setGuardianDraft({ ...guardianDraft, phone: e.target.value })} placeholder="(86) 9400-0000"/></div>
+                  <input className={`${inputCls} pl-9 ${fieldStateClass(guardianFieldErrors.phone)}`} value={guardianDraft.phone ?? ''} onChange={e => { clearGuardianError('phone'); setGuardianDraft({ ...guardianDraft, phone: e.target.value }) }} placeholder="(86) 9400-0000" aria-invalid={Boolean(guardianFieldErrors.phone) || undefined} /></div>
               </Field>
               <div className="flex flex-col gap-1.5">
                 <span className="text-[11px] font-bold uppercase tracking-widest text-slate-500">Escola</span>
                 {isDirectorView ? (
                   <div className="flex min-h-10 items-center rounded-lg border-2 border-slate-200 bg-slate-50 px-3 text-sm font-semibold">{getSchoolName(guardianDraft.schoolId || linkedSchoolId)}</div>
                 ) : (
-                  <CompactSelect value={guardianDraft.schoolId ?? ''} onChange={sid => setGuardianDraft({ ...guardianDraft, schoolId: sid, studentIds: [] })} options={teacherSchoolOptions} className={inputCls} dropdownMinWidth={280} />
+                  <CompactSelect value={guardianDraft.schoolId ?? ''} onChange={sid => { clearGuardianError('schoolId'); setGuardianDraft({ ...guardianDraft, schoolId: sid, studentIds: [] }) }} options={teacherSchoolOptions} className={`${inputCls} ${fieldStateClass(guardianFieldErrors.schoolId)}`} hint="Selecione a escola relacionada aos alunos acompanhados." error={guardianFieldErrors.schoolId} dropdownMinWidth={280} />
                 )}
+                {isDirectorView && <FieldMessage hint="A escola vem do seu vínculo de diretor." error={guardianFieldErrors.schoolId} />}
               </div>
-              <Field label="Senha inicial">
+              <Field label="Senha inicial" hint="Digite uma senha temporária com pelo menos 8 caracteres." error={guardianFieldErrors.password}>
                 <div className="relative"><Lock size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input className={`${inputCls} pl-9`} type="password" minLength={8} value={guardianDraft.password ?? ''} onChange={e => setGuardianDraft({ ...guardianDraft, password: e.target.value })} placeholder="Digite uma senha inicial" required /></div>
+                  <input className={`${inputCls} pl-9 ${fieldStateClass(guardianFieldErrors.password)}`} type="password" minLength={8} value={guardianDraft.password ?? ''} onChange={e => { clearGuardianError('password'); setGuardianDraft({ ...guardianDraft, password: e.target.value }) }} placeholder="Digite uma senha inicial" required aria-invalid={Boolean(guardianFieldErrors.password) || undefined} /></div>
               </Field>
             </div>
 
             <div className="rounded-lg border border-slate-300 bg-slate-50 p-4">
               <p className="mb-2.5 text-[9px] font-black uppercase tracking-[0.15em] text-slate-400">Alunos acompanhados</p>
+              <FieldMessage hint="Opcional: marque os alunos acompanhados por este responsável." error={guardianFieldErrors.studentIds} className="mb-2" />
               <div className="grid grid-cols-2 gap-2 max-[640px]:grid-cols-1">
                 {guardianSchoolStudents.map(s => (
                   <label key={s.id} className="flex cursor-pointer items-center gap-2.5 rounded-lg border-2 border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition-all hover:border-emerald-300">
