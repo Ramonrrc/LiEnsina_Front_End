@@ -81,7 +81,7 @@ interface MealsViewProps {
   mealManagements: MealManagement[]
   foodRequests: MealFoodRequest[]
   mealRequestHistory: MealRequestHistory[]
-  onLoadSchoolPage: (page: number, limit: number) => Promise<MealManagementsPagePayload>
+  onLoadSchoolPage: (page: number, limit: number, search?: string) => Promise<MealManagementsPagePayload>
   onSearchFoods: (query: string, limit?: number) => Promise<MealFood[]>
   onCreateFoodRequest: (draft: CreateMealFoodRequestPayload) => Promise<void>
   onUpdateFoodRequest: (id: string, draft: UpdateMealFoodRequestPayload) => Promise<void>
@@ -793,30 +793,7 @@ function Stat({ label, value, tone = 'text-slate-900', size = 'md' }: { label: s
 }
 
 /* ─────────────────────────────────────────────
-   AlertBanner
 ───────────────────────────────────────────── */
-function AlertBanner({ lowStock, expired }: { lowStock: number; expired: number }) {
-  if (lowStock === 0 && expired === 0) return null
-  return (
-    <div className="flex flex-wrap items-center gap-3 rounded-xl border border-amber-400 bg-amber-50 px-4 py-3">
-      <AlertTriangle className="h-5 w-5 shrink-0 text-amber-600" />
-      <div className="flex flex-1 flex-wrap gap-3">
-        {expired > 0 && (
-          <span className="rounded-full border border-red-400 bg-red-100 px-2.5 py-0.5 text-xs font-bold text-red-700">
-            ⚠️ {expired} item{expired !== 1 ? 's' : ''} vencido{expired !== 1 ? 's' : ''}
-          </span>
-        )}
-        {lowStock > 0 && (
-          <span className="rounded-full border border-amber-400 bg-amber-100 px-2.5 py-0.5 text-xs font-bold text-amber-700">
-            📦 {lowStock} item{lowStock !== 1 ? 's' : ''} com estoque baixo
-          </span>
-        )}
-      </div>
-      <span className="text-xs font-semibold text-amber-600">Ação necessária</span>
-    </div>
-  )
-}
-
 /* ─────────────────────────────────────────────
    MetricCard
 ───────────────────────────────────────────── */
@@ -1161,8 +1138,8 @@ function MenuCard({ menu, foods }: { menu: MealMenu; foods: MealFood[] }) {
     .filter((f): f is MealFood => Boolean(f))
 
   return (
-    <article className="grid h-full min-h-[176px] min-w-0 grid-rows-[auto_1fr] gap-0 overflow-hidden rounded-xl border border-slate-300 bg-white transition-all hover:border-slate-400 hover:shadow-sm">
-      <div className="min-h-[76px] border-b border-slate-300 bg-slate-50 px-3.5 py-3">
+    <article className="grid h-full min-h-[122px] min-w-0 grid-rows-[auto_1fr] gap-0 overflow-hidden rounded-lg border border-slate-300 bg-white transition-all hover:border-slate-400 hover:shadow-sm">
+      <div className="border-b border-slate-300 bg-slate-50 px-3 py-2">
         <div className="flex flex-wrap items-center gap-1.5">
           <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold ${mealTypeColors[menu.tipoRefeicao]}`}>
             {mealTypeLabels[menu.tipoRefeicao]}
@@ -1175,20 +1152,20 @@ function MenuCard({ menu, foods }: { menu: MealMenu; foods: MealFood[] }) {
             {menu.diaSemana}
           </span>
         </div>
-        <strong className="mt-2 block truncate text-sm font-black text-slate-900">{menu.titulo}</strong>
+        <strong className="mt-1.5 block truncate text-[13px] font-black text-slate-900">{menu.titulo}</strong>
       </div>
 
-      <div className="grid content-start gap-1.5 px-3.5 py-3">
-        {menuFoods.slice(0, 4).map((food) => (
-          <span key={food.id} className="flex min-w-0 items-center gap-2 text-xs font-semibold text-slate-700">
-            <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg border border-slate-300 bg-slate-50">
-              <FoodIcon food={food} className="h-5 w-5" />
+      <div className="grid content-start gap-1 px-3 py-2">
+        {menuFoods.slice(0, 3).map((food) => (
+          <span key={food.id} className="flex min-w-0 items-center gap-2 text-[11px] font-semibold text-slate-700">
+            <span className="grid h-6 w-6 shrink-0 place-items-center rounded-md border border-slate-300 bg-slate-50">
+              <FoodIcon food={food} className="h-4 w-4" />
             </span>
             <span className="truncate">{food.nome}</span>
           </span>
         ))}
-        {menuFoods.length > 4 && (
-          <span className="pl-9 text-[10px] font-semibold text-slate-400">+{menuFoods.length - 4} mais</span>
+        {menuFoods.length > 3 && (
+          <span className="pl-8 text-[10px] font-semibold text-slate-400">+{menuFoods.length - 3} mais</span>
         )}
         {menuFoods.length === 0 && (
           <span className="text-xs text-slate-400">Nenhum alimento vinculado</span>
@@ -3006,7 +2983,7 @@ function AddRequestToStockModal({
         <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-4">
           <p className="text-sm font-black text-slate-900">{request.itemName}</p>
           <p className="mt-1 text-xs font-semibold text-indigo-700">
-            {formatQuantity(quantity, unit)} aprovados pelo nutricionista
+            {formatQuantity(quantity, unit)} para entrada no estoque
             {requestUnitPrice ? ` · ${formatCurrency(requestUnitPrice)} por unidade` : ''}
           </p>
         </div>
@@ -3044,40 +3021,28 @@ function AddRequestToStockModal({
 function FoodRequestsPanel({
   requests,
   currentUserId,
-  isDirector,
   isAdmin,
-  onCreateClick,
   onEditClick,
   onDeleteClick,
   onAddToStockClick,
 }: {
   requests: MealFoodRequest[]
   currentUserId: string
-  isDirector: boolean
   isAdmin: boolean
-  onCreateClick: () => void
   onEditClick: (request: MealFoodRequest) => void
   onDeleteClick: (request: MealFoodRequest) => void
   onAddToStockClick: (request: MealFoodRequest) => void
 }) {
-  const adminVisibleStatuses = new Set<FoodRequestStatus>(['APPROVED_BY_NUTRITIONIST', 'ADDED_TO_STOCK', 'PENDING_PURCHASE', 'PURCHASED'])
-  const visibleRequests = isAdmin
-    ? requests.filter((request) => adminVisibleStatuses.has(request.status) || request.requestedBy === currentUserId)
-    : requests
+  const directStockBlockedStatuses = new Set<FoodRequestStatus>(['ADDED_TO_STOCK', 'CANCELLED'])
+  const visibleRequests = requests
 
   return (
     <section className="overflow-hidden rounded-xl border border-slate-300 bg-white shadow-sm">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-300 bg-slate-50 px-4 py-3">
         <div>
           <p className="text-[10px] font-bold uppercase tracking-wider text-indigo-600">Solicitações</p>
-          <h2 className="text-sm font-black text-slate-800">{isAdmin ? 'Aprovadas para estoque' : 'Acompanhamento da escola'}</h2>
+          <h2 className="text-sm font-black text-slate-800">{isAdmin ? 'Entrada direta no estoque' : 'Acompanhamento da escola'}</h2>
         </div>
-        {isDirector && (
-          <button type="button" onClick={onCreateClick} className="inline-flex min-h-9 items-center gap-2 rounded-sm bg-indigo-600 px-3 text-[11px] font-black uppercase tracking-wider text-white hover:bg-indigo-700">
-            <Plus className="h-4 w-4" />
-            Solicitar alimento
-          </button>
-        )}
       </div>
       <div className="mv-scroll grid max-h-[280px] gap-2 overflow-y-auto p-3">
         {visibleRequests.length === 0 ? (
@@ -3123,7 +3088,7 @@ function FoodRequestsPanel({
                     Excluir
                   </button>
                 )}
-                {isAdmin && request.status === 'APPROVED_BY_NUTRITIONIST' && (
+                {isAdmin && !directStockBlockedStatuses.has(request.status) && (
                   <button type="button" onClick={() => onAddToStockClick(request)} className="inline-flex min-h-8 items-center gap-1.5 rounded-sm border border-emerald-300 bg-emerald-50 px-3 text-[11px] font-black text-emerald-700 hover:bg-emerald-100">
                     <PackageCheck className="h-3.5 w-3.5" />
                     Adicionar ao estoque
@@ -3257,6 +3222,8 @@ export default function MealsView({
 }: MealsViewProps) {
   const [selectedManagementId, setSelectedManagementId] = useState(mealManagements[0]?.id ?? '')
   const [schoolPage, setSchoolPage] = useState(1)
+  const [schoolSearch, setSchoolSearch] = useState('')
+  const [schoolSearchQuery, setSchoolSearchQuery] = useState('')
   const [schoolPageData, setSchoolPageData] = useState<MealManagementsPagePayload | null>(null)
   const [isSchoolPageLoading, setIsSchoolPageLoading] = useState(false)
   const [schoolPageError, setSchoolPageError] = useState('')
@@ -3295,15 +3262,27 @@ export default function MealsView({
   }, [displayManagements, selectedManagementId])
 
   useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      setSchoolSearchQuery(schoolSearch.trim())
+    }, 300)
+
+    return () => window.clearTimeout(timeoutId)
+  }, [schoolSearch])
+
+  useEffect(() => {
+    setSchoolPage(1)
+  }, [schoolSearchQuery])
+
+  useEffect(() => {
     let isCurrent = true
     setIsSchoolPageLoading(true)
     setSchoolPageError('')
 
-    onLoadSchoolPage(schoolPage, schoolSelectorPageSize)
+    onLoadSchoolPage(schoolPage, schoolSelectorPageSize, schoolSearchQuery)
       .then((data) => {
         if (!isCurrent) return
         setSchoolPageData(data)
-        if (data.mealManagements.length > 0 && data.pagination.page !== schoolPage) setSchoolPage(data.pagination.page)
+        if (data.pagination.page !== schoolPage) setSchoolPage(data.pagination.page)
       })
       .catch(() => {
         if (!isCurrent) return
@@ -3317,7 +3296,7 @@ export default function MealsView({
     return () => {
       isCurrent = false
     }
-  }, [onLoadSchoolPage, schoolPage])
+  }, [onLoadSchoolPage, schoolPage, schoolSearchQuery])
 
   useEffect(() => {
     setMovementsModal(null)
@@ -3334,15 +3313,33 @@ export default function MealsView({
     () => new Map([...schools, ...(schoolPageData?.schools ?? [])].map((s) => [s.id, s])),
     [schools, schoolPageData?.schools],
   )
-  const hasRemoteSchoolPage = Boolean(schoolPageData && schoolPageData.mealManagements.length > 0)
-  const schoolSelectorManagements = hasRemoteSchoolPage
-    ? schoolPageData?.mealManagements ?? []
-    : displayManagements.slice((schoolPage - 1) * schoolSelectorPageSize, schoolPage * schoolSelectorPageSize)
+  const localSchoolSelectorManagements = useMemo(() => {
+    const normalizedSearch = normalizeFoodSearchText(schoolSearchQuery)
+    if (!normalizedSearch) return displayManagements
+
+    return displayManagements.filter((management) => {
+      const school = schoolById.get(management.escolaId)
+      return normalizeFoodSearchText(school?.name ?? '').includes(normalizedSearch)
+    })
+  }, [displayManagements, schoolById, schoolSearchQuery])
+  const hasRemoteSchoolPage = Boolean(schoolPageData)
+  const schoolSelectorManagements = useMemo(() => {
+    if (!schoolPageData) {
+      return localSchoolSelectorManagements.slice((schoolPage - 1) * schoolSelectorPageSize, schoolPage * schoolSelectorPageSize)
+    }
+
+    const bySchoolId = new Map(schoolPageData.mealManagements.map((management) => [management.escolaId, management]))
+    const managementsFromSchools = schoolPageData.schools.map((school, index) => (
+      bySchoolId.get(school.id) ?? createEmptyMealManagement(school.id, getCurrentMonthReference(), index < 3)
+    ))
+
+    return managementsFromSchools.length > 0 ? managementsFromSchools : schoolPageData.mealManagements
+  }, [localSchoolSelectorManagements, schoolPage, schoolPageData])
   const schoolSelectorPagination = hasRemoteSchoolPage && schoolPageData?.pagination ? schoolPageData.pagination : {
     page: schoolPage,
     limit: schoolSelectorPageSize,
-    total: displayManagements.length,
-    totalPages: Math.max(1, Math.ceil(displayManagements.length / schoolSelectorPageSize)),
+    total: localSchoolSelectorManagements.length,
+    totalPages: Math.max(1, Math.ceil(localSchoolSelectorManagements.length / schoolSelectorPageSize)),
   }
   const selectedSchool = selectedManagement ? schoolById.get(selectedManagement.escolaId) ?? null : null
   const selectedSchoolId = selectedManagement?.escolaId ?? currentUser.schoolId ?? ''
@@ -3529,8 +3526,18 @@ export default function MealsView({
                 <p className="text-[10px] font-bold uppercase tracking-wider text-indigo-600">Escolas</p>
                 <h2 className="mt-0.5 text-sm font-black text-slate-800">Selecione a unidade</h2>
                 <p className="mt-1 text-[11px] font-medium text-slate-400">
-                  {displayManagements.length} escola{displayManagements.length !== 1 ? 's' : ''} disponível{displayManagements.length !== 1 ? 'is' : ''}
+                  {schoolSelectorPagination.total} escola{schoolSelectorPagination.total !== 1 ? 's' : ''} disponível{schoolSelectorPagination.total !== 1 ? 'is' : ''}
                 </p>
+                <div className="relative mt-2">
+                  <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    value={schoolSearch}
+                    onChange={(event) => setSchoolSearch(event.target.value)}
+                    placeholder="Buscar escola..."
+                    className="h-8 w-full rounded-lg border border-slate-300 bg-white pl-8 pr-3 text-xs font-medium text-slate-700 outline-none placeholder:text-slate-400 focus:border-indigo-400 focus:ring-1 focus:ring-indigo-100"
+                  />
+                </div>
               </div>
 
               <div className="mv-scroll grid auto-rows-max content-start max-h-[calc(100vh-280px)] gap-2 overflow-y-auto p-3 xl:min-h-0 xl:flex-1">
@@ -3556,6 +3563,11 @@ export default function MealsView({
                     />
                   )
                 })}
+                {!isSchoolPageLoading && schoolSelectorManagements.length === 0 && (
+                  <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-4 text-center text-xs font-bold text-slate-400">
+                    Nenhuma escola encontrada.
+                  </div>
+                )}
               </div>
 
               <div className="flex items-center justify-between gap-2 border-t border-slate-300 bg-slate-50 px-3 py-2">
@@ -3604,22 +3616,16 @@ export default function MealsView({
               </div>
             </section>
 
-            {/* Alert banner */}
-            <AlertBanner
-              lowStock={selectedManagement.resumo.itensBaixoEstoque}
-              expired={selectedManagement.resumo.itensVencidos}
-            />
-
             {/* MENUS section */}
-            <section className="overflow-hidden rounded-xl border border-slate-300 bg-white shadow-sm xl:h-[334px]">
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-300 bg-slate-50 px-5 py-4">
+            <section className="overflow-hidden rounded-xl border border-slate-300 bg-white shadow-sm xl:h-[260px]">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-300 bg-slate-50 px-4 py-3">
                 <div className="flex items-center gap-2.5">
-                  <div className="grid h-8 w-8 place-items-center rounded-lg bg-amber-500">
-                    <ClipboardList className="h-4 w-4 text-white" />
+                  <div className="grid h-7 w-7 place-items-center rounded-lg bg-amber-500">
+                    <ClipboardList className="h-3.5 w-3.5 text-white" />
                   </div>
                   <div>
                     <p className="text-[10px] font-bold uppercase tracking-wider text-amber-600">Cardápios</p>
-                    <h2 className="text-sm font-black text-slate-800">Planejamento alimentar da escola</h2>
+                    <h2 className="text-[13px] font-black text-slate-800">Planejamento alimentar da escola</h2>
                   </div>
                 </div>
                 <button
@@ -3630,14 +3636,14 @@ export default function MealsView({
                       schoolName: selectedSchool?.name ?? 'Escola',
                     })
                   }
-                  className="inline-flex min-h-9 items-center gap-2 rounded-lg border border-amber-400 bg-white px-3 text-[11px] font-black uppercase tracking-wider text-amber-700 transition-all hover:bg-amber-100 hover:active:bg-amber-200"
+                  className="inline-flex min-h-8 items-center gap-2 rounded-lg border border-amber-400 bg-white px-3 text-[10px] font-black uppercase tracking-wider text-amber-700 transition-all hover:bg-amber-100 hover:active:bg-amber-200"
                 >
-                  <CalendarDays className="h-4 w-4" />
+                  <CalendarDays className="h-3.5 w-3.5" />
                   Calendário do mês
                 </button>
               </div>
 
-              <div className="mv-scroll grid auto-rows-fr grid-cols-[repeat(auto-fit,minmax(220px,1fr))] gap-2.5 overflow-y-auto p-4 xl:max-h-[266px]">
+              <div className="mv-scroll grid content-start gap-3 overflow-y-auto p-3 pb-4 sm:grid-cols-2 xl:max-h-[200px]">
                 {selectedMenus.length > 0 ? (
                   selectedMenusPreview.map((menu) => (
                     <MenuCard key={menu.id} menu={menu} foods={selectedManagement.alimentosCadastrados} />
@@ -3659,7 +3665,7 @@ export default function MealsView({
                         schoolName: selectedSchool?.name ?? 'Escola',
                       })
                     }
-                    className="grid min-h-[96px] place-items-center rounded-lg border border-dashed border-amber-300 bg-amber-50 px-3 text-center text-sm font-black text-amber-700 transition-all hover:border-amber-400 hover:bg-amber-100"
+                    className="col-span-full mt-1 grid min-h-[76px] place-items-center rounded-lg border border-dashed border-amber-300 bg-amber-50 px-3 text-center text-xs font-black text-amber-700 transition-all hover:border-amber-400 hover:bg-amber-100"
                   >
                     +{hiddenMenuCount} cardapio{hiddenMenuCount !== 1 ? 's' : ''} no calendario do mes
                   </button>
@@ -3785,9 +3791,7 @@ export default function MealsView({
             <FoodRequestsPanel
               requests={selectedFoodRequests}
               currentUserId={currentUser.id}
-              isDirector={isDirector}
               isAdmin={isAdmin}
-              onCreateClick={() => setFoodRequestModal('new')}
               onEditClick={(request) => setFoodRequestModal(request)}
               onDeleteClick={(request) => setDeleteRequestTarget(request)}
               onAddToStockClick={(request) => setStockRequestModal(request)}

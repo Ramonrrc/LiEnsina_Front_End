@@ -209,11 +209,12 @@ export async function listMealManagements(token: string) {
   return apiRequest<MealsScreenPayload>('/meal-managements', { token })
 }
 
-export async function listMealManagementSchoolPage(token: string, page = 1, limit = 5) {
+export async function listMealManagementSchoolPage(token: string, page = 1, limit = 5, search = '') {
   const params = new URLSearchParams({
     page: String(page),
     limit: String(limit),
   })
+  if (search.trim()) params.set('search', search.trim())
   return apiRequest<MealManagementsPagePayload>(`/meal-managements/school-page?${params.toString()}`, { token })
 }
 

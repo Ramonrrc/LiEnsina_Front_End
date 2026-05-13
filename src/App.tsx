@@ -215,7 +215,7 @@ const schoolsPayloadSections: AppSection[] = [
 const sectionLabels: Partial<Record<RoleProfile, Partial<Record<AppSection, Pick<NavigationItem, 'label' | 'description'>>>>> = {
   ADMIN: {
     dashboard: { label: 'Dashboard Geral', description: 'Rede, escolas e resultados' },
-    meals: { label: 'Merenda Escolar', description: 'Estoque e orcamento da rede' },
+    meals: { label: 'Gestao Alimentar', description: 'Cardapios, estoque e orcamento da rede' },
     notifications: { label: 'Notificações', description: 'Alertas e comunicados' },
     settings: { label: 'Meu Perfil', description: 'Conta do administrador' },
   },
@@ -223,7 +223,7 @@ const sectionLabels: Partial<Record<RoleProfile, Partial<Record<AppSection, Pick
     dashboard: { label: 'Dashboard da Escola', description: 'Indicadores da unidade' },
     schools: { label: 'Escolas', description: 'Minha unidade escolar' },
     people: { label: 'Professores e Alunos', description: 'Equipe e estudantes' },
-    meals: { label: 'Merenda Escolar', description: 'Solicitacoes e estoque da unidade' },
+    meals: { label: 'Gestao Alimentar', description: 'Solicitacoes, cardapios e estoque da unidade' },
     notifications: { label: 'Notificações', description: 'Alertas da unidade' },
     settings: { label: 'Meu Perfil', description: 'Dados do diretor' },
   },
@@ -257,7 +257,7 @@ const sectionLabels: Partial<Record<RoleProfile, Partial<Record<AppSection, Pick
   },
   NUTRITIONIST: {
     'food-requests': { label: 'Aprovacao de Alimentos', description: 'Solicitacoes das escolas' },
-    meals: { label: 'Estoque das Escolas', description: 'Alertas e vencimentos' },
+    meals: { label: 'Gestao Alimentar', description: 'Cardapios, alertas e vencimentos' },
     notifications: { label: 'Notificacoes', description: 'Alertas nutricionais' },
     settings: { label: 'Meu Perfil', description: 'Dados do nutricionista' },
   },
@@ -427,18 +427,25 @@ function userRelatedSchoolIds(
   return schoolIds
 }
 
-function buildMealManagementsPagePayload(data: MealsScreenPayload, page: number, limit: number): MealManagementsPagePayload {
+function buildMealManagementsPagePayload(data: MealsScreenPayload, page: number, limit: number, search = ''): MealManagementsPagePayload {
   const safeLimit = Math.max(1, limit)
-  const total = data.mealManagements.length
+  const normalizedSearch = normalizeRoleText(search)
+  const managementBySchoolId = new Map(data.mealManagements.map((management) => [management.escolaId, management]))
+  const schools = data.schools.filter((school) => {
+    if (!normalizedSearch) return true
+    return normalizeRoleText([school.name, school.director, school.address].filter(Boolean).join(' ')).includes(normalizedSearch)
+  })
+  const total = schools.length
   const totalPages = Math.max(1, Math.ceil(total / safeLimit))
   const safePage = Math.min(Math.max(1, page), totalPages)
   const start = (safePage - 1) * safeLimit
-  const mealManagements = data.mealManagements.slice(start, start + safeLimit)
-  const schoolIds = new Set(mealManagements.map((management) => management.escolaId))
+  const pageSchools = schools.slice(start, start + safeLimit)
 
   return {
-    schools: data.schools.filter((school) => schoolIds.has(school.id)),
-    mealManagements,
+    schools: pageSchools,
+    mealManagements: pageSchools
+      .map((school) => managementBySchoolId.get(school.id))
+      .filter((management): management is MealManagement => Boolean(management)),
     pagination: {
       page: safePage,
       limit: safeLimit,
@@ -1534,10 +1541,10 @@ export default function App() {
             mealManagements={scopedData.mealManagements}
             foodRequests={scopedData.foodRequests ?? []}
             mealRequestHistory={scopedData.mealRequestHistory ?? []}
-            onLoadSchoolPage={(page, limit) => (
+            onLoadSchoolPage={(page, limit, search) => (
               roleProfile === 'ADMIN' || roleProfile === 'NUTRITIONIST'
-                ? listMealManagementSchoolPage(token, page, limit)
-                : Promise.resolve(buildMealManagementsPagePayload(scopedData, page, limit))
+                ? listMealManagementSchoolPage(token, page, limit, search)
+                : Promise.resolve(buildMealManagementsPagePayload(scopedData, page, limit, search))
             )}
             onSearchFoods={(query, limit) => searchMealFoods(token, query, limit)}
             onCreateFoodRequest={(draft) => canCreateFoodRequest ? runAction(async () => {
