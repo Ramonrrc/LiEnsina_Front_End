@@ -314,7 +314,7 @@ export function CompactSelect<TValue extends string = string>({
       ref={menuRef}
       style={menuStyle}
       className={cn(
-        'z-[1200] rounded-lg border border-slate-300 bg-white p-1 shadow-[0_18px_40px_rgba(15,23,42,.14)] animate-[fadein_.12s_ease]',
+        'z-[1200] rounded-sm border border-slate-300 bg-white p-1 shadow-[0_18px_40px_rgba(15,23,42,.14)] animate-[fadein_.12s_ease]',
         dropdownClassName,
       )}
     >

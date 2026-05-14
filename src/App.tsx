@@ -29,7 +29,9 @@ import {
   loadSchoolsScreen,
   loadSession,
   loadSettingsScreen,
+  listMealManagements,
   listRoomReservations,
+  searchAccessUsers,
   listStudentsPage,
   listTeachersPage,
   listMealManagementSchoolPage,
@@ -54,6 +56,7 @@ import {
   updateStudent,
   updateTeacher,
   updateUserRole,
+  updateUserSchool,
   reviewMealFoodRequest,
   uploadProfileAvatar,
   uploadProfileBanner,
@@ -66,13 +69,13 @@ import LoginView from './views/LoginView'
 import type {
   AppSection,
   CalendarScreenPayload,
+  DashboardAlertsPagePayload,
   EvaluationsScreenPayload,
   GenerateQuestionSelectionRequest,
   GenerateQuestionSelectionResponse,
   MealManagement,
   MealManagementsPagePayload,
   MealsScreenPayload,
-  CreateMealManagementPayload,
   NotificationsScreenPayload,
   PedagogyScreenPayload,
   Question,
@@ -455,6 +458,24 @@ function buildMealManagementsPagePayload(data: MealsScreenPayload, page: number,
   }
 }
 
+function buildDashboardAlertsPagePayload(alerts: DashboardAlertsPagePayload['alerts'], page: number, limit: number): DashboardAlertsPagePayload {
+  const safeLimit = [10, 25, 50, 100].includes(limit) ? limit : 10
+  const total = alerts.length
+  const totalPages = Math.max(1, Math.ceil(total / safeLimit))
+  const safePage = Math.min(Math.max(1, page), totalPages)
+  const start = (safePage - 1) * safeLimit
+
+  return {
+    alerts: alerts.slice(start, start + safeLimit),
+    pagination: {
+      page: safePage,
+      limit: safeLimit,
+      total,
+      totalPages,
+    },
+  }
+}
+
 function splitAcademicTokens(value?: string | null) {
   return normalizeRoleText(value)
     .split(/[,;|/]+|\s+-\s+/)
@@ -504,7 +525,88 @@ function removeById<T extends { id: string }>(items: T[], id: string) {
   return items.filter((item) => item.id !== id)
 }
 
-async function loadSectionPayload(section: AppSection, token: string) {
+function mergeById<T extends { id: string }>(...groups: T[][]) {
+  const byId = new Map<string, T>()
+  for (const group of groups) {
+    for (const item of group) byId.set(item.id, item)
+  }
+  return Array.from(byId.values())
+}
+
+function normalizeMealsPayload(payload: MealsScreenPayload | MealManagement[] | null | undefined): MealsScreenPayload {
+  if (!payload) {
+    return { schools: [], mealManagements: [], foodRequests: [], mealRequestHistory: [] }
+  }
+
+  if (Array.isArray(payload)) {
+    return { schools: [], mealManagements: payload, foodRequests: [], mealRequestHistory: [] }
+  }
+
+  const rawPayload = payload as MealsScreenPayload & {
+    data?: MealsScreenPayload | MealManagement[]
+    items?: MealManagement[]
+    results?: MealManagement[]
+    mealFoodRequests?: MealsScreenPayload['foodRequests']
+  }
+
+  if (Array.isArray(rawPayload.data)) {
+    return { schools: rawPayload.schools ?? [], mealManagements: rawPayload.data, foodRequests: rawPayload.foodRequests ?? rawPayload.mealFoodRequests ?? [], mealRequestHistory: rawPayload.mealRequestHistory ?? [] }
+  }
+
+  if (rawPayload.data && typeof rawPayload.data === 'object') {
+    const dataPayload = normalizeMealsPayload(rawPayload.data)
+    return {
+      schools: mergeById(rawPayload.schools ?? [], dataPayload.schools),
+      mealManagements: mergeById(rawPayload.mealManagements ?? rawPayload.items ?? rawPayload.results ?? [], dataPayload.mealManagements),
+      foodRequests: mergeById(rawPayload.foodRequests ?? rawPayload.mealFoodRequests ?? [], dataPayload.foodRequests),
+      mealRequestHistory: mergeById(rawPayload.mealRequestHistory ?? [], dataPayload.mealRequestHistory),
+    }
+  }
+
+  return {
+    schools: rawPayload.schools ?? [],
+    mealManagements: rawPayload.mealManagements ?? rawPayload.items ?? rawPayload.results ?? [],
+    foodRequests: rawPayload.foodRequests ?? rawPayload.mealFoodRequests ?? [],
+    mealRequestHistory: rawPayload.mealRequestHistory ?? [],
+  }
+}
+
+function mergeMealsPayloads(...payloads: Array<MealsScreenPayload | MealManagement[] | null | undefined>): MealsScreenPayload {
+  const normalizedPayloads = payloads.map(normalizeMealsPayload)
+  return {
+    schools: mergeById(...normalizedPayloads.map((payload) => payload.schools)),
+    mealManagements: mergeById(...normalizedPayloads.map((payload) => payload.mealManagements)),
+    foodRequests: mergeById(...normalizedPayloads.map((payload) => payload.foodRequests)),
+    mealRequestHistory: mergeById(...normalizedPayloads.map((payload) => payload.mealRequestHistory)),
+  }
+}
+
+function getStrictSchoolScopeIds(
+  user: UserAccount,
+  schools: School[],
+  mealManagements: MealManagement[] = [],
+) {
+  if (user.schoolId) return new Set([user.schoolId])
+
+  const schoolIds = new Set<string>()
+  const userName = normalizeRoleText(user.name)
+  if (userName) {
+    for (const school of schools) {
+      if (normalizeRoleText(school.director) === userName) schoolIds.add(school.id)
+    }
+  }
+
+  const userIds = new Set([user.id, user.linkedTeacherId].filter((id): id is string => Boolean(id)))
+  for (const management of mealManagements) {
+    if (userIds.has(management.responsaveisGestao.diretorId)) {
+      schoolIds.add(management.escolaId)
+    }
+  }
+
+  return schoolIds
+}
+
+async function loadSectionPayload(section: AppSection, token: string, profile: RoleProfile) {
   switch (section) {
     case 'dashboard':
       return loadDashboardScreen(token)
@@ -546,11 +648,20 @@ async function loadSectionPayload(section: AppSection, token: string) {
         scope: schoolsPayload,
       }))
     case 'meals':
-    case 'food-requests':
-      return Promise.all([loadMealsScreen(token), loadSchoolsScreen(token)]).then(([mealsPayload, schoolsPayload]) => ({
-        ...mealsPayload,
-        schools: mealsPayload.schools?.length ? mealsPayload.schools : schoolsPayload.schools,
-      }))
+    case 'food-requests': {
+      const shouldLoadNetworkMeals = profile === 'ADMIN' || profile === 'NUTRITIONIST'
+      const [mealsPayload, schoolsPayload, mealManagementsPayload] = await Promise.all([
+        loadMealsScreen(token),
+        loadSchoolsScreen(token),
+        shouldLoadNetworkMeals ? listMealManagements(token).catch(() => null) : Promise.resolve(null),
+      ])
+      const mergedMeals = mergeMealsPayloads(mealsPayload, mealManagementsPayload)
+
+      return {
+        ...mergedMeals,
+        schools: mergedMeals.schools.length ? mergedMeals.schools : schoolsPayload.schools,
+      }
+    }
     case 'access':
       return loadAccessScreen(token)
     case 'settings':
@@ -728,7 +839,7 @@ export default function App() {
     setAppError(null)
 
     try {
-      const nextData = await loadSectionPayload(section, currentToken)
+      const nextData = await loadSectionPayload(section, currentToken, roleProfile)
       setScreenData((current) => {
         if (section === 'calendar') {
           const calendarData = nextData as CalendarScreenPayload
@@ -898,7 +1009,10 @@ export default function App() {
         || linkedTeachers.some((teacher) => teacherMatchesClassByDiscipline(teacher, classRoom))
       ))
       const classIds = new Set(classes.map((classRoom) => classRoom.id))
-      const schoolIds = new Set(classes.map((classRoom) => classRoom.schoolId))
+      const schoolIds = new Set([
+        ...linkedTeachers.map((teacher) => teacher.schoolId),
+        ...classes.map((classRoom) => classRoom.schoolId),
+      ])
       const students = data.students.filter((student) => classIds.has(student.classId))
       const guardianIdsFromStudents = new Set(students.flatMap((student) => student.guardianIds ?? []))
 
@@ -1051,7 +1165,9 @@ export default function App() {
   function getScopedMealsData(data: MealsScreenPayload): MealsScreenPayload {
     if (!session || isAdminProfile(roleProfile) || roleProfile === 'NUTRITIONIST') return data
 
-    const allowedSchoolIds = userRelatedSchoolIds(session.currentUser, data.schools, data.mealManagements)
+    const allowedSchoolIds = isSchoolLeadership(roleProfile)
+      ? getStrictSchoolScopeIds(session.currentUser, data.schools, data.mealManagements)
+      : userRelatedSchoolIds(session.currentUser, data.schools, data.mealManagements)
     if (isSchoolLeadership(roleProfile) && allowedSchoolIds.size === 0 && data.schools.length === 1) {
       allowedSchoolIds.add(data.schools[0].id)
     }
@@ -1184,8 +1300,15 @@ export default function App() {
             auditEvents={data.auditEvents}
             evaluations={data.evaluations}
             profile={roleProfile}
+            currentUser={session.currentUser}
             schools={screenData.schools ? getScopedSchoolsData(screenData.schools).schools : []}
             classes={screenData.schools ? getScopedSchoolsData(screenData.schools).classes : []}
+            onLoadAlertsPage={async ({ page, limit }) => {
+              const payload = await loadDashboardScreen(token, { page, limit })
+              return payload.dashboard.alertsPagination
+                ? { alerts: payload.dashboard.alerts, pagination: payload.dashboard.alertsPagination }
+                : buildDashboardAlertsPagePayload(payload.dashboard.alerts, page, limit)
+            }}
           />
         )
       }
@@ -1530,7 +1653,7 @@ export default function App() {
         if (!data) return renderMissingScreen('meals')
         const scopedData = getScopedMealsData(data)
         const canManageMeals = roleProfile === 'ADMIN'
-        const canCreateFoodRequest = roleProfile === 'ADMIN' || roleProfile === 'DIRETOR'
+        const canCreateFoodRequest = roleProfile === 'DIRETOR'
         const canAddRequestToStock = roleProfile === 'ADMIN'
 
         return (
@@ -1541,11 +1664,36 @@ export default function App() {
             mealManagements={scopedData.mealManagements}
             foodRequests={scopedData.foodRequests ?? []}
             mealRequestHistory={scopedData.mealRequestHistory ?? []}
-            onLoadSchoolPage={(page, limit, search) => (
-              roleProfile === 'ADMIN' || roleProfile === 'NUTRITIONIST'
-                ? listMealManagementSchoolPage(token, page, limit, search)
-                : Promise.resolve(buildMealManagementsPagePayload(scopedData, page, limit, search))
-            )}
+            onLoadSchoolPage={async (page: number, limit: number, search = ''): Promise<MealManagementsPagePayload> => {
+              if (roleProfile !== 'ADMIN' && roleProfile !== 'NUTRITIONIST') {
+                return buildMealManagementsPagePayload(scopedData, page, limit, search)
+              }
+
+              try {
+                const payload = await listMealManagementSchoolPage(token, page, limit, search)
+                if (payload.mealManagements.length > 0) return payload
+
+                const fallbackData = scopedData.mealManagements.length > 0
+                  ? scopedData
+                  : normalizeMealsPayload(await listMealManagements(token).catch(() => null))
+
+                if (fallbackData.mealManagements.length > 0) {
+                  return buildMealManagementsPagePayload(fallbackData, page, limit, search)
+                }
+
+                return payload
+              } catch (error) {
+                const fallbackData = scopedData.mealManagements.length > 0
+                  ? scopedData
+                  : normalizeMealsPayload(await listMealManagements(token).catch(() => null))
+
+                if (fallbackData.mealManagements.length > 0) {
+                  return buildMealManagementsPagePayload(fallbackData, page, limit, search)
+                }
+
+                throw error
+              }
+            }}
             onSearchFoods={(query, limit) => searchMealFoods(token, query, limit)}
             onCreateFoodRequest={(draft) => canCreateFoodRequest ? runAction(async () => {
               await createMealFoodRequest(token, draft)
@@ -1563,25 +1711,36 @@ export default function App() {
               await addMealFoodRequestToStock(token, id, draft)
               await loadScreen('meals', token)
             }, 'Solicitacao adicionada ao estoque oficial.') : blockUnauthorizedAction('Apenas Admin pode adicionar solicitacoes ao estoque.')}
-            onCreateManagement={(draft: CreateMealManagementPayload) => canManageMeals ? runAction(async () => {
-              const created = await createMealManagement(token, draft)
-              updateScreenData('meals', (current) => ({
-                ...current,
-                mealManagements: upsertById(current.mealManagements, created),
-              }))
-            }, 'Gestao alimentar criada para a escola.') : blockUnauthorizedAction('Apenas Admin pode criar gestao alimentar.')}
+            onCreateManagement={async (draft) => {
+              if (!canManageMeals) {
+                await blockUnauthorizedAction('Apenas Admin pode criar gestao alimentar.')
+                throw new Error('Acao nao permitida para este perfil.')
+              }
+
+              try {
+                const created = await createMealManagement(token, draft)
+                updateScreenData('meals', (current) => ({
+                  ...current,
+                  mealManagements: upsertById(current.mealManagements, created),
+                }))
+                return created
+              } catch (error) {
+                showToast({ tone: 'error', message: error instanceof Error ? error.message : 'Nao foi possivel criar a gestao alimentar.' })
+                throw error
+              }
+            }}
             onCreateItem={(managementId, draft) => canManageMeals ? runAction(async () => {
               const updated = await createMealItem(token, managementId, draft)
               updateScreenData('meals', (current) => ({
                 ...current,
-                mealManagements: replaceById(current.mealManagements, updated),
+                mealManagements: upsertById(current.mealManagements, updated),
               }))
             }, 'Item adicionado ao estoque da merenda.') : blockUnauthorizedAction('Seu perfil pode acompanhar merenda, mas nao alterar estoque.')}
             onUpdateBudget={(managementId, draft) => canManageMeals ? runAction(async () => {
               const updated = await updateMealBudget(token, managementId, draft)
               updateScreenData('meals', (current) => ({
                 ...current,
-                mealManagements: replaceById(current.mealManagements, updated),
+                mealManagements: upsertById(current.mealManagements, updated),
               }))
             }, 'Orcamento atualizado.') : blockUnauthorizedAction('Seu perfil pode acompanhar merenda, mas nao alterar orcamento.')}
           />
@@ -1616,6 +1775,7 @@ export default function App() {
             roles={data.roles}
             users={data.users}
             schools={data.schools}
+            onSearchUsers={(params) => searchAccessUsers(token, params)}
             onUpdateRole={(id, draft) => runAction(async () => {
               const updated = await updateRole(token, id, draft)
               updateScreenData('access', (current) => ({ ...current, roles: replaceById(current.roles, updated) }))
@@ -1632,6 +1792,14 @@ export default function App() {
                 } : current)
               }
             }, 'Cargo do usuario atualizado.')}
+            onUpdateUserSchool={(id, schoolId) => runAction(async () => {
+              const updated = await updateUserSchool(token, id, { schoolId })
+              updateScreenData('access', (current) => ({ ...current, users: replaceById(current.users, updated) }))
+              updateScreenData('settings', (current) => session.currentUser.id === updated.id ? { ...current, currentUser: updated } : current)
+              if (session.currentUser.id === updated.id) {
+                setSession((current) => current ? { ...current, currentUser: updated } : current)
+              }
+            }, 'Escola vinculada ao usuario atualizada.')}
           />
         )
       }
@@ -1660,6 +1828,8 @@ export default function App() {
         return (
           <SettingsView
             currentUser={data.currentUser}
+            profile={roleProfile}
+            schools={data.schools ?? []}
             assetVersion={profileAssetVersion}
             onSave={(draft, avatarFile, bannerFile, visualAction) => runAction(async () => {
               let updated = { ...data.currentUser, ...(await updateProfile(token, draft)) }

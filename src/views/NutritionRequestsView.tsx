@@ -360,7 +360,7 @@ export default function NutritionRequestsView({ schools, mealManagements, foodRe
 
   const summary = useMemo(() => ({
     pending: foodRequests.filter((request) => request.status === 'PENDING_NUTRITIONIST_APPROVAL').length,
-    approved: foodRequests.filter((request) => request.status === 'APPROVED_BY_NUTRITIONIST').length,
+    approved: foodRequests.filter((request) => request.status === 'APPROVED_BY_NUTRITIONIST' || request.status === 'ADDED_TO_STOCK' || request.status === 'PURCHASED').length,
     rejected: foodRequests.filter((request) => request.status === 'REJECTED_BY_NUTRITIONIST').length,
     adjustment: foodRequests.filter((request) => request.status === 'NEEDS_ADJUSTMENT').length,
   }), [foodRequests])

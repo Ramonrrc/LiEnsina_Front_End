@@ -1,5 +1,7 @@
 import type {
   AccessScreenPayload,
+  AccessUserSearchQuery,
+  AccessUserSearchPayload,
   AddMealFoodRequestToStockPayload,
   CalendarScreenPayload,
   ClassRoom,
@@ -10,6 +12,7 @@ import type {
   CreateMealItemPayload,
   CreateMealManagementPayload,
   CreateRoomReservationPayload,
+  DashboardAlertsPageQuery,
   DashboardScreenPayload,
   Evaluation,
   EvaluationsScreenPayload,
@@ -39,6 +42,7 @@ import type {
   TeachersPagePayload,
   UpdateMealBudgetPayload,
   UpdateMealFoodRequestPayload,
+  UpdateUserSchoolPayload,
   UpsertMealMenuPayload,
   UserAccount,
 } from './types'
@@ -177,8 +181,14 @@ export async function loadSession(token: string) {
   return apiRequest<SessionPayload>('/session', { token })
 }
 
-export async function loadDashboardScreen(token: string) {
-  return apiRequest<DashboardScreenPayload>('/screens/dashboard', { token })
+export async function loadDashboardScreen(token: string, alertsPage?: Partial<DashboardAlertsPageQuery>) {
+  const params = new URLSearchParams()
+
+  if (alertsPage?.page) params.set('alertPage', String(alertsPage.page))
+  if (alertsPage?.limit) params.set('alertLimit', String(alertsPage.limit))
+
+  const query = params.toString()
+  return apiRequest<DashboardScreenPayload>(`/screens/dashboard${query ? `?${query}` : ''}`, { token })
 }
 
 export async function loadNotificationsScreen(token: string) {
@@ -228,6 +238,17 @@ export async function searchMealFoods(token: string, search: string, limit = 5) 
 
 export async function loadAccessScreen(token: string) {
   return apiRequest<AccessScreenPayload>('/screens/access', { token })
+}
+
+export async function searchAccessUsers(token: string, params: AccessUserSearchQuery) {
+  const query = new URLSearchParams({
+    search: params.search,
+    schoolId: params.schoolId ?? 'all',
+    kind: params.kind ?? 'all',
+    limit: String(params.limit ?? 10),
+  })
+
+  return apiRequest<AccessUserSearchPayload>(`/users/search?${query.toString()}`, { token })
 }
 
 function buildPeoplePageQuery(params: PeoplePageQuery) {
@@ -401,6 +422,10 @@ export async function updateRole(token: string, id: string, payload: Partial<Rol
 
 export async function updateUserRole(token: string, id: string, payload: { roleId: string }) {
   return apiRequest<UserAccount>(`/users/${id}/role`, { method: 'PATCH', token, body: payload })
+}
+
+export async function updateUserSchool(token: string, id: string, payload: UpdateUserSchoolPayload) {
+  return apiRequest<UserAccount>(`/users/${id}/school`, { method: 'PATCH', token, body: payload })
 }
 
 export async function updateProfile(token: string, payload: Partial<UserAccount>) {

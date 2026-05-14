@@ -24,18 +24,19 @@ import {
   CalendarDays,
   UserCheck,
   Layers,
-  SlidersHorizontal,
+  BadgeCheck,
+  Target,
 } from 'lucide-react'
 
 import { resolveApiAssetUrl } from '../api'
 import { AvatarHoverPreview } from '../components/profile/AvatarSign'
 import { CompactSelect, type CompactSelectOption } from '../components/ui/compact-select'
 import { PageTitleBar } from '../components/ui/page-title-bar'
+import { DEFAULT_PAGE_SIZE, PaginationControls, paginateLocal } from '../components/ui/pagination-controls'
 import { formatClassGrade } from '../class-grade-options'
 import type {
   ClassRoom,
   Desempenho,
-  PaginationMeta,
   PeoplePageQuery,
   Role,
   SchoolsScreenPayload,
@@ -77,8 +78,6 @@ type ProfilePreviewEntity = {
     bannerUrl?: string | null
   } | null
 }
-
-const pageSizeOptions = [8, 12, 20]
 
 function uniqueValues(values: Array<string | null | undefined>) {
   return Array.from(new Set(values.map((v) => v?.trim()).filter((v): v is string => Boolean(v))))
@@ -131,16 +130,9 @@ function getPerformanceTone(level?: Desempenho | null) {
 
 function getPerformanceIcon(level?: Desempenho | null) {
   if (level === 'Otimo') return CheckCircle2
-  if (level === 'Medio') return Star
+  if (level === 'Medio') return Target
   if (level === 'Baixo') return AlertTriangle
   return BarChart3
-}
-
-function getScoreTone(score: number | null | undefined) {
-  if (typeof score !== 'number') return 'text-slate-400'
-  if (score >= 8) return 'text-emerald-600'
-  if (score >= 6) return 'text-amber-600'
-  return 'text-rose-600'
 }
 
 function getAverageScore(students: Student[]) {
@@ -164,15 +156,15 @@ function SkeletonLine({ w = 'w-full', h = 'h-3' }: { w?: string; h?: string }) {
 
 function TeacherCardSkeleton() {
   return (
-    <div className="flex items-center gap-3 rounded-xl border border-slate-300 bg-white px-4 py-3">
-      <span className="h-9 w-9 shrink-0 animate-pulse rounded-full bg-slate-200" style={{ animationDuration: '1.4s' }} />
+    <div className="flex items-center gap-3 rounded-xl border-2 border-slate-300 bg-white px-4 py-3">
+      <span className="h-10 w-10 shrink-0 animate-pulse rounded-full bg-slate-200" style={{ animationDuration: '1.4s' }} />
       <div className="flex min-w-0 flex-1 flex-col gap-2">
         <SkeletonLine w="w-36" h="h-3.5" />
         <SkeletonLine w="w-48" h="h-2.5" />
       </div>
       <div className="flex shrink-0 items-center gap-2">
-        <SkeletonLine w="w-16" h="h-5" />
-        <SkeletonLine w="w-12" h="h-5" />
+        <SkeletonLine w="w-16" h="h-6" />
+        <SkeletonLine w="w-12" h="h-6" />
       </div>
     </div>
   )
@@ -180,16 +172,16 @@ function TeacherCardSkeleton() {
 
 function StudentCardSkeleton() {
   return (
-    <div className="flex items-center gap-3 rounded-xl border border-slate-300 bg-white px-4 py-3">
-      <span className="h-9 w-9 shrink-0 animate-pulse rounded-full bg-slate-200" style={{ animationDuration: '1.4s' }} />
+    <div className="flex items-center gap-3 rounded-xl border-2 border-slate-300 bg-white px-4 py-3">
+      <span className="h-10 w-10 shrink-0 animate-pulse rounded-full bg-slate-200" style={{ animationDuration: '1.4s' }} />
       <div className="flex min-w-0 flex-1 flex-col gap-2">
         <SkeletonLine w="w-40" h="h-3.5" />
         <SkeletonLine w="w-24" h="h-2.5" />
       </div>
       <div className="flex shrink-0 items-center gap-2">
-        <SkeletonLine w="w-20" h="h-5" />
-        <SkeletonLine w="w-14" h="h-5" />
-        <SkeletonLine w="w-14" h="h-5" />
+        <SkeletonLine w="w-20" h="h-6" />
+        <SkeletonLine w="w-14" h="h-6" />
+        <SkeletonLine w="w-14" h="h-6" />
       </div>
     </div>
   )
@@ -214,7 +206,7 @@ function ProfileAvatar({
   const avatarSrc = getProfileAvatarUrl(entity, assetVersion?.avatar)
   const bannerSrc = getProfileBannerUrl(entity, assetVersion?.banner)
   const hasProfileImage = Boolean(avatarSrc || bannerSrc)
-  const sizeClass = size === 'lg' ? 'h-14 w-14 text-base' : size === 'md' ? 'h-9 w-9 text-[13px]' : 'h-7 w-7 text-[10px]'
+  const sizeClass = size === 'lg' ? 'h-14 w-14 text-base' : size === 'md' ? 'h-10 w-10 text-[13px]' : 'h-7 w-7 text-[10px]'
 
   function showPreview() {
     if (!hasProfileImage) return
@@ -232,7 +224,7 @@ function ProfileAvatar({
     <div ref={wrapperRef} className="group/avatar relative shrink-0" onMouseEnter={showPreview} onMouseLeave={() => setPreviewStyle(null)}>
       <span
         tabIndex={hasProfileImage ? 0 : -1}
-        className={`grid overflow-hidden rounded-full border-2 border-white bg-gradient-to-br from-indigo-500 to-indigo-700 font-black text-white shadow ring-1 ring-slate-300 outline-none transition ${hasProfileImage ? 'cursor-pointer focus:ring-2 focus:ring-indigo-500' : ''} ${sizeClass}`}
+        className={`grid overflow-hidden rounded-full border-2 border-white bg-gradient-to-br from-indigo-500 to-violet-600 font-black text-white shadow-md ring-2 ring-slate-200 outline-none transition ${hasProfileImage ? 'cursor-pointer hover:ring-indigo-400 focus:ring-2 focus:ring-indigo-500' : ''} ${sizeClass}`}
       >
         {avatarSrc ? (
           <img src={avatarSrc} alt={name} className="h-full w-full object-cover" draggable={false} />
@@ -250,50 +242,29 @@ function ProfileAvatar({
   )
 }
 
-// ─── MetricCard ───────────────────────────────────────────────────────────────
+// ─── Metric Card (monocromático, sem rainbows) ────────────────────────────────
 
 function MetricCard({
   label,
   value,
   detail,
   icon: Icon,
-  tone = 'slate',
 }: {
   label: string
   value: string | number
   detail: string
   icon: React.ElementType
-  tone?: 'indigo' | 'violet' | 'emerald' | 'amber' | 'slate' | 'rose'
 }) {
-  const tones: Record<string, string> = {
-    indigo: 'border-indigo-300 bg-indigo-50/80 text-indigo-700',
-    violet: 'border-violet-300 bg-violet-50/80 text-violet-700',
-    emerald: 'border-emerald-300 bg-emerald-50/80 text-emerald-700',
-    amber: 'border-amber-300 bg-amber-50/80 text-amber-700',
-    slate: 'border-slate-300 bg-slate-50/80 text-slate-600',
-    rose: 'border-rose-300 bg-rose-50/80 text-rose-700',
-  }
-  const iconBg: Record<string, string> = {
-    indigo: 'bg-indigo-100 text-indigo-600',
-    violet: 'bg-violet-100 text-violet-600',
-    emerald: 'bg-emerald-100 text-emerald-600',
-    amber: 'bg-amber-100 text-amber-600',
-    slate: 'bg-slate-200 text-slate-500',
-    rose: 'bg-rose-100 text-rose-600',
-  }
-
   return (
-    <div className={`rounded-xl border p-3 ${tones[tone]}`}>
-      <div className="flex items-center gap-2.5">
-        <span className={`grid h-8 w-8 shrink-0 place-items-center rounded-lg ${iconBg[tone]}`}>
-          <Icon size={15} />
+    <div className="rounded-2xl border-2 border-slate-300 bg-white p-4">
+      <div className="flex items-center gap-2 mb-2">
+        <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-slate-100 text-slate-500">
+          <Icon size={14} />
         </span>
-        <div className="min-w-0">
-          <p className="truncate text-[9px] font-black uppercase tracking-[0.18em] opacity-60">{label}</p>
-          <p className="truncate text-lg font-black leading-none mt-0.5">{value}</p>
-        </div>
+        <p className="text-[9px] font-black uppercase tracking-[0.18em] text-slate-400">{label}</p>
       </div>
-      <p className="mt-2 text-[11px] font-semibold opacity-70 leading-tight">{detail}</p>
+      <p className="text-2xl font-black leading-none text-slate-900 mb-1">{value}</p>
+      <p className="text-[11px] font-semibold text-slate-400 leading-tight">{detail}</p>
     </div>
   )
 }
@@ -319,25 +290,18 @@ function Modal({
     <div
       role="presentation"
       onMouseDown={onClose}
-      className="fixed inset-0 z-[1000] flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm"
-      style={{ animation: 'fadeIn 0.15s ease' }}
+      className="fixed inset-0 z-[1000] flex items-center justify-center bg-slate-950/40 p-4 backdrop-blur-sm"
+      style={{ animation: 'pv-fadeIn 0.15s ease' }}
     >
-      <style>{`
-        @keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }
-        @keyframes slideUp { from { opacity: 0; transform: translateY(12px) scale(0.98) } to { opacity: 1; transform: translateY(0) scale(1) } }
-        @keyframes shimmer { 0% { background-position: -200% 0 } 100% { background-position: 200% 0 } }
-        .animate-slideUp { animation: slideUp 0.2s cubic-bezier(0.16,1,0.3,1) }
-        .card-enter { animation: slideUp 0.25s cubic-bezier(0.16,1,0.3,1) both }
-      `}</style>
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby={id}
         onMouseDown={(e) => e.stopPropagation()}
-        className="animate-slideUp max-h-[92vh] w-full overflow-y-auto rounded-2xl border border-slate-300 bg-white shadow-2xl shadow-slate-900/20"
+        className="pv-modal-enter max-h-[92vh] w-full overflow-y-auto rounded-2xl border-2 border-slate-300 bg-white shadow-2xl shadow-slate-900/15"
         style={{ maxWidth }}
       >
-        <div className="sticky top-0 z-10 flex items-center justify-between gap-4 border-b border-slate-200 bg-white/95 px-5 py-4 backdrop-blur">
+        <div className="sticky top-0 z-10 flex items-center justify-between gap-4 border-b-2 border-slate-300 bg-white/95 px-6 py-4 backdrop-blur">
           <div className="min-w-0">
             <p className="text-[9px] font-black uppercase tracking-[0.22em] text-indigo-500">{subtitle}</p>
             <h2 id={id} className="mt-0.5 truncate text-xl font-black text-slate-900" style={{ fontFamily: "'Sora', system-ui, sans-serif" }}>{title}</h2>
@@ -346,7 +310,7 @@ function Modal({
             type="button"
             onClick={onClose}
             aria-label="Fechar"
-            className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-slate-300 text-slate-400 transition hover:border-slate-400 hover:bg-slate-100 hover:text-slate-900"
+            className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border-2 border-slate-300 text-slate-400 transition hover:border-red-300 hover:bg-red-50 hover:text-red-600"
           >
             <X size={16} />
           </button>
@@ -357,112 +321,55 @@ function Modal({
   )
 }
 
-// ─── Pagination ───────────────────────────────────────────────────────────────
+// ─── Score Badge (neutro, sem excesso de cor) ─────────────────────────────────
 
-function getLocalPagination(total: number, page: number, limit: number): PaginationMeta {
-  const totalPages = Math.max(1, Math.ceil(total / limit))
-  return { page: Math.min(Math.max(1, page), totalPages), limit, total, totalPages }
-}
-
-function paginateLocal<T>(items: T[], page: number, limit: number) {
-  const pagination = getLocalPagination(items.length, page, limit)
-  const start = (pagination.page - 1) * pagination.limit
-  return { items: items.slice(start, start + pagination.limit), pagination }
-}
-
-function PaginationControls({
-  label,
-  pagination,
-  limit,
-  loading,
-  source,
-  onPageChange,
-  onLimitChange,
-}: {
-  label: string
-  pagination: PaginationMeta
-  limit: number
-  loading: boolean
-  source: 'backend' | 'local'
-  onPageChange: (page: number) => void
-  onLimitChange: (limit: number) => void
-}) {
-  const firstItem = pagination.total === 0 ? 0 : (pagination.page - 1) * pagination.limit + 1
-  const lastItem = Math.min(pagination.total, pagination.page * pagination.limit)
-
+function ScoreBadge({ score }: { score: number | null | undefined }) {
+  const hasScore = typeof score === 'number' && Number.isFinite(score)
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-300 bg-slate-50 px-4 py-3">
-      <div className="min-w-0 text-xs font-bold text-slate-500">
-        <span className="block truncate">{label}: {firstItem}–{lastItem} de {pagination.total}</span>
-        <span className="mt-0.5 block text-[10px] font-black uppercase tracking-[0.14em] text-slate-400">
-          {loading ? 'Carregando...' : source === 'backend' ? 'Backend' : 'Fallback local'}
-        </span>
-      </div>
-      <div className="flex flex-wrap items-center gap-2">
-        <label className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest text-slate-400">
-          <SlidersHorizontal size={11} />
-          <select
-            value={limit}
-            onChange={(e) => onLimitChange(Number(e.target.value))}
-            className="h-8 rounded-lg border border-slate-300 bg-white px-2 text-xs font-black text-slate-700 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
-          >
-            {pageSizeOptions.map((o) => <option key={o} value={o}>{o}</option>)}
-          </select>
-        </label>
-        <div className="flex items-center gap-1">
-          {[
-            { label: '1', action: () => onPageChange(1), disabled: pagination.page <= 1 },
-            { label: '‹', action: () => onPageChange(pagination.page - 1), disabled: pagination.page <= 1 },
-          ].map(({ label: l, action, disabled }) => (
-            <button key={l} type="button" onClick={action} disabled={loading || disabled}
-              className="grid h-8 min-w-8 place-items-center rounded-lg border border-slate-300 bg-white px-2 text-xs font-black text-slate-600 transition hover:border-indigo-400 hover:text-indigo-700 disabled:cursor-not-allowed disabled:opacity-40">
-              {l}
-            </button>
-          ))}
-          <span className="grid h-8 min-w-[68px] place-items-center rounded-lg border border-slate-300 bg-indigo-50 px-3 text-xs font-black text-indigo-700">
-            {pagination.page}/{pagination.totalPages}
-          </span>
-          {[
-            { label: '›', action: () => onPageChange(pagination.page + 1), disabled: pagination.page >= pagination.totalPages },
-            { label: String(pagination.totalPages), action: () => onPageChange(pagination.totalPages), disabled: pagination.page >= pagination.totalPages },
-          ].map(({ label: l, action, disabled }) => (
-            <button key={l} type="button" onClick={action} disabled={loading || disabled}
-              className="grid h-8 min-w-8 place-items-center rounded-lg border border-slate-300 bg-white px-2 text-xs font-black text-slate-600 transition hover:border-indigo-400 hover:text-indigo-700 disabled:cursor-not-allowed disabled:opacity-40">
-              {l}
-            </button>
-          ))}
-        </div>
-      </div>
-    </div>
+    <span className="inline-flex items-center gap-1 rounded-lg border-2 border-slate-300 bg-slate-50 px-2 py-0.5 text-[10px] font-black text-slate-600">
+      <TrendingUp size={9} />
+      {hasScore ? (score as number).toFixed(1) : '—'}
+    </span>
   )
 }
 
-// ─── Attendance Badge ─────────────────────────────────────────────────────────
-
 function AttendanceBadge({ rate }: { rate: number }) {
-  const tone = rate >= 85 ? 'border-emerald-300 bg-emerald-50 text-emerald-700'
-    : rate >= 75 ? 'border-amber-300 bg-amber-50 text-amber-700'
-    : 'border-rose-300 bg-rose-50 text-rose-700'
   return (
-    <span className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-black ${tone}`}>
+    <span className="inline-flex items-center gap-1 rounded-lg border-2 border-slate-300 bg-slate-50 px-2 py-0.5 text-[10px] font-black text-slate-600">
       <Percent size={9} />
       {rate}%
     </span>
   )
 }
 
-// ─── Score Badge ──────────────────────────────────────────────────────────────
+// ─── Section Header Strip ─────────────────────────────────────────────────────
 
-function ScoreBadge({ score }: { score: number | null | undefined }) {
-  const tone = typeof score !== 'number' ? 'border-slate-300 bg-slate-50 text-slate-400'
-    : score >= 8 ? 'border-emerald-300 bg-emerald-50 text-emerald-700'
-    : score >= 6 ? 'border-amber-300 bg-amber-50 text-amber-700'
-    : 'border-rose-300 bg-rose-50 text-rose-700'
+function SectionStrip({
+  icon: Icon,
+  label,
+  title,
+  count,
+}: {
+  icon: React.ElementType
+  label: string
+  title: string
+  count: number
+}) {
   return (
-    <span className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-black ${tone}`}>
-      <TrendingUp size={9} />
-      {formatScore(score)}
-    </span>
+    <div className="flex items-center gap-3 border-b-2 border-slate-300 bg-gradient-to-r from-slate-50 to-white px-5 py-4">
+      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 text-white shadow-md shadow-indigo-200">
+        <Icon size={16} />
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="text-[9px] font-black uppercase tracking-[0.22em] text-indigo-500">{label}</p>
+        <h2 className="text-sm font-black text-slate-900 leading-tight" style={{ fontFamily: "'Sora', system-ui, sans-serif" }}>
+          {title}
+        </h2>
+      </div>
+      <span className="rounded-full border-2 border-slate-300 bg-white px-3 py-1 text-[11px] font-black text-slate-600">
+        {count}
+      </span>
+    </div>
   )
 }
 
@@ -486,8 +393,8 @@ export default function PeopleView({
   const [classReturnTeacherId, setClassReturnTeacherId] = useState<string | null>(null)
   const [teacherPage, setTeacherPage] = useState(1)
   const [studentPage, setStudentPage] = useState(1)
-  const [teacherLimit, setTeacherLimit] = useState(8)
-  const [studentLimit, setStudentLimit] = useState(8)
+  const [teacherLimit, setTeacherLimit] = useState(DEFAULT_PAGE_SIZE)
+  const [studentLimit, setStudentLimit] = useState(DEFAULT_PAGE_SIZE)
   const [teacherPageData, setTeacherPageData] = useState<TeachersPagePayload | null>(null)
   const [studentPageData, setStudentPageData] = useState<StudentsPagePayload | null>(null)
   const [teacherPageLoading, setTeacherPageLoading] = useState(false)
@@ -566,35 +473,28 @@ export default function PeopleView({
   function getSchoolName(id: string | null) {
     return id ? schools.find((s) => s.id === id)?.name ?? 'Escola não localizada' : 'Rede municipal'
   }
-
   function getClassName(id: string) {
     return classes.find((c) => c.id === id)?.name ?? 'Turma não localizada'
   }
-
   function getClassById(id: string) {
     return classes.find((c) => c.id === id) ?? null
   }
-
   function getTeacherClasses(teacher: Teacher) {
     return classes.filter((c) => {
       const ids = new Set([c.teacherId, ...(c.teacherIds ?? [])].filter(Boolean))
       return ids.has(teacher.id)
     })
   }
-
   function getClassTeachers(classRoom: ClassRoom) {
     const ids = new Set([classRoom.teacherId, ...(classRoom.teacherIds ?? [])].filter(Boolean))
     return teachers.filter((t) => ids.has(t.id))
   }
-
   function getClassStudents(classRoom: ClassRoom) {
     return students.filter((s) => s.classId === classRoom.id)
   }
-
   function getGuardianName(id: string) {
     return guardians.find((g) => g.id === id)?.name ?? 'Responsável pendente'
   }
-
   function getStudentSubjects(student: Student) {
     const classRoom = getClassById(student.classId)
     const subjects = classRoom?.bnccFocus?.length
@@ -602,22 +502,17 @@ export default function PeopleView({
       : classRoom ? getClassTeachers(classRoom).map((t) => t.specialty).filter(Boolean) : []
     return uniqueValues(subjects.length ? subjects : ['Média geral'])
   }
-
   function isCurrentLinkedProfile(entity: ProfilePreviewEntity) {
     return Boolean(entity.id && (entity.id === currentUser.linkedStudentId || entity.id === currentUser.linkedTeacherId || entity.userId === currentUser.id))
   }
-
   function withCurrentUserVisuals<T extends ProfilePreviewEntity>(entity: T): T {
     if (!isCurrentLinkedProfile(entity)) return entity
     return { ...entity, avatarUrl: currentUser.avatarUrl, bannerUrl: currentUser.bannerUrl }
   }
-
   function getProfileAssetVersion(entity: ProfilePreviewEntity) {
     return isCurrentLinkedProfile(entity) ? assetVersion : undefined
   }
-
   function closeClassDetails() { setClassDetailsId(null); setClassReturnTeacherId(null) }
-
   function returnToTeacherClasses() {
     const tid = classReturnTeacherId
     setClassDetailsId(null); setClassReturnTeacherId(null)
@@ -632,12 +527,15 @@ export default function PeopleView({
   return (
     <>
       <style>{`
-        @keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }
-        @keyframes slideUp { from { opacity: 0; transform: translateY(10px) } to { opacity: 1; transform: translateY(0) } }
-        .card-enter { animation: slideUp 0.22s cubic-bezier(0.16,1,0.3,1) both }
+        @import url('https://fonts.googleapis.com/css2?family=Sora:wght@700;800;900&family=DM+Sans:wght@400;500;600;700&display=swap');
+        @keyframes pv-fadeIn { from { opacity: 0 } to { opacity: 1 } }
+        @keyframes pv-slideUp { from { opacity: 0; transform: translateY(12px) scale(0.98) } to { opacity: 1; transform: translateY(0) scale(1) } }
+        @keyframes pv-cardIn { from { opacity: 0; transform: translateY(6px) } to { opacity: 1; transform: translateY(0) } }
+        .pv-modal-enter { animation: pv-slideUp 0.22s cubic-bezier(0.16,1,0.3,1) both }
+        .pv-card-enter { animation: pv-cardIn 0.2s cubic-bezier(0.16,1,0.3,1) both }
       `}</style>
 
-      <div className="grid min-h-screen gap-4 bg-slate-100 px-[clamp(12px,2.5vw,36px)] py-5 pb-10" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+      <div className="grid min-h-screen gap-4 bg-gradient-to-br from-slate-50 via-white to-indigo-50/30 px-[clamp(12px,2.5vw,36px)] py-5 pb-10" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
 
         {/* ── Header ── */}
         <PageTitleBar
@@ -645,61 +543,60 @@ export default function PeopleView({
           title="Pessoas"
           icon={<Users />}
           actions={(
-            <div className="flex items-center gap-3">
-            {currentRole?.name && (
-              <span className="hidden items-center gap-1.5 rounded-full border border-indigo-300 bg-indigo-50 px-3 py-1 text-[11px] font-black text-indigo-700 sm:inline-flex">
-                <UserCheck size={11} />
-                {currentRole.name}
+            <div className="flex items-center gap-2">
+              {currentRole?.name && (
+                <span className="hidden items-center gap-1.5 rounded-full border-2 border-indigo-300 bg-indigo-50 px-3 py-1 text-[11px] font-black text-indigo-700 sm:inline-flex">
+                  <UserCheck size={11} />
+                  {currentRole.name}
+                </span>
+              )}
+              <span className="flex items-center gap-1.5 rounded-full border-2 border-slate-300 bg-white px-3 py-1 text-[11px] font-black text-slate-500">
+                <Layers size={11} />
+                {teacherPagination.total + studentPagination.total} registros
               </span>
-            )}
-            <span className="flex items-center gap-1.5 rounded-full border border-slate-300 bg-slate-50 px-3 py-1 text-[11px] font-black text-slate-600">
-              <Layers size={11} />
-              {teacherPagination.total + studentPagination.total} registros
-            </span>
             </div>
           )}
         />
 
         {/* ── Filters ── */}
-        <section className="grid grid-cols-[minmax(240px,1fr)_minmax(180px,0.34fr)_minmax(180px,0.3fr)] gap-2.5 rounded-2xl border border-slate-300 bg-white p-3 shadow-sm max-[920px]:grid-cols-1">
-          <label className="group flex h-10 min-w-0 items-center gap-2 rounded-sm border border-slate-500 bg-slate-50 px-3 transition focus-within:border-indigo-400 focus-within:bg-white focus-within:ring-2 focus-within:ring-indigo-100">
-            <span className="sr-only">Buscar pessoa</span>
-            <span className="grid h-6 w-6 shrink-0 place-items-center rounded-sm bg-white text-slate-500 ring-1 ring-slate-200 transition group-focus-within:text-indigo-600">
-              <Search size={14} strokeWidth={2.4} />
-            </span>
+        <section className="grid grid-cols-[minmax(240px,1fr)_minmax(200px,0.4fr)_minmax(200px,0.35fr)] gap-2.5 rounded-2xl border-2 border-slate-300 bg-white p-3 shadow-sm max-[920px]:grid-cols-1">
+          <label className="group flex h-11 min-w-0 items-center gap-2.5 rounded-sm border-2 border-slate-300 bg-slate-50 px-3.5 transition focus-within:border-indigo-400 focus-within:bg-white focus-within:ring-4 focus-within:ring-indigo-100 hover:border-slate-300">
+            <Search size={15} className="shrink-0 text-slate-400 transition group-focus-within:text-indigo-500" strokeWidth={2.4} />
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Buscar por nome, e-mail ou matrícula..."
+              placeholder="Buscar por nome, e-mail ou matrícula…"
               className="h-full min-w-0 flex-1 border-0 bg-transparent p-0 text-sm font-semibold text-slate-800 outline-none placeholder:text-slate-400"
             />
+            {query && (
+              <button type="button" onClick={() => setQuery('')} className="shrink-0 text-slate-400 hover:text-slate-600">
+                <X size={13} />
+              </button>
+            )}
           </label>
-          <CompactSelect value={schoolFilter} options={schoolOptions} onChange={setSchoolFilter} dropdownWidth="trigger"
-            className="h-10 rounded-sm border border-slate-500 bg-slate-50 px-3 text-sm font-bold text-slate-700 focus:border-indigo-400" />
-          <CompactSelect value={disciplineFilter} options={disciplineOptions} onChange={setDisciplineFilter} dropdownWidth="trigger"
-            className="h-10 rounded-sm border border-slate-500 bg-slate-50 px-3 text-sm font-bold text-slate-700 focus:border-indigo-400" />
+          <CompactSelect
+            value={schoolFilter}
+            options={schoolOptions}
+            onChange={setSchoolFilter}
+            dropdownWidth="trigger"
+            className="h-11 rounded-sm border-2 border-slate-300 bg-slate-50 px-3.5 text-sm font-bold text-slate-700 focus:border-indigo-400"
+          />
+          <CompactSelect
+            value={disciplineFilter}
+            options={disciplineOptions}
+            onChange={setDisciplineFilter}
+            dropdownWidth="trigger"
+            className="h-11 rounded-sm border-2 border-slate-300 bg-slate-50 px-3.5 text-sm font-bold text-slate-700 focus:border-indigo-400"
+          />
         </section>
 
         <div className="grid gap-4">
 
           {/* ── Teachers ── */}
-          <div className="overflow-hidden rounded-2xl border border-slate-300 bg-white shadow-sm">
-            <div className="flex items-center gap-3 border-b border-slate-300 bg-gradient-to-r from-indigo-50 to-white px-4 py-3">
-              <span className="grid h-8 w-8 place-items-center rounded-xl bg-indigo-600 text-white shadow">
-                <UserRound size={15} />
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="text-[9px] font-black uppercase tracking-[0.2em] text-indigo-400">Corpo docente</p>
-                <h2 className="text-sm font-black text-slate-900" style={{ fontFamily: "'Sora', system-ui, sans-serif" }}>
-                  Professores
-                </h2>
-              </div>
-              <span className="rounded-full border border-indigo-300 bg-indigo-50 px-2.5 py-1 text-[11px] font-black text-indigo-700">
-                {teacherPagination.total}
-              </span>
-            </div>
+          <div className="overflow-hidden rounded-2xl border-2 border-slate-300 bg-white shadow-sm">
+            <SectionStrip icon={UserRound} label="Corpo docente" title="Professores" count={teacherPagination.total} />
 
-            <div className="grid gap-1.5 p-3">
+            <div className="grid gap-2 p-4">
               {teacherPageLoading
                 ? Array.from({ length: 4 }).map((_, i) => <TeacherCardSkeleton key={i} />)
                 : displayedTeachers.map((teacher, idx) => {
@@ -711,62 +608,56 @@ export default function PeopleView({
                       key={teacher.id}
                       type="button"
                       onClick={() => setTeacherDetailsId(teacher.id)}
-                      className="card-enter group flex min-w-0 items-center gap-3 rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-left transition hover:border-indigo-400 hover:bg-indigo-50/40 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                      style={{ animationDelay: `${idx * 30}ms` }}
+                      className="pv-card-enter group flex min-w-0 items-center gap-3 rounded-xl border-2 border-slate-300 bg-white px-4 py-3 text-left transition hover:border-indigo-400 hover:bg-indigo-50/40 hover:shadow-sm focus:outline-none focus:ring-4 focus:ring-indigo-100"
+                      style={{ animationDelay: `${idx * 25}ms` }}
                     >
                       <ProfileAvatar entity={teacherProfile} size="md" assetVersion={getProfileAssetVersion(teacher)} />
                       <div className="min-w-0 flex-1">
-                        <strong className="block truncate text-[13px] font-black text-slate-900 group-hover:text-indigo-800">{teacher.name}</strong>
+                        <strong className="block truncate text-[13px] font-black text-slate-900 group-hover:text-indigo-800 transition-colors">{teacher.name}</strong>
                         <span className="block truncate text-[11px] font-semibold text-slate-500">{teacher.email}</span>
                       </div>
                       <div className="flex shrink-0 items-center gap-1.5">
-                        <span className="hidden items-center gap-1 rounded-md border border-indigo-300 bg-indigo-50 px-2 py-0.5 text-[10px] font-black text-indigo-700 sm:inline-flex">
+                        <span className="hidden items-center gap-1 rounded-lg border-2 border-slate-300 bg-slate-50 px-2.5 py-1 text-[10px] font-black text-slate-600 sm:inline-flex">
                           <BookMarked size={9} />
                           {teacher.specialty || 'Sem disciplina'}
                         </span>
-                        <span className="hidden items-center gap-1 rounded-md border border-slate-300 bg-slate-50 px-2 py-0.5 text-[10px] font-bold text-slate-500 lg:inline-flex">
+                        <span className="hidden items-center gap-1 rounded-lg border-2 border-slate-300 bg-slate-50 px-2.5 py-1 text-[10px] font-bold text-slate-500 lg:inline-flex">
                           <School size={9} />
                           {getSchoolName(teacher.schoolId).split(' ').slice(0, 2).join(' ')}
                         </span>
-                        <span className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-slate-50 px-2 py-0.5 text-[10px] font-black text-slate-600">
+                        <span className="inline-flex items-center gap-1 rounded-lg border-2 border-slate-300 bg-slate-50 px-2.5 py-1 text-[10px] font-black text-slate-600">
                           <Users size={9} />
                           {teacherClasses.length}t
                         </span>
-                        <ChevronRight size={14} className="text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-indigo-500" />
+                        <ChevronRight size={15} className="text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-indigo-500" />
                       </div>
                     </button>
                   )
                 })}
               {!teacherPageLoading && displayedTeachers.length === 0 && (
-                <div className="flex flex-col items-center justify-center gap-2 py-10 text-slate-400">
-                  <UserRound size={28} className="opacity-30" />
-                  <p className="text-sm font-semibold">Nenhum professor encontrado.</p>
+                <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed border-slate-300 py-12 text-slate-400">
+                  <UserRound size={30} className="opacity-30" />
+                  <p className="text-sm font-bold">Nenhum professor encontrado.</p>
                 </div>
               )}
             </div>
 
-            <PaginationControls label="Professores" pagination={teacherPagination} limit={teacherLimit} loading={teacherPageLoading} source={teacherPageSource}
-              onPageChange={setTeacherPage} onLimitChange={(n) => { setTeacherLimit(n); setTeacherPage(1) }} />
+            <PaginationControls
+              label="Professores"
+              pagination={teacherPagination}
+              limit={teacherLimit}
+              loading={teacherPageLoading}
+              source={teacherPageSource}
+              onPageChange={setTeacherPage}
+              onLimitChange={(n) => { setTeacherLimit(n); setTeacherPage(1) }}
+            />
           </div>
 
           {/* ── Students ── */}
-          <div className="overflow-hidden rounded-2xl border border-slate-300 bg-white shadow-sm">
-            <div className="flex items-center gap-3 border-b border-slate-300 bg-gradient-to-r from-violet-50 to-white px-4 py-3">
-              <span className="grid h-8 w-8 place-items-center rounded-xl bg-violet-600 text-white shadow">
-                <GraduationCap size={15} />
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="text-[9px] font-black uppercase tracking-[0.2em] text-violet-400">Corpo discente</p>
-                <h2 className="text-sm font-black text-slate-900" style={{ fontFamily: "'Sora', system-ui, sans-serif" }}>
-                  Alunos
-                </h2>
-              </div>
-              <span className="rounded-full border border-violet-300 bg-violet-50 px-2.5 py-1 text-[11px] font-black text-violet-700">
-                {studentPagination.total}
-              </span>
-            </div>
+          <div className="overflow-hidden rounded-2xl border-2 border-slate-300 bg-white shadow-sm">
+            <SectionStrip icon={GraduationCap} label="Corpo discente" title="Alunos" count={studentPagination.total} />
 
-            <div className="grid gap-1.5 p-3">
+            <div className="grid gap-2 p-4">
               {studentPageLoading
                 ? Array.from({ length: 4 }).map((_, i) => <StudentCardSkeleton key={i} />)
                 : displayedStudents.map((student, idx) => {
@@ -779,40 +670,47 @@ export default function PeopleView({
                       key={student.id}
                       type="button"
                       onClick={() => setStudentDetailsId(student.id)}
-                      className="card-enter group flex min-w-0 items-center gap-3 rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-left transition hover:border-violet-400 hover:bg-violet-50/40 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-violet-200"
-                      style={{ animationDelay: `${idx * 30}ms` }}
+                      className="pv-card-enter group flex min-w-0 items-center gap-3 rounded-xl border-2 border-slate-300 bg-white px-4 py-3 text-left transition hover:border-indigo-400 hover:bg-indigo-50/40 hover:shadow-sm focus:outline-none focus:ring-4 focus:ring-indigo-100"
+                      style={{ animationDelay: `${idx * 25}ms` }}
                     >
                       <ProfileAvatar entity={studentProfile} size="md" assetVersion={getProfileAssetVersion(student)} />
                       <div className="min-w-0 flex-1">
-                        <strong className="block truncate text-[13px] font-black text-slate-900 group-hover:text-violet-800">{student.name}</strong>
+                        <strong className="block truncate text-[13px] font-black text-slate-900 group-hover:text-indigo-800 transition-colors">{student.name}</strong>
                         <span className="block truncate text-[11px] font-semibold text-slate-500">{student.registrationNumber || student.login}</span>
                       </div>
                       <div className="flex shrink-0 items-center gap-1.5">
-                        <span className="hidden items-center gap-1 rounded-md border border-violet-300 bg-violet-50 px-2 py-0.5 text-[10px] font-black text-violet-700 sm:inline-flex">
+                        <span className="hidden items-center gap-1 rounded-lg border-2 border-slate-300 bg-slate-50 px-2.5 py-1 text-[10px] font-black text-slate-600 sm:inline-flex">
                           <Users size={9} />
                           {getClassName(student.classId)}
                         </span>
                         <AttendanceBadge rate={student.attendanceRate} />
                         <ScoreBadge score={student.averageScore} />
-                        <span className={`hidden items-center gap-1 rounded-md border px-2 py-0.5 text-[10px] font-black lg:inline-flex ${getPerformanceTone(perf)}`}>
+                        <span className={`hidden items-center gap-1 rounded-lg border-2 px-2.5 py-1 text-[10px] font-black lg:inline-flex ${getPerformanceTone(perf)}`}>
                           <PerfIcon size={9} />
                           {getPerformanceLabel(perf)}
                         </span>
-                        <ChevronRight size={14} className="text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-violet-500" />
+                        <ChevronRight size={15} className="text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-indigo-500" />
                       </div>
                     </button>
                   )
                 })}
               {!studentPageLoading && displayedStudents.length === 0 && (
-                <div className="flex flex-col items-center justify-center gap-2 py-10 text-slate-400">
-                  <GraduationCap size={28} className="opacity-30" />
-                  <p className="text-sm font-semibold">Nenhum aluno encontrado.</p>
+                <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed border-slate-300 py-12 text-slate-400">
+                  <GraduationCap size={30} className="opacity-30" />
+                  <p className="text-sm font-bold">Nenhum aluno encontrado.</p>
                 </div>
               )}
             </div>
 
-            <PaginationControls label="Alunos" pagination={studentPagination} limit={studentLimit} loading={studentPageLoading} source={studentPageSource}
-              onPageChange={setStudentPage} onLimitChange={(n) => { setStudentLimit(n); setStudentPage(1) }} />
+            <PaginationControls
+              label="Alunos"
+              pagination={studentPagination}
+              limit={studentLimit}
+              loading={studentPageLoading}
+              source={studentPageSource}
+              onPageChange={setStudentPage}
+              onLimitChange={(n) => { setStudentLimit(n); setStudentPage(1) }}
+            />
           </div>
         </div>
 
@@ -825,31 +723,34 @@ export default function PeopleView({
 
           return (
             <Modal id="teacher-details-title" title={selectedTeacher.name} subtitle="Professor" onClose={() => setTeacherDetailsId(null)} maxWidth="980px">
-              <div className="grid gap-5 p-5">
-                <div className="flex min-w-0 items-center gap-4 rounded-2xl border border-indigo-300 bg-gradient-to-r from-indigo-50 to-white p-4">
+              <div className="grid gap-5 p-6">
+                {/* Profile strip */}
+                <div className="flex min-w-0 items-center gap-4 rounded-2xl border-2 border-slate-300 bg-gradient-to-r from-slate-50 to-white p-4">
                   <ProfileAvatar entity={teacherProfile} size="lg" assetVersion={getProfileAssetVersion(selectedTeacher)} />
                   <div className="min-w-0 flex-1">
                     <h3 className="truncate text-lg font-black text-slate-900" style={{ fontFamily: "'Sora', system-ui, sans-serif" }}>{selectedTeacher.name}</h3>
                     <p className="mt-0.5 truncate text-sm font-semibold text-slate-500">{selectedTeacher.email}</p>
                     <div className="mt-2.5 flex flex-wrap gap-1.5">
-                      <span className="inline-flex items-center gap-1.5 rounded-full border border-indigo-300 bg-white px-2.5 py-1 text-[10px] font-black text-indigo-700">
+                      <span className="inline-flex items-center gap-1.5 rounded-full border-2 border-slate-300 bg-white px-3 py-1 text-[10px] font-black text-slate-600">
                         <BookMarked size={10} />{selectedTeacher.specialty || 'Disciplina não informada'}
                       </span>
-                      <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-300 bg-white px-2.5 py-1 text-[10px] font-black text-slate-600">
+                      <span className="inline-flex items-center gap-1.5 rounded-full border-2 border-slate-300 bg-white px-3 py-1 text-[10px] font-black text-slate-500">
                         <Building2 size={10} />{getSchoolName(selectedTeacher.schoolId)}
                       </span>
                     </div>
                   </div>
                 </div>
 
+                {/* Metrics */}
                 <div className="grid gap-3 sm:grid-cols-3">
-                  <MetricCard label="Turmas" value={teacherClasses.length} detail="Vínculos ativos" icon={Users} tone="indigo" />
-                  <MetricCard label="Alunos" value={teacherStudents.length} detail="Nas turmas" icon={GraduationCap} tone="violet" />
-                  <MetricCard label="Matérias" value={teacherSubjects.length} detail="Disciplinas" icon={BookOpen} tone="slate" />
+                  <MetricCard label="Turmas" value={teacherClasses.length} detail="Vínculos ativos" icon={Users} />
+                  <MetricCard label="Alunos" value={teacherStudents.length} detail="Nas turmas vinculadas" icon={GraduationCap} />
+                  <MetricCard label="Matérias" value={teacherSubjects.length} detail="Disciplinas lecionadas" icon={BookOpen} />
                 </div>
 
+                {/* Classes */}
                 <div>
-                  <p className="mb-3 flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-indigo-500">
+                  <p className="mb-3 flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-indigo-600">
                     <Layers size={11} />Turmas vinculadas
                   </p>
                   <div className="grid gap-3 md:grid-cols-2">
@@ -862,26 +763,26 @@ export default function PeopleView({
                           key={classRoom.id}
                           type="button"
                           onClick={() => { setClassReturnTeacherId(selectedTeacher.id); setTeacherDetailsId(null); setClassDetailsId(classRoom.id) }}
-                          className="group min-w-0 rounded-xl border border-slate-300 bg-white p-4 text-left transition hover:border-indigo-400 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                          className="group min-w-0 rounded-2xl border-2 border-slate-300 bg-white p-4 text-left transition hover:border-indigo-400 hover:shadow-md focus:outline-none focus:ring-4 focus:ring-indigo-100"
                         >
                           <span className="flex min-w-0 items-start justify-between gap-2">
                             <span className="min-w-0">
-                              <strong className="block truncate text-sm font-black text-slate-900 group-hover:text-indigo-800">{classRoom.name}</strong>
+                              <strong className="block truncate text-sm font-black text-slate-900 group-hover:text-indigo-800 transition-colors">{classRoom.name}</strong>
                               <span className="mt-0.5 block truncate text-[11px] font-semibold text-slate-500">
                                 {formatClassGrade(classRoom.grade)} · {classRoom.shift} · {getSchoolName(classRoom.schoolId).split(' ').slice(0, 3).join(' ')}
                               </span>
                             </span>
-                            <span className="shrink-0 rounded-full border border-violet-300 bg-violet-50 px-2 py-0.5 text-[10px] font-black text-violet-700">
-                              {classStudents.length}al
+                            <span className="shrink-0 rounded-full border-2 border-slate-300 bg-slate-50 px-2.5 py-0.5 text-[10px] font-black text-slate-600">
+                              {classStudents.length} al.
                             </span>
                           </span>
                           <span className="mt-3 grid grid-cols-3 gap-2">
                             {[
                               { label: 'Média', value: formatScore(classAverage) },
                               { label: 'Ano', value: String(classRoom.academicYear) },
-                              { label: 'Focos', value: String(classRoom.bnccFocus?.length ?? 0) },
+                              { label: 'Disciplinas', value: String(classRoom.bnccFocus?.length ?? 0) },
                             ].map(({ label, value }) => (
-                              <span key={label} className="rounded-lg border border-slate-300 bg-slate-50 px-2 py-1.5">
+                              <span key={label} className="rounded-xl border-2 border-slate-300 bg-slate-50 px-2 py-2">
                                 <span className="block text-[8px] font-black uppercase tracking-widest text-slate-400">{label}</span>
                                 <span className="mt-0.5 block text-sm font-black text-slate-800">{value}</span>
                               </span>
@@ -890,7 +791,7 @@ export default function PeopleView({
                           <span className="mt-3 flex items-center gap-1">
                             {previewStudents.map((s) => <ProfileAvatar key={s.id} entity={withCurrentUserVisuals(s)} assetVersion={getProfileAssetVersion(s)} />)}
                             {classStudents.length > previewStudents.length && (
-                              <span className="grid h-7 w-7 place-items-center rounded-full border border-slate-300 bg-slate-100 text-[9px] font-black text-slate-500">
+                              <span className="grid h-7 w-7 place-items-center rounded-full border-2 border-slate-300 bg-slate-100 text-[9px] font-black text-slate-500">
                                 +{classStudents.length - previewStudents.length}
                               </span>
                             )}
@@ -899,7 +800,7 @@ export default function PeopleView({
                       )
                     })}
                     {teacherClasses.length === 0 && (
-                      <p className="col-span-2 rounded-xl border border-dashed border-slate-300 p-8 text-center text-sm font-semibold text-slate-400">
+                      <p className="col-span-2 rounded-2xl border-2 border-dashed border-slate-300 p-8 text-center text-sm font-semibold text-slate-400">
                         Nenhuma turma vinculada.
                       </p>
                     )}
@@ -919,34 +820,169 @@ export default function PeopleView({
           const studentProfile = withCurrentUserVisuals(selectedStudent)
           const perf = selectedStudent.desempenho ?? getPerformanceFromScore(selectedStudent.averageScore)
 
+          const score = selectedStudent.averageScore ?? null
+          const scorePct = score !== null ? Math.min(100, (score / 10) * 100) : 0
+          const freqPct = selectedStudent.attendanceRate ?? 0
+
+          // Frequency color logic (matching SchoolsView)
+          const freqGood = freqPct >= 75
+          const freqFill = freqGood ? 'from-emerald-400 to-emerald-500' : 'from-red-400 to-red-500'
+          const freqLabel = freqGood ? 'Regular' : 'Baixa'
+          const freqLabelTone = freqGood ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : 'border-red-300 bg-red-50 text-red-700'
+
+          // Score color logic (matching SchoolsView)
+          const scoreLevel = perf === 'Otimo' ? 'emerald' : perf === 'Medio' ? 'amber' : perf === 'Baixo' ? 'red' : 'slate'
+          const scoreFill: Record<string, string> = {
+            emerald: 'from-emerald-400 to-emerald-500',
+            amber: 'from-amber-400 to-amber-500',
+            red: 'from-red-400 to-red-500',
+            slate: 'from-slate-200 to-slate-300',
+          }
+          const scoreTrack: Record<string, string> = {
+            emerald: 'bg-emerald-100', amber: 'bg-amber-100', red: 'bg-red-100', slate: 'bg-slate-100',
+          }
+          const scoreText: Record<string, string> = {
+            emerald: 'text-emerald-700', amber: 'text-amber-700', red: 'text-red-700', slate: 'text-slate-400',
+          }
+
+          // Distribution
+          const otimo = classStudents.filter(s => (s.desempenho ?? getPerformanceFromScore(s.averageScore)) === 'Otimo').length
+          const medio = classStudents.filter(s => (s.desempenho ?? getPerformanceFromScore(s.averageScore)) === 'Medio').length
+          const baixo = classStudents.filter(s => (s.desempenho ?? getPerformanceFromScore(s.averageScore)) === 'Baixo').length
+          const totalInClass = classStudents.length
+
           return (
             <Modal id="student-details-title" title={selectedStudent.name} subtitle="Aluno" onClose={() => setStudentDetailsId(null)} maxWidth="960px">
-              <div className="grid gap-5 p-5">
-                <div className="flex min-w-0 items-center gap-4 rounded-2xl border border-violet-300 bg-gradient-to-r from-violet-50 to-white p-4">
+              <div className="grid gap-5 p-6">
+
+                {/* Profile strip */}
+                <div className="flex min-w-0 items-center gap-4 rounded-2xl border-2 border-slate-300 bg-gradient-to-r from-slate-50 to-white p-4">
                   <ProfileAvatar entity={studentProfile} size="lg" assetVersion={getProfileAssetVersion(selectedStudent)} />
                   <div className="min-w-0 flex-1">
                     <h3 className="truncate text-lg font-black text-slate-900" style={{ fontFamily: "'Sora', system-ui, sans-serif" }}>{selectedStudent.name}</h3>
                     <p className="mt-0.5 truncate text-sm font-semibold text-slate-500">{selectedStudent.email ?? selectedStudent.login}</p>
-                    <p className="mt-0.5 flex items-center gap-1.5 truncate text-[11px] font-bold text-violet-600">
+                    <p className="mt-0.5 flex items-center gap-1.5 truncate text-[11px] font-bold text-indigo-600">
                       <Users size={10} />{classRoom?.name ?? 'Sem turma vinculada'}
                     </p>
                   </div>
-                  <span className={`hidden shrink-0 items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-black sm:inline-flex ${getPerformanceTone(perf)}`}>
+                  <span className={`hidden shrink-0 items-center gap-1.5 rounded-xl border-2 px-3 py-2 text-xs font-black sm:inline-flex ${getPerformanceTone(perf)}`}>
                     {(() => { const Icon = getPerformanceIcon(perf); return <Icon size={13} /> })()}
                     {getPerformanceLabel(perf)}
                   </span>
                 </div>
 
+                {/* ── Metrics 4-col ── */}
                 <div className="grid gap-3 md:grid-cols-4">
-                  <MetricCard label="Frequência" value={`${selectedStudent.attendanceRate}%`} detail="Presença consolidada" icon={Percent} tone={selectedStudent.attendanceRate < 75 ? 'amber' : 'emerald'} />
-                  <MetricCard label="Média geral" value={formatScore(selectedStudent.averageScore)} detail="Notas consolidadas" icon={TrendingUp} tone={(selectedStudent.averageScore ?? 10) < 6 ? 'amber' : 'indigo'} />
-                <MetricCard label="Turma" value={classRoom?.name ?? '—'} detail={classRoom ? `${formatClassGrade(classRoom.grade)} · ${classRoom.shift}` : 'Sem turma'} icon={Users} tone="violet" />
-                  <MetricCard label="Matérias" value={subjects.length} detail="Componentes" icon={BookOpen} tone="slate" />
+                  <MetricCard
+                    label="Frequência"
+                    value={`${freqPct}%`}
+                    detail="Presença consolidada"
+                    icon={BadgeCheck}
+                  />
+                  <MetricCard
+                    label="Média geral"
+                    value={formatScore(score)}
+                    detail="Notas consolidadas"
+                    icon={TrendingUp}
+                  />
+                  <MetricCard
+                    label="Turma"
+                    value={classRoom?.name ?? '—'}
+                    detail={classRoom ? `${formatClassGrade(classRoom.grade)} · ${classRoom.shift}` : 'Sem turma'}
+                    icon={Users}
+                  />
+                  <MetricCard label="Matérias" value={subjects.length} detail="Componentes curriculares" icon={BookOpen} />
                 </div>
 
+                {/* ── Frequência + Média (estilo SchoolsView) ── */}
+                {classStudents.length > 0 && (
+                  <div className="grid grid-cols-3 gap-3 max-[640px]:grid-cols-1">
+
+                    {/* Frequência */}
+                    <div className="rounded-2xl border-2 border-slate-300 bg-white p-4">
+                      <div className="flex items-center gap-2 mb-3">
+                        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-600">
+                          <TrendingUp size={13} className="text-white" />
+                        </div>
+                        <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Frequência</span>
+                      </div>
+                      <div className="mb-3">
+                        <div className="h-2 w-full rounded-full bg-slate-100 overflow-hidden">
+                          <div
+                            className={`h-full rounded-full transition-all bg-gradient-to-r ${freqFill}`}
+                            style={{ width: `${freqPct}%` }}
+                          />
+                        </div>
+                      </div>
+                      <div className="flex items-end justify-between">
+                        <span className="font-['Sora',system-ui,sans-serif] text-3xl font-black leading-none text-slate-900">{freqPct}%</span>
+                        <span className={`rounded-lg border px-2.5 py-1 text-[10px] font-black ${freqLabelTone}`}>
+                          {freqLabel}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Média geral */}
+                    <div className="rounded-2xl border-2 border-slate-300 bg-white p-4">
+                      <div className="flex items-center gap-2 mb-3">
+                        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-violet-600">
+                          <BarChart3 size={13} className="text-white" />
+                        </div>
+                        <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Média geral</span>
+                      </div>
+                      <div className="mb-3">
+                        <div className={`h-2 w-full rounded-full overflow-hidden ${scoreTrack[scoreLevel]}`}>
+                          <div
+                            className={`h-full rounded-full transition-all bg-gradient-to-r ${scoreFill[scoreLevel]}`}
+                            style={{ width: `${scorePct}%` }}
+                          />
+                        </div>
+                      </div>
+                      <div className="flex items-end justify-between">
+                        <span className={`font-['Sora',system-ui,sans-serif] text-3xl font-black leading-none ${scoreText[scoreLevel]}`}>
+                          {score !== null ? score.toFixed(1) : '—'}
+                        </span>
+                        <span className={`rounded-lg border px-2.5 py-1 text-[10px] font-black ${getPerformanceTone(perf)}`}>
+                          {getPerformanceLabel(perf)}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Distribuição da turma */}
+                    <div className="rounded-2xl border-2 border-slate-300 bg-white p-4">
+                      <div className="flex items-center gap-2 mb-3">
+                        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-sky-500">
+                          <Award size={13} className="text-white" />
+                        </div>
+                        <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Turma</span>
+                      </div>
+                      <div className="mb-3 flex h-2 w-full overflow-hidden rounded-full bg-slate-100">
+                        {totalInClass > 0 && <>
+                          <div className="h-full bg-emerald-400 transition-all" style={{ width: `${(otimo / totalInClass) * 100}%` }} />
+                          <div className="h-full bg-amber-400 transition-all" style={{ width: `${(medio / totalInClass) * 100}%` }} />
+                          <div className="h-full bg-red-400 transition-all" style={{ width: `${(baixo / totalInClass) * 100}%` }} />
+                        </>}
+                      </div>
+                      <div className="flex items-center justify-between gap-1">
+                        {[
+                          { label: 'Ótimo', count: otimo, color: 'text-emerald-600' },
+                          { label: 'Médio', count: medio, color: 'text-amber-600' },
+                          { label: 'Baixo', count: baixo, color: 'text-red-600' },
+                        ].map(d => (
+                          <div key={d.label} className="flex flex-col items-center">
+                            <span className={`text-lg font-black leading-none ${d.color}`}>{d.count}</span>
+                            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">{d.label}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Data + Table */}
                 <div className="grid gap-4 lg:grid-cols-[minmax(0,0.4fr)_minmax(0,0.6fr)]">
-                  <div className="rounded-xl border border-slate-300 bg-slate-50 p-4">
-                    <p className="mb-3 flex items-center gap-1.5 text-[9px] font-black uppercase tracking-[0.2em] text-slate-400">
+                  <div className="rounded-2xl border-2 border-slate-300 bg-slate-50 p-4">
+                    <p className="mb-3 flex items-center gap-1.5 text-[9px] font-black uppercase tracking-[0.2em] text-slate-500">
                       <Hash size={10} />Dados acadêmicos
                     </p>
                     <dl className="grid gap-3 text-sm">
@@ -956,8 +992,8 @@ export default function PeopleView({
                         { label: 'Ano letivo', value: classRoom?.academicYear ? String(classRoom.academicYear) : '—', icon: CalendarDays },
                         { label: 'Responsáveis', value: selectedStudent.guardianIds?.length ? selectedStudent.guardianIds.map(getGuardianName).join(', ') : '—', icon: UserCheck },
                       ].map(({ label, value, icon: Icon }) => (
-                        <div key={label} className="flex items-start gap-2">
-                          <span className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-md bg-slate-200 text-slate-500">
+                        <div key={label} className="flex items-start gap-2.5">
+                          <span className="mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-lg border-2 border-slate-300 bg-white text-slate-400">
                             <Icon size={10} />
                           </span>
                           <div className="min-w-0">
@@ -969,32 +1005,85 @@ export default function PeopleView({
                     </dl>
                   </div>
 
-                  <div className="overflow-hidden rounded-xl border border-slate-300 bg-white">
-                    <div className="flex items-center gap-2 border-b border-slate-300 bg-slate-50 px-4 py-2.5">
-                      <BarChart3 size={13} className="text-violet-500" />
-                      <p className="text-[9px] font-black uppercase tracking-[0.2em] text-violet-500">Matérias, notas e médias</p>
+                  <div className="overflow-hidden rounded-2xl border-2 border-slate-300 bg-white">
+                    <div className="flex items-center gap-2 border-b-2 border-slate-300 bg-slate-50 px-4 py-3">
+                      <BarChart3 size={13} className="text-indigo-500" />
+                      <p className="text-[9px] font-black uppercase tracking-[0.2em] text-slate-500">Matérias, notas e médias</p>
                     </div>
                     <div className="overflow-x-auto">
-                      <table className="min-w-full divide-y divide-slate-200 text-left">
+                      <table className="min-w-full divide-y divide-slate-100 text-left">
                         <thead>
-                          <tr className="bg-white text-[9px] font-black uppercase tracking-widest text-slate-400">
+                          <tr className="bg-slate-50 text-[9px] font-black uppercase tracking-widest text-slate-400">
                             <th className="px-4 py-2.5">Matéria</th>
                             <th className="px-4 py-2.5">Nota</th>
                             <th className="px-4 py-2.5">Média turma</th>
-                            <th className="px-4 py-2.5">Leitura</th>
+                            <th className="px-4 py-2.5">Desempenho</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
                           {subjects.map((subject) => {
                             const performance = getPerformanceFromScore(selectedStudent.averageScore)
                             const PIcon = getPerformanceIcon(performance)
+                            const sScore = selectedStudent.averageScore ?? null
+                            const sPct = sScore !== null ? Math.min(100, (sScore / 10) * 100) : 0
+                            const sLevel = performance === 'Otimo' ? 'emerald' : performance === 'Medio' ? 'amber' : performance === 'Baixo' ? 'red' : 'slate'
+                            const sRing: Record<string, string> = { emerald: 'stroke-emerald-400', amber: 'stroke-amber-400', red: 'stroke-red-400', slate: 'stroke-slate-200' }
+                            const sText: Record<string, string> = { emerald: 'text-emerald-700', amber: 'text-amber-700', red: 'text-red-700', slate: 'text-slate-400' }
+                            const sTrack: Record<string, string> = { emerald: 'bg-emerald-100', amber: 'bg-amber-100', red: 'bg-red-100', slate: 'bg-slate-100' }
+
+                            const cScore = classAverage
+                            const cPct = cScore !== null ? Math.min(100, (cScore / 10) * 100) : 0
+                            const cPerf = getPerformanceFromScore(cScore)
+                            const cLevel = cPerf === 'Otimo' ? 'emerald' : cPerf === 'Medio' ? 'amber' : cPerf === 'Baixo' ? 'red' : 'slate'
+
                             return (
-                              <tr key={subject} className="text-sm transition hover:bg-slate-50">
-                                <td className="px-4 py-2.5 font-bold text-slate-800">{subject}</td>
-                                <td className={`px-4 py-2.5 font-black ${getScoreTone(selectedStudent.averageScore)}`}>{formatScore(selectedStudent.averageScore)}</td>
-                                <td className={`px-4 py-2.5 font-black ${getScoreTone(classAverage)}`}>{formatScore(classAverage)}</td>
-                                <td className="px-4 py-2.5">
-                                  <span className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[10px] font-black ${getPerformanceTone(performance)}`}>
+                              <tr key={subject} className="transition hover:bg-slate-50">
+                                <td className="px-4 py-3 font-bold text-sm text-slate-800">{subject}</td>
+
+                                {/* Nota — anel SVG + barra */}
+                                <td className="px-4 py-3">
+                                  <div className="flex items-center gap-2.5">
+                                    <div className="relative flex h-9 w-9 shrink-0 items-center justify-center">
+                                      <svg viewBox="0 0 36 36" className="absolute inset-0 h-full w-full -rotate-90">
+                                        <circle cx="18" cy="18" r="15" fill="none" className="stroke-slate-100" strokeWidth="3" />
+                                        <circle
+                                          cx="18" cy="18" r="15" fill="none"
+                                          className={sRing[sLevel]}
+                                          strokeWidth="3.5"
+                                          strokeDasharray={`${(sPct / 100) * 94.2} 94.2`}
+                                          strokeLinecap="round"
+                                        />
+                                      </svg>
+                                      <span className={`relative z-10 text-[10px] font-black ${sText[sLevel]}`}>
+                                        {sScore !== null ? sScore.toFixed(1) : '—'}
+                                      </span>
+                                    </div>
+                                  </div>
+                                </td>
+
+                                {/* Média turma — anel SVG + barra */}
+                                <td className="px-4 py-3">
+                                  <div className="flex items-center gap-2.5">
+                                    <div className="relative flex h-9 w-9 shrink-0 items-center justify-center">
+                                      <svg viewBox="0 0 36 36" className="absolute inset-0 h-full w-full -rotate-90">
+                                        <circle cx="18" cy="18" r="15" fill="none" className="stroke-slate-100" strokeWidth="3" />
+                                        <circle
+                                          cx="18" cy="18" r="15" fill="none"
+                                          className={sRing[cLevel]}
+                                          strokeWidth="3.5"
+                                          strokeDasharray={`${(cPct / 100) * 94.2} 94.2`}
+                                          strokeLinecap="round"
+                                        />
+                                      </svg>
+                                      <span className={`relative z-10 text-[10px] font-black ${sText[cLevel]}`}>
+                                        {cScore !== null ? cScore.toFixed(1) : '—'}
+                                      </span>
+                                    </div>
+                                  </div>
+                                </td>
+
+                                <td className="px-4 py-3">
+                                  <span className={`inline-flex items-center gap-1 rounded-lg border-2 px-2 py-0.5 text-[10px] font-black ${getPerformanceTone(performance)}`}>
                                     <PIcon size={9} />{getPerformanceLabel(performance)}
                                   </span>
                                 </td>
@@ -1022,54 +1111,136 @@ export default function PeopleView({
             : null
           const guardianIds = Array.from(new Set(classStudents.flatMap((s) => s.guardianIds ?? [])))
 
+          const freqPctClass = avgAttendance ?? 0
+          const freqGoodClass = freqPctClass >= 75
+          const freqFillClass = freqGoodClass ? 'from-emerald-400 to-emerald-500' : 'from-red-400 to-red-500'
+
+          const scorePctClass = classAverage !== null ? Math.min(100, (classAverage / 10) * 100) : 0
+          const scoreColorClass = classPerformance === 'Otimo' ? 'emerald' : classPerformance === 'Medio' ? 'amber' : classPerformance === 'Baixo' ? 'red' : 'slate'
+          const scoreFillMap: Record<string, string> = {
+            emerald: 'from-emerald-400 to-emerald-500', amber: 'from-amber-400 to-amber-500',
+            red: 'from-red-400 to-red-500', slate: 'from-slate-200 to-slate-300',
+          }
+          const scoreTrackMap: Record<string, string> = {
+            emerald: 'bg-emerald-100', amber: 'bg-amber-100', red: 'bg-red-100', slate: 'bg-slate-100',
+          }
+
+          const otimoC = classStudents.filter(s => (s.desempenho ?? getPerformanceFromScore(s.averageScore)) === 'Otimo').length
+          const medioC = classStudents.filter(s => (s.desempenho ?? getPerformanceFromScore(s.averageScore)) === 'Medio').length
+          const baixoC = classStudents.filter(s => (s.desempenho ?? getPerformanceFromScore(s.averageScore)) === 'Baixo').length
+
           return (
             <Modal id="class-details-title" title={selectedClass.name} subtitle="Turma" onClose={closeClassDetails} maxWidth="1040px">
-              <div className="grid gap-5 p-5">
+              <div className="grid gap-5 p-6">
+
+                {/* Back button */}
                 {classReturnTeacherId && (
-                  <div className="flex items-center justify-between gap-3 rounded-xl border border-indigo-300 bg-indigo-50 px-4 py-3">
-                    <button type="button" onClick={returnToTeacherClasses}
-                      className="inline-flex items-center gap-2 rounded-lg border border-indigo-300 bg-white px-3 py-1.5 text-sm font-black text-indigo-700 transition hover:border-indigo-500 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-200">
-                      <ArrowLeft size={14} />Voltar
+                  <div className="flex items-center justify-between gap-3 rounded-2xl border-2 border-slate-300 bg-slate-50 px-4 py-3">
+                    <button
+                      type="button"
+                      onClick={returnToTeacherClasses}
+                      className="inline-flex items-center gap-2 rounded-xl border-2 border-indigo-300 bg-white px-3 py-1.5 text-sm font-black text-indigo-700 transition hover:border-indigo-400 hover:bg-indigo-50 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                    >
+                      <ArrowLeft size={14} />Voltar ao professor
                     </button>
-                    {returnTeacher && <p className="min-w-0 truncate text-xs font-bold text-indigo-600">{returnTeacher.name}</p>}
+                    {returnTeacher && <p className="min-w-0 truncate text-xs font-bold text-slate-500">{returnTeacher.name}</p>}
                   </div>
                 )}
 
-                <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4">
-                  <MetricCard label="Turno" value={selectedClass.shift} detail={selectedClass.schedule || 'Horário não informado'} icon={Clock} tone="indigo" />
-                  <MetricCard label="Alunos" value={classStudents.length} detail="Vinculados" icon={GraduationCap} tone="violet" />
-                  <MetricCard label="Professores" value={classTeachers.length || (selectedClass.teacherId ? 1 : 0)} detail="Docentes" icon={UserRound} tone="slate" />
-                  <MetricCard label="Ano letivo" value={selectedClass.academicYear} detail={getSchoolName(selectedClass.schoolId).split(' ').slice(0, 3).join(' ')} icon={CalendarDays} tone="amber" />
+                {/* Stats */}
+                <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+                  <MetricCard label="Turno" value={selectedClass.shift} detail={selectedClass.schedule || 'Horário não informado'} icon={Clock} />
+                  <MetricCard label="Alunos" value={classStudents.length} detail="Vinculados à turma" icon={GraduationCap} />
+                  <MetricCard label="Professores" value={classTeachers.length || (selectedClass.teacherId ? 1 : 0)} detail="Docentes" icon={UserRound} />
+                  <MetricCard label="Ano letivo" value={selectedClass.academicYear} detail={getSchoolName(selectedClass.schoolId).split(' ').slice(0, 3).join(' ')} icon={CalendarDays} />
                 </div>
 
+                {/* Performance summary (estilo SchoolsView) */}
                 {classStudents.length > 0 && (
-                  <div className="grid gap-2.5 md:grid-cols-3">
-                    {[
-                      { label: 'Freq. média', value: `${avgAttendance}%` },
-                      { label: 'Média geral', value: formatScore(classAverage) },
-                    ].map(({ label, value }) => (
-                      <div key={label} className="rounded-xl border border-slate-300 bg-slate-50 px-4 py-3">
-                        <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">{label}</p>
-                        <p className="mt-1 text-lg font-black text-slate-800">{value}</p>
+                  <div className="grid grid-cols-3 gap-3 max-[640px]:grid-cols-1">
+                    {/* Freq */}
+                    <div className="rounded-2xl border-2 border-slate-300 bg-white p-4">
+                      <div className="flex items-center gap-2 mb-3">
+                        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-600">
+                          <TrendingUp size={13} className="text-white" />
+                        </div>
+                        <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Freq. média</span>
                       </div>
-                    ))}
-                    <div className="rounded-xl border border-slate-300 bg-slate-50 px-4 py-3">
-                      <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">Desempenho geral</p>
-                      <span className={`mt-1 inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-black ${getPerformanceTone(classPerformance)}`}>
-                        {(() => { const I = getPerformanceIcon(classPerformance); return <I size={11} /> })()}
-                        {getPerformanceLabel(classPerformance)}
-                      </span>
+                      <div className="mb-3">
+                        <div className="h-2 w-full rounded-full bg-slate-100 overflow-hidden">
+                          <div className={`h-full rounded-full bg-gradient-to-r ${freqFillClass}`} style={{ width: `${freqPctClass}%` }} />
+                        </div>
+                      </div>
+                      <div className="flex items-end justify-between">
+                        <span className="font-['Sora',system-ui,sans-serif] text-3xl font-black leading-none text-slate-900">{avgAttendance ?? '—'}%</span>
+                        <span className={`rounded-lg border px-2.5 py-1 text-[10px] font-black ${freqGoodClass ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : 'border-red-300 bg-red-50 text-red-700'}`}>
+                          {freqGoodClass ? 'Regular' : 'Baixa'}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Média */}
+                    <div className="rounded-2xl border-2 border-slate-300 bg-white p-4">
+                      <div className="flex items-center gap-2 mb-3">
+                        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-violet-600">
+                          <BarChart3 size={13} className="text-white" />
+                        </div>
+                        <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Média geral</span>
+                      </div>
+                      <div className="mb-3">
+                        <div className={`h-2 w-full rounded-full overflow-hidden ${scoreTrackMap[scoreColorClass]}`}>
+                          <div className={`h-full rounded-full bg-gradient-to-r ${scoreFillMap[scoreColorClass]}`} style={{ width: `${scorePctClass}%` }} />
+                        </div>
+                      </div>
+                      <div className="flex items-end justify-between">
+                        <span className="font-['Sora',system-ui,sans-serif] text-3xl font-black leading-none text-slate-900">
+                          {classAverage !== null ? classAverage.toFixed(1) : '—'}
+                        </span>
+                        <span className={`rounded-lg border px-2.5 py-1 text-[10px] font-black ${getPerformanceTone(classPerformance)}`}>
+                          {getPerformanceLabel(classPerformance)}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Distribuição */}
+                    <div className="rounded-2xl border-2 border-slate-300 bg-white p-4">
+                      <div className="flex items-center gap-2 mb-3">
+                        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-sky-500">
+                          <Award size={13} className="text-white" />
+                        </div>
+                        <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Distribuição</span>
+                      </div>
+                      <div className="mb-3 flex h-2 w-full overflow-hidden rounded-full bg-slate-100">
+                        {classStudents.length > 0 && <>
+                          <div className="h-full bg-emerald-400" style={{ width: `${(otimoC / classStudents.length) * 100}%` }} />
+                          <div className="h-full bg-amber-400" style={{ width: `${(medioC / classStudents.length) * 100}%` }} />
+                          <div className="h-full bg-red-400" style={{ width: `${(baixoC / classStudents.length) * 100}%` }} />
+                        </>}
+                      </div>
+                      <div className="flex items-center justify-between gap-1">
+                        {[
+                          { label: 'Ótimo', count: otimoC, color: 'text-emerald-600' },
+                          { label: 'Médio', count: medioC, color: 'text-amber-600' },
+                          { label: 'Baixo', count: baixoC, color: 'text-red-600' },
+                        ].map(d => (
+                          <div key={d.label} className="flex flex-col items-center">
+                            <span className={`text-lg font-black leading-none ${d.color}`}>{d.count}</span>
+                            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">{d.label}</span>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   </div>
                 )}
 
+                {/* Teachers */}
                 <div>
-                  <p className="mb-2.5 flex items-center gap-2 text-[9px] font-black uppercase tracking-[0.2em] text-indigo-500">
+                  <p className="mb-3 flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-indigo-600">
                     <UserRound size={11} />Professores
                   </p>
                   <div className="grid gap-2 sm:grid-cols-2">
                     {classTeachers.map((teacher) => (
-                      <div key={teacher.id} className="flex min-w-0 items-center gap-2.5 rounded-xl border border-indigo-300 bg-indigo-50/60 px-3 py-2.5">
+                      <div key={teacher.id} className="flex min-w-0 items-center gap-3 rounded-2xl border-2 border-slate-300 bg-slate-50 px-4 py-3">
                         <ProfileAvatar entity={withCurrentUserVisuals(teacher)} size="md" assetVersion={getProfileAssetVersion(teacher)} />
                         <div className="min-w-0">
                           <strong className="block truncate text-sm font-black text-slate-900">{teacher.name}</strong>
@@ -1079,44 +1250,99 @@ export default function PeopleView({
                         </div>
                       </div>
                     ))}
-                    {classTeachers.length === 0 && <p className="text-sm font-semibold text-slate-400">Nenhum professor vinculado.</p>}
+                    {classTeachers.length === 0 && (
+                      <p className="rounded-2xl border-2 border-dashed border-slate-300 p-6 text-center text-sm font-semibold text-slate-400">
+                        Nenhum professor vinculado.
+                      </p>
+                    )}
                   </div>
                 </div>
 
+                {/* Students list */}
                 <div>
-                  <p className="mb-2.5 flex items-center gap-2 text-[9px] font-black uppercase tracking-[0.2em] text-violet-500">
-                    <GraduationCap size={11} />Alunos da turma
-                  </p>
-                  <div className="grid gap-1.5 rounded-xl border border-slate-300 bg-slate-50 p-2">
+                  <div className="mb-3 flex items-center justify-between gap-2">
+                    <p className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-indigo-600">
+                      <GraduationCap size={11} />Alunos da turma
+                    </p>
+                    <span className="rounded-full border-2 border-slate-300 bg-slate-50 px-2.5 py-0.5 text-[10px] font-black text-slate-600">
+                      {classStudents.length}
+                    </span>
+                  </div>
+                  <div className="grid gap-2 rounded-2xl border-2 border-slate-300 bg-slate-50 p-3">
                     {classStudents.map((student) => {
                       const perf = student.desempenho ?? getPerformanceFromScore(student.averageScore)
+                      const score = student.averageScore ?? null
+                      const scorePctS = score !== null ? Math.min(100, (score / 10) * 100) : 0
+                      const scoreLevelS = perf === 'Otimo' ? 'emerald' : perf === 'Medio' ? 'amber' : perf === 'Baixo' ? 'red' : 'slate'
+                      const scoreRingColorMap: Record<string, string> = {
+                        emerald: 'stroke-emerald-400', amber: 'stroke-amber-400',
+                        red: 'stroke-red-400', slate: 'stroke-slate-200',
+                      }
+                      const scoreTextColorMap: Record<string, string> = {
+                        emerald: 'text-emerald-700', amber: 'text-amber-700',
+                        red: 'text-red-700', slate: 'text-slate-400',
+                      }
+                      const stripeColor: Record<string, string> = {
+                        Otimo: 'bg-emerald-500', Medio: 'bg-amber-500', Baixo: 'bg-red-500',
+                      }
+                      const freqGoodS = (student.attendanceRate ?? 0) >= 75
+                      const freqWarnS = (student.attendanceRate ?? 0) >= 60
+                      const freqBarS = freqGoodS ? 'from-emerald-400 to-emerald-500' : freqWarnS ? 'from-amber-400 to-amber-500' : 'from-red-400 to-red-500'
+                      const freqTextS = freqGoodS ? 'text-emerald-600' : freqWarnS ? 'text-amber-600' : 'text-red-600'
+
                       return (
                         <article
                           key={student.id}
-                          className="grid min-w-0 items-center gap-3 rounded-lg border border-slate-300 bg-white px-3 py-2 lg:grid-cols-[minmax(180px,1.2fr)_minmax(150px,1fr)_80px_70px_106px] max-lg:grid-cols-2 max-[560px]:grid-cols-1"
+                          className="relative overflow-hidden grid min-w-0 items-center gap-3 rounded-xl border-2 border-slate-300 bg-white p-3 lg:grid-cols-[minmax(180px,1.3fr)_minmax(140px,1fr)_100px_90px_110px] max-lg:grid-cols-2 max-[560px]:grid-cols-1 transition hover:border-indigo-300 hover:shadow-sm"
                         >
-                          <div className="flex min-w-0 items-center gap-2">
+                          <div className={`absolute left-0 top-0 h-full w-[3px] ${stripeColor[perf] ?? 'bg-slate-300'}`} />
+                          <div className="pl-3 flex min-w-0 items-center gap-2.5">
                             <ProfileAvatar entity={withCurrentUserVisuals(student)} assetVersion={getProfileAssetVersion(student)} />
                             <div className="min-w-0">
                               <strong className="block truncate text-[12px] font-black text-slate-900">{student.name}</strong>
-                              <span className="block truncate font-mono text-[10px] font-semibold text-slate-400">{student.registrationNumber || student.registration || 'Sem matrícula'}</span>
+                              <span className="block truncate font-mono text-[10px] font-semibold text-slate-400">
+                                {student.registrationNumber || student.registration || 'Sem matrícula'}
+                              </span>
                             </div>
                           </div>
+
                           <div className="min-w-0">
-                            <p className="text-[8px] font-black uppercase tracking-[0.15em] text-slate-400">Responsáveis</p>
-                            <p className="truncate text-[11px] font-semibold text-slate-600">{student.guardianIds?.length ? student.guardianIds.map(getGuardianName).join(', ') : '—'}</p>
+                            <p className="text-[8px] font-black uppercase tracking-[0.15em] text-slate-400 mb-1">Responsáveis</p>
+                            <p className="truncate text-[11px] font-semibold text-slate-600">
+                              {student.guardianIds?.length ? student.guardianIds.map(getGuardianName).join(', ') : <span className="text-slate-300">—</span>}
+                            </p>
                           </div>
+
                           <div>
-                            <p className="text-[8px] font-black uppercase tracking-[0.15em] text-slate-400">Frequência</p>
-                            <AttendanceBadge rate={student.attendanceRate} />
+                            <p className="text-[8px] font-black uppercase tracking-[0.15em] text-slate-400 mb-1.5">Frequência</p>
+                            <p className={`text-sm font-black mb-1.5 leading-none ${freqTextS}`}>{student.attendanceRate}%</p>
+                            <div className="h-1.5 w-full rounded-full bg-slate-100 overflow-hidden">
+                              <div className={`h-full rounded-full bg-gradient-to-r ${freqBarS}`} style={{ width: `${student.attendanceRate ?? 0}%` }} />
+                            </div>
                           </div>
+
                           <div>
-                            <p className="text-[8px] font-black uppercase tracking-[0.15em] text-slate-400">Média</p>
-                            <ScoreBadge score={student.averageScore} />
+                            <p className="text-[8px] font-black uppercase tracking-[0.15em] text-slate-400 mb-1.5">Média</p>
+                            <div className="relative flex h-9 w-9 items-center justify-center">
+                              <svg viewBox="0 0 36 36" className="absolute inset-0 h-full w-full -rotate-90">
+                                <circle cx="18" cy="18" r="15" fill="none" className="stroke-slate-100" strokeWidth="3" />
+                                <circle
+                                  cx="18" cy="18" r="15" fill="none"
+                                  className={scoreRingColorMap[scoreLevelS]}
+                                  strokeWidth="3.5"
+                                  strokeDasharray={`${(scorePctS / 100) * 94.2} 94.2`}
+                                  strokeLinecap="round"
+                                />
+                              </svg>
+                              <span className={`relative z-10 text-[10px] font-black ${scoreTextColorMap[scoreLevelS]}`}>
+                                {score !== null ? score.toFixed(1) : '—'}
+                              </span>
+                            </div>
                           </div>
+
                           <div>
-                            <p className="mb-1 text-[8px] font-black uppercase tracking-[0.15em] text-slate-400">Desempenho</p>
-                            <span className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[10px] font-black ${getPerformanceTone(perf)}`}>
+                            <p className="mb-1.5 text-[8px] font-black uppercase tracking-[0.15em] text-slate-400">Desempenho</p>
+                            <span className={`inline-flex items-center gap-1 rounded-lg border-2 px-2 py-0.5 text-[10px] font-black ${getPerformanceTone(perf)}`}>
                               {(() => { const I = getPerformanceIcon(perf); return <I size={9} /> })()}
                               {getPerformanceLabel(perf)}
                             </span>
@@ -1124,36 +1350,50 @@ export default function PeopleView({
                         </article>
                       )
                     })}
-                    {classStudents.length === 0 && <p className="py-8 text-center text-sm font-semibold text-slate-400">Nenhum aluno vinculado.</p>}
+                    {classStudents.length === 0 && (
+                      <p className="py-8 text-center text-sm font-semibold text-slate-400">Nenhum aluno vinculado.</p>
+                    )}
                   </div>
                 </div>
 
+                {/* Disciplines + Guardians */}
                 <div className="grid gap-3 md:grid-cols-2">
-                  <div className="rounded-xl border border-slate-300 bg-slate-50 p-3">
-                    <p className="mb-2 flex items-center gap-1.5 text-[9px] font-black uppercase tracking-[0.15em] text-slate-400">
+                  <div className="rounded-2xl border-2 border-slate-300 bg-white p-4">
+                    <p className="mb-3 flex items-center gap-1.5 text-[9px] font-black uppercase tracking-[0.15em] text-slate-500">
                       <BookOpen size={10} />Disciplinas
                     </p>
-                    <div className="flex flex-wrap gap-1.5">
+                    <div className="flex flex-wrap gap-2">
                       {selectedClass.bnccFocus?.map((focus) => (
-                        <span key={focus} className="rounded-md border border-indigo-300 bg-indigo-50 px-2 py-0.5 text-[10px] font-bold text-indigo-700">{focus}</span>
+                        <span key={focus} className="rounded-lg border-2 border-slate-300 bg-slate-50 px-2.5 py-1 text-[10px] font-bold text-slate-600">{focus}</span>
                       ))}
-                      {!selectedClass.bnccFocus?.length && <span className="text-xs font-semibold text-slate-400">Nenhuma disciplina cadastrada.</span>}
+                      {!selectedClass.bnccFocus?.length && (
+                        <span className="text-xs font-semibold text-slate-400">Nenhuma disciplina cadastrada.</span>
+                      )}
                     </div>
                   </div>
-                  <div className="rounded-xl border border-slate-300 bg-slate-50 p-3">
-                    <p className="mb-2 flex items-center gap-1.5 text-[9px] font-black uppercase tracking-[0.15em] text-slate-400">
+                  <div className="rounded-2xl border-2 border-slate-300 bg-white p-4">
+                    <p className="mb-3 flex items-center gap-1.5 text-[9px] font-black uppercase tracking-[0.15em] text-slate-500">
                       <UserCheck size={10} />Responsáveis
                     </p>
-                    <div className="grid gap-1">
-                      {guardianIds.map((id) => <span key={id} className="text-xs font-semibold text-slate-700">{getGuardianName(id)}</span>)}
-                      {guardianIds.length === 0 && <p className="text-xs font-semibold text-slate-400">Nenhum responsável vinculado.</p>}
+                    <div className="grid gap-1.5">
+                      {guardianIds.map((id) => (
+                        <span key={id} className="flex items-center gap-2 text-xs font-semibold text-slate-700">
+                          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-slate-400" />
+                          {getGuardianName(id)}
+                        </span>
+                      ))}
+                      {guardianIds.length === 0 && (
+                        <p className="text-xs font-semibold text-slate-400">Nenhum responsável vinculado.</p>
+                      )}
                     </div>
                   </div>
                 </div>
+
               </div>
             </Modal>
           )
         })() : null}
+
       </div>
     </>
   )

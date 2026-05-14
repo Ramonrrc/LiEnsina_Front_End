@@ -759,6 +759,42 @@ function ClassCard({
   )
 }
 
+function AlertStudentPhoto({
+  student,
+  size = 'md',
+  showStatus = false,
+  className = '',
+}: {
+  student: Student
+  size?: 'md' | 'lg' | 'xl'
+  showStatus?: boolean
+  className?: string
+}) {
+  const avatarUrl = resolveApiAssetUrl(student.avatarUrl)
+  const initials = getInitials(student.name)
+  const critical = student.attendanceRate < 75 && student.averageScore < 6
+  const sizeClass = size === 'xl' ? 'h-20 w-20 text-xl' : size === 'lg' ? 'h-14 w-14 text-base' : 'h-10 w-10 text-[13px]'
+  const iconSize = size === 'xl' ? 30 : size === 'lg' ? 20 : 15
+  const dotClass = size === 'md' ? 'bottom-0 right-0 h-3.5 w-3.5' : 'bottom-1 right-1 h-4 w-4'
+
+  return (
+    <div className={`relative shrink-0 ${className}`}>
+      <span
+        className={`grid overflow-hidden rounded-full border-2 border-white bg-gradient-to-br from-indigo-500 to-violet-600 font-black text-white shadow-lg ring-2 ${critical ? 'ring-rose-400' : 'ring-amber-400'} ${sizeClass}`}
+      >
+        {avatarUrl ? (
+          <img src={avatarUrl} alt={student.name} className="h-full w-full object-cover" draggable={false} />
+        ) : (
+          <span className="grid h-full w-full place-items-center">{initials || <UserRound size={iconSize} />}</span>
+        )}
+      </span>
+      {showStatus ? (
+        <span className={`absolute rounded-full border-2 border-white shadow-md ${critical ? 'bg-rose-500' : 'bg-amber-400'} ${dotClass}`} />
+      ) : null}
+    </div>
+  )
+}
+
 function AlertStudentCard({
   student,
   className,
@@ -783,16 +819,7 @@ function AlertStudentCard({
           critical ? 'border-rose-400 hover:border-rose-500' : 'border-amber-400 hover:border-amber-500'
         }`}
       >
-        <div className="relative">
-          <span className={`grid h-12 w-12 shrink-0 place-items-center rounded-xl ${critical ? 'bg-rose-100' : 'bg-amber-50'} shadow-sm`}>
-            <UserRound size={20} className={critical ? 'text-rose-600' : 'text-amber-600'} />
-          </span>
-          {critical ? (
-            <span className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full border-2 border-white bg-rose-500">
-              <AlertCircle size={10} className="text-white" />
-            </span>
-          ) : null}
-        </div>
+        <AlertStudentPhoto student={student} size="lg" showStatus />
         <div className="min-w-0 flex-1">
           <strong className="block truncate text-sm font-black text-slate-900">{student.name}</strong>
           <span className="text-xs font-semibold text-slate-500">{className}</span>
@@ -841,9 +868,7 @@ function AlertStudentsModal({
   const lowAttendance = selected ? selected.attendanceRate < 75 : false
   const lowScore = selected ? selected.averageScore < 6 : false
   const critical = lowAttendance && lowScore
-  const selectedAvatarUrl = resolveApiAssetUrl(selected?.avatarUrl)
   const selectedBannerUrl = resolveApiAssetUrl(selected?.bannerUrl)
-  const selectedInitials = selected ? getInitials(selected.name) : ''
 
   function scoreColor(value: number) {
     if (value < 5) return 'text-rose-700'
@@ -924,18 +949,15 @@ function AlertStudentsModal({
         </div>
 
         <div className="grid min-h-0 flex-1 overflow-hidden lg:grid-cols-[320px_minmax(0,1fr)]">
-          <aside className="flex min-h-0 flex-col border-b border-slate-200 bg-slate-50 lg:border-b-0 lg:border-r">
-            <div className="border-b border-slate-200 bg-white px-5 py-3">
+          <aside className="min-h-0 max-h-[42dvh] overflow-y-auto border-b border-slate-200 bg-slate-50 lg:max-h-none lg:border-b-0 lg:border-r">
+            <div className="sticky top-0 z-10 border-b border-slate-200 bg-white px-5 py-3">
               <p className="text-[10px] font-black uppercase tracking-[.18em] text-slate-400">
                 {students.length} aluno{students.length !== 1 ? 's' : ''} identificado{students.length !== 1 ? 's' : ''}
               </p>
             </div>
-            <div className="flex-1 space-y-2 overflow-y-auto p-4" style={{ maxHeight: '300px' }}>
+            <div className="space-y-2 p-4">
               {students.map((student) => {
                 const active = student.id === selected?.id
-                const isCritical = student.attendanceRate < 75 && student.averageScore < 6
-                const studentAvatarUrl = resolveApiAssetUrl(student.avatarUrl)
-                const studentInitials = getInitials(student.name)
                 return (
                   <button
                     key={student.id}
@@ -946,18 +968,9 @@ function AlertStudentsModal({
                         ? 'border-rose-400 bg-white shadow-md'
                         : 'border-slate-200 bg-white hover:border-slate-300 hover:shadow-sm'
                     }`}
-                    >
-                      <div className="flex items-start gap-3">
-                      <div className={`relative grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-xl ${isCritical ? 'bg-rose-100' : 'bg-amber-50'}`}>
-                        {studentAvatarUrl ? (
-                          <img src={studentAvatarUrl} alt={student.name} className="h-full w-full object-cover" draggable={false} />
-                        ) : (
-                          <span className={`grid h-full w-full place-items-center text-xs font-black ${isCritical ? 'text-rose-600' : 'text-amber-600'}`}>
-                            {studentInitials || <UserRound size={18} />}
-                          </span>
-                        )}
-                        <span className={`absolute -right-1 -top-1 h-3 w-3 rounded-full border-2 border-white ${isCritical ? 'bg-rose-500' : 'bg-amber-400'}`} />
-                      </div>
+                  >
+                    <div className="flex items-start gap-3">
+                      <AlertStudentPhoto student={student} showStatus />
                       <div className="min-w-0 flex-1">
                         <strong className="block truncate text-sm font-black text-slate-900">{student.name}</strong>
                         <p className="mt-0.5 truncate text-[11px] font-semibold text-slate-500">{getClassName(student.classId)}</p>
@@ -997,21 +1010,12 @@ function AlertStudentsModal({
                 <div className={selectedBannerUrl ? 'px-6 pb-5 pt-5 sm:pt-6' : 'px-6 py-5'}>
                 <div className="flex flex-wrap items-start justify-between gap-5">
                   <div className="flex items-start gap-4">
-                    <div className={`relative grid shrink-0 place-items-center overflow-hidden rounded-2xl ${selectedBannerUrl ? '-mt-12 h-20 w-20 border-4 border-white shadow-xl' : 'h-14 w-14 shadow-sm'} ${critical ? 'bg-rose-100' : 'bg-amber-50'}`}>
-                      {selectedAvatarUrl ? (
-                        <img
-                          src={selectedAvatarUrl}
-                          alt={selected.name}
-                          className="h-full w-full object-cover"
-                          draggable={false}
-                        />
-                      ) : (
-                        <span className={`grid h-full w-full place-items-center font-['Sora',system-ui,sans-serif] text-xl font-black ${critical ? 'text-rose-600' : 'text-amber-600'}`}>
-                          {selectedInitials || <UserRound size={selectedBannerUrl ? 30 : 26} />}
-                        </span>
-                      )}
-                      {critical ? <span className="absolute -right-1 -top-1 h-4 w-4 rounded-full border-2 border-white bg-rose-500" /> : null}
-                    </div>
+                    <AlertStudentPhoto
+                      student={selected}
+                      size={selectedBannerUrl ? 'xl' : 'lg'}
+                      showStatus
+                      className={selectedBannerUrl ? '-mt-12' : ''}
+                    />
                     <div className="min-w-0">
                       <p className="text-[10px] font-black uppercase tracking-[.18em] text-rose-500">Diagnostico pedagogico</p>
                       <h3 className="font-['Sora',system-ui,sans-serif] text-2xl font-black leading-tight text-slate-900">{selected.name}</h3>

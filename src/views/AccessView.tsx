@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   BookOpen,
   Building2,
@@ -9,6 +9,7 @@ import {
   Search,
   ShieldCheck,
   SlidersHorizontal,
+  Loader2,
   UserCheck,
   UserCog,
   UserRound,
@@ -18,17 +19,19 @@ import {
 import { CompactSelect, type CompactSelectOption } from '../components/ui/compact-select'
 import { PageTitleBar } from '../components/ui/page-title-bar'
 import { permissionOptions } from '../data'
-import type { Role, School, UserAccount } from '../types'
+import type { AccessUserKindFilter, AccessUserSearchPayload, Role, School, UserAccount } from '../types'
 
 interface AccessViewProps {
   roles: Role[]
   users: UserAccount[]
   schools: School[]
+  onSearchUsers?: (params: { search: string; schoolId: string; kind: AccessUserKindFilter; limit: number }) => Promise<AccessUserSearchPayload>
   onUpdateRole: (id: string, draft: Partial<Role>) => Promise<void>
   onUpdateUserRole: (id: string, roleId: string) => Promise<void>
+  onUpdateUserSchool: (id: string, schoolId: string | null) => Promise<void>
 }
 
-type UserKindFilter = 'all' | 'professor' | 'coordenador' | 'responsavel' | 'aluno'
+type UserKindFilter = AccessUserKindFilter
 
 type PermissionMeta = {
   label: string
@@ -249,12 +252,15 @@ function getPermissionMeta(permission: string): PermissionMeta {
   }
 }
 
-export default function AccessView({ roles, users, schools, onUpdateRole, onUpdateUserRole }: AccessViewProps) {
+export default function AccessView({ roles, users, schools, onSearchUsers, onUpdateRole, onUpdateUserRole, onUpdateUserSchool }: AccessViewProps) {
   const [selectedRoleId, setSelectedRoleId] = useState(roles[0]?.id ?? '')
   const [permissionDraft, setPermissionDraft] = useState<string[]>(roles[0]?.permissions ?? [])
   const [schoolFilter, setSchoolFilter] = useState('all')
   const [kindFilter, setKindFilter] = useState<UserKindFilter>('all')
   const [userSearch, setUserSearch] = useState('')
+  const [remoteUsers, setRemoteUsers] = useState<UserAccount[]>([])
+  const [userSearchLoading, setUserSearchLoading] = useState(false)
+  const [userSearchError, setUserSearchError] = useState<string | null>(null)
 
   const selectedRole = roles.find((role) => role.id === selectedRoleId) ?? roles[0]
   const selectedCount = permissionDraft.length
@@ -273,6 +279,18 @@ export default function AccessView({ roles, users, schools, onUpdateRole, onUpda
     () => [
       { value: 'all', label: 'Todas as escolas', description: 'Buscar em toda a rede' },
       { value: 'network', label: 'Rede municipal', description: 'Usuarios sem escola vinculada' },
+      ...schools.map((school) => ({
+        value: school.id,
+        label: school.name,
+        description: [school.city, school.inepCode].filter(Boolean).join(' - '),
+      })),
+    ],
+    [schools],
+  )
+
+  const schoolLinkOptions = useMemo<CompactSelectOption[]>(
+    () => [
+      { value: 'network', label: 'Sem escola vinculada', description: 'Usuario com acesso de rede ou administrativo' },
       ...schools.map((school) => ({
         value: school.id,
         label: school.name,
@@ -381,7 +399,7 @@ export default function AccessView({ roles, users, schools, onUpdateRole, onUpda
     }, 0)
   }
 
-  const searchedUsers = useMemo(() => {
+  const localSearchedUsers = useMemo(() => {
     const query = normalizeText(userSearch.trim())
     if (!query) return []
 
@@ -395,11 +413,74 @@ export default function AccessView({ roles, users, schools, onUpdateRole, onUpda
       .map((user) => ({ user, score: getSearchScore(user, query) }))
       .filter((result) => result.score > 0)
       .sort((a, b) => b.score - a.score || a.user.name.localeCompare(b.user.name))
-      .slice(0, 5)
+      .slice(0, 10)
       .map((result) => result.user)
   }, [kindFilter, roles, schoolFilter, schools, userSearch, users])
 
   const hasUserSearch = Boolean(userSearch.trim())
+  const searchedUsers = onSearchUsers && !userSearchError ? remoteUsers : localSearchedUsers
+  const searchSourceLabel = onSearchUsers && !userSearchError ? 'Backend integrado' : 'Busca local'
+
+  useEffect(() => {
+    const query = userSearch.trim()
+
+    if (!onSearchUsers || !query) {
+      setRemoteUsers([])
+      setUserSearchLoading(false)
+      setUserSearchError(null)
+      return
+    }
+
+    let cancelled = false
+    setUserSearchLoading(true)
+    setUserSearchError(null)
+
+    const timer = window.setTimeout(() => {
+      onSearchUsers({ search: query, schoolId: schoolFilter, kind: kindFilter, limit: 10 })
+        .then((payload) => {
+          if (cancelled) return
+          setRemoteUsers(payload.users)
+        })
+        .catch((error) => {
+          if (cancelled) return
+          setRemoteUsers([])
+          setUserSearchError(error instanceof Error ? error.message : 'Nao foi possivel buscar usuarios no backend.')
+        })
+        .finally(() => {
+          if (!cancelled) setUserSearchLoading(false)
+        })
+    }, 280)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [kindFilter, onSearchUsers, schoolFilter, userSearch])
+
+  function getRoleVisibilitySummary(roleId: string) {
+    const role = getRole(roleId)
+    if (!role) return ['Cargo nao localizado']
+
+    const groups = permissionGroups
+      .map((group) => {
+        const count = role.permissions.filter((permission) => getPermissionMeta(permission).group === group).length
+        return count > 0 ? `${group} (${count})` : null
+      })
+      .filter((item): item is string => Boolean(item))
+
+    return groups.length ? groups : ['Sem permissoes ativas']
+  }
+
+  async function handleUserRoleChange(userId: string, roleId: string) {
+    await onUpdateUserRole(userId, roleId)
+    setRemoteUsers((current) => current.map((user) => user.id === userId ? { ...user, roleId } : user))
+  }
+
+  async function handleUserSchoolChange(userId: string, schoolValue: string) {
+    const schoolId = schoolValue === 'network' ? null : schoolValue
+    await onUpdateUserSchool(userId, schoolId)
+    setRemoteUsers((current) => current.map((user) => user.id === userId ? { ...user, schoolId } : user))
+  }
 
   return (
     <div className="grid min-h-screen gap-4 bg-slate-50 px-[clamp(12px,2.5vw,40px)] py-6 pb-12 font-['DM_Sans'] text-slate-900">
@@ -551,14 +632,14 @@ export default function AccessView({ roles, users, schools, onUpdateRole, onUpda
           <div className="flex items-start justify-between gap-4 max-[920px]:flex-col">
             <div className="min-w-0">
               <p className="text-[10px] font-black uppercase tracking-[0.18em] text-indigo-500">Usuarios</p>
-              <h2 className="font-['Sora',system-ui,sans-serif] text-lg font-black leading-tight text-slate-900">Alterar cargo</h2>
+              <h2 className="font-['Sora',system-ui,sans-serif] text-lg font-black leading-tight text-slate-900">Alterar cargo e escola vinculada</h2>
               <p className="mt-1 max-w-[760px] text-sm leading-6 text-slate-500">
-                Digite para encontrar ate 5 usuarios mais proximos. Use os filtros para restringir por escola e perfil.
+                Digite para buscar pessoas no backend em todo o sistema. Use os filtros para restringir por escola e perfil, depois selecione a escola vinculada de cada usuario.
               </p>
             </div>
             <div className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-[12px] font-black uppercase tracking-widest text-slate-600">
-              <SlidersHorizontal size={15} />
-              Busca guiada
+              {userSearchLoading ? <Loader2 size={15} className="animate-spin text-indigo-600" /> : <SlidersHorizontal size={15} />}
+              {searchSourceLabel}
             </div>
           </div>
 
@@ -569,7 +650,7 @@ export default function AccessView({ roles, users, schools, onUpdateRole, onUpda
               <input
                 value={userSearch}
                 onChange={(event) => setUserSearch(event.target.value)}
-                placeholder="Buscar por nome, e-mail, login, telefone, cargo..."
+                placeholder="Buscar pessoas por nome, e-mail, login, telefone, cargo..."
                 className="min-h-11 w-full min-w-0 rounded-lg border border-slate-400 bg-white pl-9 pr-3 text-sm font-semibold text-slate-900 outline-none transition-all placeholder:text-slate-400 focus:border-indigo-500 focus:ring-3 focus:ring-indigo-100"
               />
             </label>
@@ -595,6 +676,12 @@ export default function AccessView({ roles, users, schools, onUpdateRole, onUpda
         </div>
 
         <div className="grid gap-3 p-5">
+          {hasUserSearch && userSearchError ? (
+            <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-xs font-semibold text-amber-800">
+              Nao foi possivel concluir a busca integrada. Exibindo resultados locais carregados na tela.
+            </div>
+          ) : null}
+
           {!hasUserSearch ? (
             <div className="grid min-h-[170px] place-items-center rounded-xl border border-dashed border-slate-300 bg-slate-50 p-6 text-center">
               <div>
@@ -603,8 +690,18 @@ export default function AccessView({ roles, users, schools, onUpdateRole, onUpda
                 </span>
                 <h3 className="mt-3 font-['Sora',system-ui,sans-serif] text-sm font-black text-slate-800">Digite para buscar usuarios</h3>
                 <p className="mt-1 max-w-[420px] text-sm leading-6 text-slate-500">
-                  A lista completa fica oculta para evitar ruido. Os 5 resultados mais proximos aparecem aqui.
+                  A lista completa fica oculta para evitar ruido. Os 10 resultados mais proximos aparecem aqui.
                 </p>
+              </div>
+            </div>
+          ) : userSearchLoading ? (
+            <div className="grid min-h-[150px] place-items-center rounded-xl border border-dashed border-indigo-200 bg-indigo-50/50 p-6 text-center">
+              <div>
+                <span className="mx-auto grid h-12 w-12 place-items-center rounded-xl bg-white text-indigo-600 shadow-sm">
+                  <Loader2 size={20} className="animate-spin" />
+                </span>
+                <h3 className="mt-3 font-['Sora',system-ui,sans-serif] text-sm font-black text-slate-800">Buscando pessoas no backend</h3>
+                <p className="mt-1 text-sm leading-6 text-slate-500">Consultando usuarios do sistema com os filtros selecionados.</p>
               </div>
             </div>
           ) : searchedUsers.length === 0 ? (
@@ -620,9 +717,10 @@ export default function AccessView({ roles, users, schools, onUpdateRole, onUpda
           ) : (
             searchedUsers.map((user) => {
               const currentRole = getRoleName(user.roleId)
+              const roleVisibility = getRoleVisibilitySummary(user.roleId)
 
               return (
-                <article key={user.id} className="grid min-w-0 grid-cols-[minmax(220px,1fr)_minmax(180px,0.5fr)_minmax(180px,0.42fr)_minmax(220px,0.55fr)] items-center gap-3 rounded-xl border border-slate-300 bg-white p-3 shadow-sm transition hover:border-indigo-300 hover:shadow-md max-[1120px]:grid-cols-2 max-[620px]:grid-cols-1">
+                <article key={user.id} className="grid min-w-0 grid-cols-[minmax(220px,1fr)_minmax(210px,0.55fr)_minmax(180px,0.42fr)_minmax(220px,0.55fr)] items-center gap-3 rounded-xl border border-slate-300 bg-white p-3 shadow-sm transition hover:border-indigo-300 hover:shadow-md max-[1120px]:grid-cols-2 max-[620px]:grid-cols-1">
                   <div className="flex min-w-0 items-center gap-3">
                     <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-indigo-600 text-sm font-black text-white shadow-sm">
                       {getInitials(user.name) || <UserRound size={17} />}
@@ -634,18 +732,35 @@ export default function AccessView({ roles, users, schools, onUpdateRole, onUpda
                   </div>
 
                   <div className="min-w-0">
-                    <p className="mb-1 text-[9px] font-black uppercase tracking-[0.16em] text-slate-400">Escola</p>
-                    <p className="truncate text-xs font-bold text-slate-700">{getSchoolName(user.schoolId)}</p>
+                    <p className="mb-1 text-[9px] font-black uppercase tracking-[0.16em] text-slate-400">Escola vinculada</p>
+                    <CompactSelect
+                      value={user.schoolId ?? 'network'}
+                      options={schoolLinkOptions}
+                      onChange={(schoolValue) => handleUserSchoolChange(user.id, schoolValue)}
+                      ariaLabel={`Vincular ${user.name} a uma escola`}
+                      dropdownWidth="trigger"
+                      className="min-h-10 rounded-lg border border-slate-400 bg-slate-50 px-3 text-sm font-bold text-slate-900 outline-none transition-all focus:border-indigo-500 focus:bg-white focus:ring-3 focus:ring-indigo-100"
+                    />
                   </div>
 
                   <div className="flex min-w-0 flex-wrap gap-1.5">
-                    <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-[10px] font-black uppercase tracking-widest text-slate-500">
-                      <UserCheck size={12} />
-                      {getUserKindLabel(user)}
-                    </span>
-                    <span className="inline-flex rounded-full border border-indigo-200 bg-indigo-50 px-2 py-1 text-[10px] font-black uppercase tracking-widest text-indigo-700">
-                      {currentRole}
-                    </span>
+                    <div className="min-w-0">
+                      <p className="mb-1 text-[9px] font-black uppercase tracking-[0.16em] text-slate-400">Pode ver</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-[10px] font-black uppercase tracking-widest text-slate-500">
+                          <UserCheck size={12} />
+                          {getUserKindLabel(user)}
+                        </span>
+                        <span className="inline-flex rounded-full border border-indigo-200 bg-indigo-50 px-2 py-1 text-[10px] font-black uppercase tracking-widest text-indigo-700">
+                          {currentRole}
+                        </span>
+                        {roleVisibility.slice(0, 3).map((item) => (
+                          <span key={item} className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-[10px] font-black uppercase tracking-widest text-emerald-700">
+                            {item}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
                   </div>
 
                   <div className="min-w-0">
@@ -653,7 +768,7 @@ export default function AccessView({ roles, users, schools, onUpdateRole, onUpda
                     <CompactSelect
                       value={user.roleId}
                       options={roleOptions}
-                      onChange={(roleId) => onUpdateUserRole(user.id, roleId)}
+                      onChange={(roleId) => handleUserRoleChange(user.id, roleId)}
                       ariaLabel={`Alterar cargo de ${user.name}`}
                       dropdownWidth="trigger"
                       className="min-h-10 rounded-lg border border-slate-400 bg-slate-50 px-3 text-sm font-bold text-slate-900 outline-none transition-all focus:border-indigo-500 focus:bg-white focus:ring-3 focus:ring-indigo-100"

@@ -87,7 +87,7 @@ interface MealsViewProps {
   onUpdateFoodRequest: (id: string, draft: UpdateMealFoodRequestPayload) => Promise<void>
   onDeleteFoodRequest: (id: string) => Promise<void>
   onAddFoodRequestToStock: (id: string, draft: AddMealFoodRequestToStockPayload) => Promise<void>
-  onCreateManagement: (draft: CreateMealManagementPayload) => Promise<void>
+  onCreateManagement: (draft: CreateMealManagementPayload) => Promise<MealManagement>
   onCreateItem: (managementId: string, draft: CreateMealItemPayload) => Promise<void>
   onUpdateBudget: (managementId: string, draft: UpdateMealBudgetPayload) => Promise<void>
 }
@@ -1423,42 +1423,55 @@ function MovementsModal({
   const movements = [...management.movimentacoesOrcamento].sort(
     (a, b) => new Date(b.dataMovimentacao).getTime() - new Date(a.dataMovimentacao).getTime(),
   )
-  const total = movements.reduce((sum, m) => sum + m.valor, 0)
+  const getMovementDisplayAmount = (movement: MealManagement['movimentacoesOrcamento'][number]) => {
+    const isWithdrawal = movement.saldoDepois < movement.saldoAntes || movement.tipo === 'COMPRA'
+    const amount = Math.abs(movement.valor)
+    return isWithdrawal ? -amount : amount
+  }
+  const total = movements.reduce((sum, movement) => sum + getMovementDisplayAmount(movement), 0)
+  const formatSignedCurrency = (value: number) => {
+    if (value < 0) return `-${formatCurrency(Math.abs(value))}`
+    return formatCurrency(value)
+  }
 
   return (
     <Modal id="mv-movements-title" title="Movimentações do Mês" subtitle={schoolName} onClose={onClose} maxWidth="640px">
       <div className="grid grid-cols-3 gap-2 border-b border-slate-300 bg-slate-50 px-4 py-3">
         <Stat label="Registros" value={String(movements.length)} size="sm" />
-        <Stat label="Total movimentado" value={formatCurrency(total)} size="sm" />
-        <Stat label="Saldo disponível" value={formatCurrency(management.orcamentoMensal.valorDisponivel)} tone="text-emerald-700" size="sm" />
+        <Stat label="Total movimentado" value={formatSignedCurrency(total)} tone={total < 0 ? 'text-red-700' : 'text-blue-700'} size="sm" />
+        <Stat label="Saldo disponível" value={formatCurrency(management.orcamentoMensal.valorDisponivel)} tone={management.orcamentoMensal.valorDisponivel < 0 ? 'text-red-700' : 'text-emerald-700'} size="sm" />
       </div>
 
       <div className="max-h-[55vh] overflow-y-auto p-4">
         {movements.length > 0 ? (
           <div className="grid gap-2">
-            {movements.map((m) => (
-              <article key={m.id} className="grid gap-2.5 overflow-hidden rounded-xl border border-slate-300 bg-white p-3.5 shadow-sm">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <strong className="block text-sm font-bold text-slate-900">{m.descricao}</strong>
-                    <span className="mt-0.5 block text-xs text-slate-400">
-                      {new Date(m.dataMovimentacao).toLocaleDateString('pt-BR', {
-                        day: '2-digit',
-                        month: 'long',
-                        year: 'numeric',
-                      })}
+            {movements.map((m) => {
+              const displayAmount = getMovementDisplayAmount(m)
+              const isWithdrawal = displayAmount < 0
+              return (
+                <article key={m.id} className="grid gap-2.5 overflow-hidden rounded-xl border border-slate-300 bg-white p-3.5 shadow-sm">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <strong className="block text-sm font-bold text-slate-900">{m.descricao}</strong>
+                      <span className="mt-0.5 block text-xs text-slate-400">
+                        {new Date(m.dataMovimentacao).toLocaleDateString('pt-BR', {
+                          day: '2-digit',
+                          month: 'long',
+                          year: 'numeric',
+                        })}
+                      </span>
+                    </div>
+                    <span className={`shrink-0 rounded-full border px-3 py-1 text-sm font-black ${isWithdrawal ? 'border-red-400 bg-red-50 text-red-700' : 'border-blue-400 bg-blue-50 text-blue-700'}`}>
+                      {formatSignedCurrency(displayAmount)}
                     </span>
                   </div>
-                  <span className="shrink-0 rounded-full border border-indigo-400 bg-indigo-50 px-3 py-1 text-sm font-black text-indigo-700">
-                    {formatCurrency(m.valor)}
-                  </span>
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <Stat label="Saldo antes" value={formatCurrency(m.saldoAntes)} size="sm" />
-                  <Stat label="Saldo depois" value={formatCurrency(m.saldoDepois)} size="sm" />
-                </div>
-              </article>
-            ))}
+                  <div className="grid grid-cols-2 gap-2">
+                    <Stat label="Saldo antes" value={formatCurrency(m.saldoAntes)} size="sm" />
+                    <Stat label="Saldo depois" value={formatCurrency(m.saldoDepois)} tone={m.saldoDepois < 0 ? 'text-red-700' : 'text-blue-700'} size="sm" />
+                  </div>
+                </article>
+              )
+            })}
           </div>
         ) : (
           <div className="grid min-h-[120px] place-items-center rounded-xl border border-dashed border-slate-300 bg-white text-center">
@@ -2619,7 +2632,7 @@ function PurchaseForm({
             <button
               type="button"
               onClick={() => setStep(2)}
-              className="inline-flex min-h-9 items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 text-sm font-bold text-slate-600 transition-all hover:border-slate-400"
+              className="inline-flex min-h-9 items-center gap-2 rounded-sm border border-slate-300 bg-white px-4 text-sm font-bold text-slate-600 transition-all hover:border-slate-400"
             >
               <ArrowLeft className="h-4 w-4" />
               Editar
@@ -2628,7 +2641,7 @@ function PurchaseForm({
               type="button"
               disabled={isSaving || !selectedFood}
               onClick={handleSubmit}
-              className="inline-flex min-h-9 flex-1 items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 text-sm font-black text-white transition-all hover:bg-indigo-700 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex min-h-9 flex-1 items-center justify-center gap-2 rounded-sm bg-indigo-600 px-4 text-sm font-black text-white transition-all hover:bg-indigo-700 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-50"
             >
               <CheckCircle2 className="h-4 w-4" />
               {isSaving ? actionCopy.savingLabel : actionCopy.confirmLabel}
@@ -3103,106 +3116,6 @@ function FoodRequestsPanel({
   )
 }
 
-function CreateManagementModal({
-  school,
-  onClose,
-  onCreate,
-}: {
-  school: School
-  onClose: () => void
-  onCreate: (draft: CreateMealManagementPayload) => Promise<void>
-}) {
-  const [monthReference, setMonthReference] = useState(getCurrentMonthReference())
-  const [budgetLimit, setBudgetLimit] = useState('30000')
-  const [alertPercent, setAlertPercent] = useState('80')
-  const [allowOverLimit, setAllowOverLimit] = useState(false)
-  const [error, setError] = useState('')
-  const [isSaving, setIsSaving] = useState(false)
-
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const parsedBudget = parseDecimalInput(budgetLimit)
-    const parsedAlert = parseDecimalInput(alertPercent)
-    if (!monthReference || !Number.isFinite(parsedBudget) || parsedBudget <= 0) {
-      setError('Informe mês e orçamento maior que zero.')
-      return
-    }
-    if (!Number.isFinite(parsedAlert) || parsedAlert <= 0 || parsedAlert > 100) {
-      setError('O alerta deve ficar entre 1% e 100%.')
-      return
-    }
-
-    setIsSaving(true)
-    setError('')
-    try {
-      await onCreate({
-        escolaId: school.id,
-        mesReferencia: monthReference,
-        valorLimite: parsedBudget,
-        alertaAoAtingirPercentual: parsedAlert,
-        permitirUltrapassarLimite: allowOverLimit,
-      })
-      onClose()
-    } finally {
-      setIsSaving(false)
-    }
-  }
-
-  return (
-    <Modal id="mv-create-management-title" title="Criar gestão alimentar" subtitle={school.name} onClose={onClose} maxWidth="460px">
-      <form onSubmit={handleSubmit} className="grid gap-4 p-5" noValidate>
-        <Field label="Mês de referência">
-          <input
-            className={inputCls}
-            type="month"
-            value={monthReference}
-            onChange={(event) => setMonthReference(event.target.value)}
-          />
-        </Field>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Orçamento mensal (R$)">
-            <input
-              className={inputCls}
-              inputMode="decimal"
-              value={budgetLimit}
-              onChange={(event) => setBudgetLimit(event.target.value)}
-              placeholder="30000"
-            />
-          </Field>
-          <Field label="Alerta (%)">
-            <input
-              className={inputCls}
-              inputMode="decimal"
-              value={alertPercent}
-              onChange={(event) => setAlertPercent(event.target.value)}
-              placeholder="80"
-            />
-          </Field>
-        </div>
-        <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-slate-300 bg-slate-50 px-3.5 py-3">
-          <input
-            type="checkbox"
-            checked={allowOverLimit}
-            onChange={(event) => setAllowOverLimit(event.target.checked)}
-            className="h-4 w-4 accent-indigo-600"
-          />
-          <span className="text-sm font-bold text-slate-700">Permitir ultrapassar limite do orçamento</span>
-        </label>
-        {error && <p className="text-xs font-semibold text-red-600">{error}</p>}
-        <div className="flex justify-end gap-2 border-t border-slate-200 pt-4">
-          <button type="button" disabled={isSaving} onClick={onClose} className="min-h-10 rounded-sm border border-slate-300 bg-white px-4 text-sm font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-60">
-            Cancelar
-          </button>
-          <button type="submit" disabled={isSaving} className="inline-flex min-h-10 items-center gap-2 rounded-sm bg-indigo-600 px-4 text-sm font-black text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60">
-            <CheckCircle2 className="h-4 w-4" />
-            {isSaving ? 'Criando...' : 'Criar gestão'}
-          </button>
-        </div>
-      </form>
-    </Modal>
-  )
-}
-
 export default function MealsView({
   currentUser,
   currentRole,
@@ -3227,13 +3140,33 @@ export default function MealsView({
   const [schoolPageData, setSchoolPageData] = useState<MealManagementsPagePayload | null>(null)
   const [isSchoolPageLoading, setIsSchoolPageLoading] = useState(false)
   const [schoolPageError, setSchoolPageError] = useState('')
+  const [schoolPageRefreshKey, setSchoolPageRefreshKey] = useState(0)
+  const availableManagements = useMemo(() => {
+    const byId = new Map<string, MealManagement>()
+    const realManagementBySchoolId = new Map<string, MealManagement>()
+    for (const management of mealManagements) byId.set(management.id, management)
+    for (const management of schoolPageData?.mealManagements ?? []) byId.set(management.id, management)
+    for (const management of byId.values()) {
+      if (!isVirtualMealManagement(management)) realManagementBySchoolId.set(management.escolaId, management)
+    }
+
+    for (const school of schools) {
+      if (!realManagementBySchoolId.has(school.id)) {
+        byId.set(`${virtualMealManagementPrefix}${school.id}`, createEmptyMealManagement(school.id))
+      }
+    }
+
+    return Array.from(byId.values())
+  }, [mealManagements, schoolPageData?.mealManagements, schools])
   const displayManagements = useMemo(
     () => {
-      const bySchoolId = new Map(mealManagements.map((management) => [management.escolaId, management]))
-      const schoolManagements = schools.map((school, index) => bySchoolId.get(school.id) ?? createEmptyMealManagement(school.id, getCurrentMonthReference(), index < 3))
-      return schoolManagements.length > 0 ? schoolManagements : mealManagements
+      const schoolIds = new Set(schools.map((school) => school.id))
+      const scopedManagements = schoolIds.size > 0
+        ? availableManagements.filter((management) => schoolIds.has(management.escolaId))
+        : availableManagements
+      return scopedManagements.length > 0 ? scopedManagements : availableManagements
     },
-    [mealManagements, schools],
+    [availableManagements, schools],
   )
   const selectedManagement = useMemo(
     () => displayManagements.find((m) => m.id === selectedManagementId) ?? displayManagements[0] ?? null,
@@ -3247,7 +3180,6 @@ export default function MealsView({
   const [foodRequestModal, setFoodRequestModal] = useState<MealFoodRequest | 'new' | null>(null)
   const [stockRequestModal, setStockRequestModal] = useState<MealFoodRequest | null>(null)
   const [deleteRequestTarget, setDeleteRequestTarget] = useState<MealFoodRequest | null>(null)
-  const [createManagementModalOpen, setCreateManagementModalOpen] = useState(false)
   const [isDeletingRequest, setIsDeletingRequest] = useState(false)
 
   const isAdmin = roleMatches(currentRole, ['ADMIN', 'ADMINISTRADOR', 'ADMINISTRADORA'])
@@ -3296,7 +3228,7 @@ export default function MealsView({
     return () => {
       isCurrent = false
     }
-  }, [onLoadSchoolPage, schoolPage, schoolSearchQuery])
+  }, [onLoadSchoolPage, schoolPage, schoolPageRefreshKey, schoolSearchQuery])
 
   useEffect(() => {
     setMovementsModal(null)
@@ -3306,7 +3238,6 @@ export default function MealsView({
     setFoodRequestModal(null)
     setStockRequestModal(null)
     setDeleteRequestTarget(null)
-    setCreateManagementModalOpen(false)
   }, [selectedManagementId])
 
   const schoolById = useMemo(
@@ -3322,19 +3253,21 @@ export default function MealsView({
       return normalizeFoodSearchText(school?.name ?? '').includes(normalizedSearch)
     })
   }, [displayManagements, schoolById, schoolSearchQuery])
-  const hasRemoteSchoolPage = Boolean(schoolPageData)
+  const hasRemoteSchoolPage = Boolean(
+    schoolPageData && (schoolPageData.schools.length > 0 || schoolPageData.mealManagements.length > 0),
+  )
   const schoolSelectorManagements = useMemo(() => {
-    if (!schoolPageData) {
+    if (!hasRemoteSchoolPage || !schoolPageData) {
       return localSchoolSelectorManagements.slice((schoolPage - 1) * schoolSelectorPageSize, schoolPage * schoolSelectorPageSize)
     }
 
-    const bySchoolId = new Map(schoolPageData.mealManagements.map((management) => [management.escolaId, management]))
-    const managementsFromSchools = schoolPageData.schools.map((school, index) => (
-      bySchoolId.get(school.id) ?? createEmptyMealManagement(school.id, getCurrentMonthReference(), index < 3)
-    ))
+    const bySchoolId = new Map(availableManagements.map((management) => [management.escolaId, management]))
+    const managementsFromSchools = schoolPageData.schools
+      .map((school) => bySchoolId.get(school.id))
+      .filter((management): management is MealManagement => Boolean(management))
 
     return managementsFromSchools.length > 0 ? managementsFromSchools : schoolPageData.mealManagements
-  }, [localSchoolSelectorManagements, schoolPage, schoolPageData])
+  }, [availableManagements, hasRemoteSchoolPage, localSchoolSelectorManagements, schoolPage, schoolPageData])
   const schoolSelectorPagination = hasRemoteSchoolPage && schoolPageData?.pagination ? schoolPageData.pagination : {
     page: schoolPage,
     limit: schoolSelectorPageSize,
@@ -3343,7 +3276,6 @@ export default function MealsView({
   }
   const selectedSchool = selectedManagement ? schoolById.get(selectedManagement.escolaId) ?? null : null
   const selectedSchoolId = selectedManagement?.escolaId ?? currentUser.schoolId ?? ''
-  const selectedManagementConfigured = !isVirtualMealManagement(selectedManagement)
   const selectedFoodRequests = foodRequests
     .filter((request) => request.schoolId === selectedSchoolId)
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
@@ -3366,35 +3298,99 @@ export default function MealsView({
     }
   }
 
+  async function ensurePersistedManagement(management: MealManagement, budgetDraft?: UpdateMealBudgetPayload) {
+    if (!isVirtualMealManagement(management)) return management
+
+    const created = await onCreateManagement({
+      escolaId: management.escolaId,
+      mesReferencia: management.mesReferencia,
+      valorLimite: budgetDraft?.valorLimite ?? Math.max(30000, management.orcamentoMensal.valorLimite),
+      alertaAoAtingirPercentual: budgetDraft?.alertaAoAtingirPercentual ?? management.orcamentoMensal.alertaAoAtingirPercentual,
+      permitirUltrapassarLimite: budgetDraft?.permitirUltrapassarLimite ?? management.orcamentoMensal.permitirUltrapassarLimite,
+    })
+
+    setSelectedManagementId(created.id)
+    setSchoolPageData((current) => current ? {
+      ...current,
+      mealManagements: [
+        created,
+        ...current.mealManagements.filter((item) => item.escolaId !== created.escolaId && item.id !== created.id),
+      ],
+    } : current)
+
+    return created
+  }
+
+  async function handleCreateItem(managementId: string, draft: CreateMealItemPayload) {
+    const management = availableManagements.find((item) => item.id === managementId)
+    const persistedManagement = management ? await ensurePersistedManagement(management) : null
+    await onCreateItem(persistedManagement?.id ?? managementId, draft)
+  }
+
+  async function handleUpdateBudget(managementId: string, draft: UpdateMealBudgetPayload) {
+    const management = availableManagements.find((item) => item.id === managementId)
+    const persistedManagement = management ? await ensurePersistedManagement(management, draft) : null
+    await onUpdateBudget(persistedManagement?.id ?? managementId, draft)
+  }
+
   const networkSummary = useMemo(() => {
-    const schoolIds = new Set(mealManagements.map((m) => m.escolaId))
+    const schoolIds = new Set(availableManagements.map((m) => m.escolaId))
     return {
       schools: Math.max(schoolIds.size, schools.length),
-      value: mealManagements.reduce((s, m) => s + m.orcamentoMensal.valorUtilizado, 0),
-      available: mealManagements.reduce((s, m) => s + m.orcamentoMensal.valorDisponivel, 0),
-      items: mealManagements.reduce((s, m) => s + m.resumo.totalItens, 0),
-      alerts: mealManagements.reduce((s, m) => s + m.resumo.itensBaixoEstoque + m.resumo.itensVencidos, 0),
+      value: availableManagements.reduce((s, m) => s + m.orcamentoMensal.valorUtilizado, 0),
+      available: availableManagements.reduce((s, m) => s + m.orcamentoMensal.valorDisponivel, 0),
+      items: availableManagements.reduce((s, m) => s + m.resumo.totalItens, 0),
+      alerts: availableManagements.reduce((s, m) => s + m.resumo.itensBaixoEstoque + m.resumo.itensVencidos, 0),
     }
-  }, [mealManagements, schools.length])
+  }, [availableManagements, schools.length])
 
   if (!selectedManagement) {
+    const isWaitingForAdminManagements = isAdmin && (isSchoolPageLoading || (!schoolPageData && !schoolPageError))
+    const didAdminLoadWithoutManagements = isAdmin && Boolean(schoolPageData) && !isSchoolPageLoading && !schoolPageError
+    const title = isAdmin
+      ? schoolPageError
+        ? 'Nao foi possivel carregar a gestao alimentar'
+        : didAdminLoadWithoutManagements
+          ? 'Gestao alimentar nao retornada'
+          : 'Carregando gestao alimentar'
+      : 'Gestao de merenda nao configurada'
+    const description = isAdmin
+      ? schoolPageError || (
+          didAdminLoadWithoutManagements
+            ? 'As escolas carregaram, mas a API nao retornou as gestoes alimentares. Tente carregar novamente.'
+            : 'Buscando as gestoes alimentares das escolas cadastradas.'
+        )
+      : 'Nenhuma escola possui gestao alimentar ativa para o mes de referencia.'
+
     return (
       <div className="grid min-h-screen place-items-center bg-slate-50 p-6 text-center">
         <div className="grid max-w-md gap-3">
           <div className="mx-auto grid h-14 w-14 place-items-center rounded-xl border-2 border-dashed border-slate-300">
-            <Utensils className="h-7 w-7 text-slate-400" />
+            {isWaitingForAdminManagements ? (
+              <div className="h-7 w-7 animate-spin rounded-full border-4 border-indigo-100 border-t-indigo-600" />
+            ) : (
+              <Utensils className="h-7 w-7 text-slate-400" />
+            )}
           </div>
           <h1 className="font-['Sora',system-ui,sans-serif] text-xl font-black text-slate-900">
-            Gestão de merenda não configurada
+            {title}
           </h1>
           <p className="text-sm leading-6 text-slate-500">
-            Nenhuma escola possui gestão alimentar ativa para o mês de referência.
+            {description}
           </p>
+          {isAdmin && (schoolPageError || didAdminLoadWithoutManagements) && (
+            <button
+              type="button"
+              onClick={() => setSchoolPageRefreshKey((current) => current + 1)}
+              className="mx-auto mt-1 inline-flex min-h-10 items-center justify-center rounded-sm bg-indigo-600 px-4 text-sm font-black text-white transition-colors hover:bg-indigo-700"
+            >
+              Tentar novamente
+            </button>
+          )}
         </div>
       </div>
     )
   }
-
   return (
     <>
       <style>{`
@@ -3448,16 +3444,6 @@ export default function MealsView({
           icon={<Utensils />}
           actions={(
             <div className="flex flex-wrap items-center gap-2">
-            {isAdmin && !selectedManagementConfigured && selectedSchool && (
-              <button
-                type="button"
-                onClick={() => setCreateManagementModalOpen(true)}
-                className="inline-flex min-h-8 items-center gap-2 rounded-sm border border-indigo-300 bg-white px-3 text-[11px] font-black uppercase tracking-wider text-indigo-700 transition-all hover:bg-indigo-50"
-              >
-                <Plus className="h-3.5 w-3.5" />
-                Criar gestão
-              </button>
-            )}
             <span className="rounded-full border border-slate-300 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-500">
               {selectedManagement.mesReferencia}
             </span>
@@ -3469,7 +3455,7 @@ export default function MealsView({
               }`}
             >
               {canManagePurchases || isDirector ? <ShieldCheck className="h-3.5 w-3.5" /> : <Lock className="h-3.5 w-3.5" />}
-              {canManagePurchases ? 'Administrador' : isDirector ? 'Diretor: solicita avaliacao' : 'Somente leitura'}
+              {canManagePurchases ? 'Admin: estoque direto' : isDirector ? 'Diretor: solicita avaliacao' : 'Somente leitura'}
             </span>
             </div>
           )}
@@ -3744,11 +3730,11 @@ export default function MealsView({
 
           {/* ── RIGHT: PURCHASE + BUDGET ── */}
           <aside className="grid min-w-0 content-start gap-4 xl:sticky xl:top-4">
-            {canManagePurchases && selectedManagementConfigured ? (
+            {canManagePurchases ? (
               <PurchaseForm
                 management={selectedManagement}
                 onSearchFoods={onSearchFoods}
-                onCreateItem={onCreateItem}
+                onCreateItem={handleCreateItem}
               />
             ) : isDirector ? (
               <PurchaseForm
@@ -3758,20 +3744,6 @@ export default function MealsView({
                 onSearchFoods={onSearchFoods}
                 onCreateFoodRequest={onCreateFoodRequest}
               />
-            ) : canManagePurchases ? (
-              <section className="flex flex-col items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 p-5 shadow-sm">
-                <div className="grid h-10 w-10 place-items-center rounded-xl border border-amber-300 bg-white">
-                  <AlertTriangle className="h-5 w-5 text-amber-600" />
-                </div>
-                <div>
-                  <h2 className="font-['Sora',system-ui,sans-serif] text-sm font-black text-slate-900">
-                    Gestão mensal ainda não criada
-                  </h2>
-                  <p className="mt-1 text-sm leading-6 text-slate-600">
-                    A escola existe, mas não há gestão alimentar ativa para orçamento, estoque e compras neste mês.
-                  </p>
-                </div>
-              </section>
             ) : (
               <section className="flex flex-col items-start gap-3 rounded-xl border border-slate-300 bg-white p-5 shadow-sm">
                 <div className="grid h-10 w-10 place-items-center rounded-xl border border-slate-300 bg-slate-100">
@@ -3800,8 +3772,8 @@ export default function MealsView({
             <BudgetPanel
               management={selectedManagement}
               schoolName={selectedSchool?.name ?? 'Rede municipal'}
-              canEdit={canManagePurchases && selectedManagementConfigured}
-              onUpdateBudget={onUpdateBudget}
+              canEdit={canManagePurchases}
+              onUpdateBudget={handleUpdateBudget}
               onShowMovements={() =>
                 setMovementsModal({
                   management: selectedManagement,
@@ -3814,14 +3786,6 @@ export default function MealsView({
       </div>
 
       {/* ══ MODALS ══ */}
-      {createManagementModalOpen && selectedSchool && (
-        <CreateManagementModal
-          school={selectedSchool}
-          onClose={() => setCreateManagementModalOpen(false)}
-          onCreate={onCreateManagement}
-        />
-      )}
-
       {foodRequestModal && (
         <FoodRequestModal
           schoolId={selectedSchoolId}

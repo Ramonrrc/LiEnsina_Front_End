@@ -564,6 +564,19 @@ export interface DashboardMetric {
   value: string
   detail: string
   tone: 'blue' | 'green' | 'amber' | 'rose'
+  trend?: 'up' | 'down'
+  trendValue?: string
+}
+
+export interface DashboardAlert {
+  id: string
+  title: string
+  description: string
+  tone: 'warning' | 'danger' | 'info'
+  studentId?: string
+  student?: Pick<Student, 'id' | 'name' | 'classId' | 'attendanceRate' | 'averageScore' | 'avatarUrl' | 'bannerUrl'> & {
+    className?: string
+  }
 }
 
 export interface DashboardPayload {
@@ -571,7 +584,9 @@ export interface DashboardPayload {
   attendanceByClass: Array<{ className: string; frequencia: number; media: number }>
   proficiencyDistribution: Array<{ level: string; alunos: number }>
   subjectRadar: Array<{ subject: string; acertos: number }>
-  alerts: Array<{ id: string; title: string; description: string; tone: 'warning' | 'danger' | 'info' }>
+  alerts: DashboardAlert[]
+  alertsSummary?: Record<DashboardAlert['tone'], number>
+  alertsPagination?: PaginationMeta
 }
 
 export type NotificationTone = 'warning' | 'danger' | 'info'
@@ -847,6 +862,16 @@ export interface DashboardScreenPayload {
   auditEvents: AuditEvent[]
 }
 
+export interface DashboardAlertsPageQuery {
+  page: number
+  limit: number
+}
+
+export interface DashboardAlertsPagePayload {
+  alerts: DashboardAlert[]
+  pagination: PaginationMeta
+}
+
 export interface NotificationsScreenPayload {
   notifications: AppNotification[]
   unreadCount: number
@@ -941,8 +966,26 @@ export interface AccessScreenPayload {
   schools: School[]
 }
 
+export type AccessUserKindFilter = 'all' | 'professor' | 'coordenador' | 'responsavel' | 'aluno'
+
+export interface AccessUserSearchQuery {
+  search: string
+  schoolId?: string
+  kind?: AccessUserKindFilter
+  limit?: number
+}
+
+export interface AccessUserSearchPayload {
+  users: UserAccount[]
+}
+
+export interface UpdateUserSchoolPayload {
+  schoolId: string | null
+}
+
 export interface SettingsScreenPayload {
   currentUser: UserAccount
+  schools: School[]
 }
 
 export interface ScreenPayloads {

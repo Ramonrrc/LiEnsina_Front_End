@@ -1,7 +1,8 @@
 import { ChangeEvent, FormEvent, useEffect, useState } from 'react'
 import {
   Save, UserRound, Camera, ImageIcon, Mail, Phone, Calendar,
-  CreditCard, ShieldCheck, CheckCircle2, AlertCircle, X, Trash2, RotateCcw
+  CreditCard, ShieldCheck, CheckCircle2, AlertCircle, X, Trash2, RotateCcw,
+  AtSign, School as SchoolIcon,
 } from 'lucide-react'
 import { z } from 'zod'
 
@@ -10,10 +11,12 @@ import { AvatarHoverPreview } from '../components/profile/AvatarSign'
 import DateInput from '../components/ui/date-input'
 import { FieldMessage, fieldStateClass } from '../components/ui/form-field'
 import { PageTitleBar } from '../components/ui/page-title-bar'
-import type { UserAccount } from '../types'
+import type { RoleCode, School as SchoolType, UserAccount } from '../types'
 
 interface SettingsViewProps {
   currentUser: UserAccount
+  profile: RoleCode
+  schools?: SchoolType[]
   assetVersion?: {
     avatar?: string | number | null
     banner?: string | number | null
@@ -92,6 +95,23 @@ const profileSchema = z.object({
 
 type ProfileFormDraft = z.infer<typeof profileSchema>
 type ProfileFormErrors = Partial<Record<keyof ProfileFormDraft, string>>
+
+function getLinkedSchoolName(currentUser: UserAccount, profile: RoleCode, schools: SchoolType[]) {
+  if (profile === 'ADMIN') return 'Todas as escolas'
+
+  const linkedSchool = currentUser.schoolId
+    ? schools.find((school) => school.id === currentUser.schoolId)
+    : null
+
+  if (linkedSchool) return linkedSchool.name
+  if (schools.length === 1) return schools[0].name
+  return 'Escola nao vinculada'
+}
+
+function getLinkedSchoolHint(profile: RoleCode) {
+  if (profile === 'ADMIN') return 'Administradores possuem acesso a todas as escolas.'
+  return 'Campo definido pelo vinculo do usuario.'
+}
 
 /* ── Skeleton field ── */
 function SkeletonField() {
@@ -351,7 +371,7 @@ function MediaCard({
 /* ══════════════════════════════════════
    Main Component
 ══════════════════════════════════════ */
-export default function SettingsView({ currentUser, assetVersion, onSave }: SettingsViewProps) {
+export default function SettingsView({ currentUser, profile, schools = [], assetVersion, onSave }: SettingsViewProps) {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -393,6 +413,9 @@ export default function SettingsView({ currentUser, assetVersion, onSave }: Sett
   const bannerSrc: string | null = removeBannerPending ? null : bannerPreview ?? resolveApiAssetUrl(currentUser.bannerUrl, assetVersion?.banner) ?? null
   const canRemoveAvatar = Boolean(currentUser.avatarUrl || avatarFile || removeAvatarPending)
   const canRemoveBanner = Boolean(currentUser.bannerUrl || bannerFile || removeBannerPending)
+  const linkedSchoolName = getLinkedSchoolName(currentUser, profile, schools)
+  const linkedSchoolHint = getLinkedSchoolHint(profile)
+  const usernameValue = currentUser.login ?? currentUser.email
 
   const initials = currentUser.name
     .split(' ')
@@ -693,7 +716,7 @@ export default function SettingsView({ currentUser, assetVersion, onSave }: Sett
               <SectionCard label="Dados pessoais" title="Identificação" icon={UserRound} iconColor="bg-indigo-600">
                 <div className="grid grid-cols-2 gap-3.5 max-[580px]:grid-cols-1">
 
-                  <div className="col-span-2 max-[580px]:col-span-1">
+                  <div>
                     <Field label="Nome completo" icon={UserRound} error={errors.name} hint="Mínimo 3 caracteres, máximo 120.">
                       <input
                         className={`${inputCls} ${fieldStateClass(errors.name)}`}
@@ -706,7 +729,21 @@ export default function SettingsView({ currentUser, assetVersion, onSave }: Sett
                     </Field>
                   </div>
 
-                  <div className="col-span-2 max-[580px]:col-span-1">
+                  <div>
+                    <Field label="Nome de usuário" icon={AtSign} hint="Identificador usado para acesso.">
+                      <div className="sv-input-wrap">
+                        <input
+                          className={`${inputIconCls} cursor-not-allowed border-slate-300 bg-slate-100 text-slate-600`}
+                          value={usernameValue}
+                          disabled
+                          readOnly
+                        />
+                        <AtSign size={13} className="sv-input-icon" />
+                      </div>
+                    </Field>
+                  </div>
+
+                  <div>
                     <Field label="E-mail" icon={Mail} error={errors.email} hint="Digite um e-mail válido para acesso e notificações.">
                       <div className="sv-input-wrap">
                         <input
@@ -719,6 +756,20 @@ export default function SettingsView({ currentUser, assetVersion, onSave }: Sett
                           required
                         />
                         <Mail size={13} className="sv-input-icon" />
+                      </div>
+                    </Field>
+                  </div>
+
+                  <div>
+                    <Field label="Escola vinculada" icon={SchoolIcon} hint={linkedSchoolHint}>
+                      <div className="sv-input-wrap">
+                        <input
+                          className={`${inputIconCls} cursor-not-allowed border-slate-300 bg-slate-100 text-slate-600`}
+                          value={linkedSchoolName}
+                          disabled
+                          readOnly
+                        />
+                        <SchoolIcon size={13} className="sv-input-icon" />
                       </div>
                     </Field>
                   </div>
