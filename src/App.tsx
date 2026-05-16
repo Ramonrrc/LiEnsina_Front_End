@@ -20,6 +20,7 @@ import {
   deleteEvaluation,
   deleteQuestion,
   deleteMealFoodRequest,
+  downloadEvaluationFile,
   loadAccessScreen,
   loadCalendarScreen,
   loadDashboardScreen,
@@ -40,6 +41,7 @@ import {
   markAllNotificationsRead,
   markNotificationRead,
   markNotificationUnread,
+  processEvaluationOmr,
   removeProfileAvatar,
   removeProfileBanner,
   resolveApiAssetUrl,
@@ -57,6 +59,7 @@ import {
   updateTeacher,
   updateUserRole,
   updateUserSchool,
+  reviewEvaluationCorrection,
   reviewMealFoodRequest,
   uploadProfileAvatar,
   uploadProfileBanner,
@@ -70,6 +73,7 @@ import type {
   AppSection,
   CalendarScreenPayload,
   DashboardAlertsPagePayload,
+  EvaluationCorrection,
   EvaluationsScreenPayload,
   GenerateQuestionSelectionRequest,
   GenerateQuestionSelectionResponse,
@@ -178,6 +182,7 @@ const ClassesView = lazy(() => import('./views/ClassesView'))
 const PeopleView = lazy(() => import('./views/PeopleView'))
 const RolePortalView = lazy(() => import('./views/RolePortalView'))
 const EvaluationsView = lazy(() => import('./views/EvaluationsView'))
+const EvaluationCorrectionsView = lazy(() => import('./views/EvaluationCorrectionsView'))
 const CalendarView = lazy(() => import('./views/CalendarView'))
 const MealsView = lazy(() => import('./views/MealsView'))
 const NutritionRequestsView = lazy(() => import('./views/NutritionRequestsView'))
@@ -192,10 +197,10 @@ type AppToast = { tone: 'success' | 'error'; message: string }
 type RoleProfile = RoleCode
 type NavigationItem = (typeof navItems)[number]
 
-const adminSections: AppSection[] = ['dashboard', 'schools', 'people', 'evaluations', 'meals', 'access', 'notifications', 'settings']
-const directorSections: AppSection[] = ['dashboard', 'schools', 'people', 'meals', 'notifications', 'settings']
-const coordinatorSections: AppSection[] = ['pedagogy', 'evaluations', 'calendar', 'notifications', 'settings']
-const teacherSections: AppSection[] = ['teacher-subjects', 'room-reservations', 'evaluations', 'calendar', 'notifications', 'settings']
+const adminSections: AppSection[] = ['dashboard', 'schools', 'people', 'evaluations', 'evaluation-corrections', 'meals', 'access', 'notifications', 'settings']
+const directorSections: AppSection[] = ['dashboard', 'schools', 'people', 'evaluation-corrections', 'meals', 'notifications', 'settings']
+const coordinatorSections: AppSection[] = ['pedagogy', 'evaluations', 'evaluation-corrections', 'calendar', 'notifications', 'settings']
+const teacherSections: AppSection[] = ['teacher-subjects', 'room-reservations', 'evaluations', 'evaluation-corrections', 'calendar', 'notifications', 'settings']
 const studentSections: AppSection[] = ['student-performance', 'calendar', 'notifications', 'settings']
 const guardianSections: AppSection[] = ['child-performance', 'child-attendance', 'calendar', 'notifications', 'settings']
 const nutritionistSections: AppSection[] = ['food-requests', 'meals', 'notifications', 'settings']
@@ -226,6 +231,7 @@ const sectionLabels: Partial<Record<RoleProfile, Partial<Record<AppSection, Pick
     dashboard: { label: 'Dashboard da Escola', description: 'Indicadores da unidade' },
     schools: { label: 'Escolas', description: 'Minha unidade escolar' },
     people: { label: 'Professores e Alunos', description: 'Equipe e estudantes' },
+    'evaluation-corrections': { label: 'Correcao de Provas', description: 'Revisao de cartoes resposta' },
     meals: { label: 'Gestao Alimentar', description: 'Solicitacoes, cardapios e estoque da unidade' },
     notifications: { label: 'Notificações', description: 'Alertas da unidade' },
     settings: { label: 'Meu Perfil', description: 'Dados do diretor' },
@@ -233,6 +239,7 @@ const sectionLabels: Partial<Record<RoleProfile, Partial<Record<AppSection, Pick
   COORDENADOR: {
     pedagogy: { label: 'Dashboard Pedagogico', description: 'Frequencia, aulas e alertas' },
     evaluations: { label: 'Provas e Simulados', description: 'Acompanhamento pedagogico' },
+    'evaluation-corrections': { label: 'Correcao de Provas', description: 'Sugestoes OMR e revisao' },
     calendar: { label: 'Calendario Escolar', description: 'Eventos da escola' },
     notifications: { label: 'Notificações', description: 'Alertas pedagogicos' },
     settings: { label: 'Meu Perfil', description: 'Dados do coordenador' },
@@ -241,6 +248,7 @@ const sectionLabels: Partial<Record<RoleProfile, Partial<Record<AppSection, Pick
     'teacher-subjects': { label: 'Minhas Materias', description: 'Materias e turmas' },
     'room-reservations': { label: 'Reservar Sala', description: 'Ambientes escolares' },
     evaluations: { label: 'Provas e Simulados', description: 'Criar e aplicar avaliacoes' },
+    'evaluation-corrections': { label: 'Correcao de Provas', description: 'Cartoes resposta e notas' },
     calendar: { label: 'Calendario Escolar', description: 'Eventos e avisos' },
     notifications: { label: 'Notificações', description: 'Alertas das suas turmas' },
     settings: { label: 'Meu Perfil', description: 'Dados do professor' },
@@ -641,6 +649,14 @@ async function loadSectionPayload(section: AppSection, token: string, profile: R
         ...evaluationsPayload,
         schools: schoolsPayload.schools,
         teachers: schoolsPayload.teachers,
+        students: schoolsPayload.students,
+      }))
+    case 'evaluation-corrections':
+      return Promise.all([loadEvaluationsScreen(token), loadSchoolsScreen(token)]).then(([evaluationsPayload, schoolsPayload]) => ({
+        ...evaluationsPayload,
+        schools: schoolsPayload.schools,
+        teachers: schoolsPayload.teachers,
+        students: schoolsPayload.students,
       }))
     case 'calendar':
       return Promise.all([loadCalendarScreen(token), loadSchoolsScreen(token)]).then(([calendarPayload, schoolsPayload]) => ({
@@ -1084,19 +1100,24 @@ export default function App() {
     const allowedClassIds = new Set(allowedClasses.map((classRoom) => classRoom.id))
 
     const scopedEvaluations = data.evaluations.filter((evaluation) => allowedClassIds.has(evaluation.classId))
+    const scopedEvaluationIds = new Set(scopedEvaluations.map((evaluation) => evaluation.id))
     const referencedQuestionIds = new Set(scopedEvaluations.flatMap((evaluation) => evaluation.questionIds ?? []))
 
     return {
       ...data,
       classes: allowedClasses,
       evaluations: scopedEvaluations,
+      students: data.students?.filter((student) => allowedClassIds.has(student.classId)),
+      evaluationCorrections: data.evaluationCorrections?.filter((correction) => scopedEvaluationIds.has(correction.evaluationId)),
       schools: data.schools?.filter((school) => allowedSchoolIds.has(school.id)),
       teachers: data.teachers?.filter((teacher) => allowedSchoolIds.has(teacher.schoolId)),
       questionBank: data.questionBank?.filter((question) => {
         if (referencedQuestionIds.has(question.id)) return true
         if (question.sourceType === 'INEP_ENEM') return true
-        if (roleProfile === 'PROFESSOR') return currentQuestionCreatorIds.has(question.createdById)
-        if (isSchoolLeadership(roleProfile)) return allowedSchoolIds.has(question.schoolId) || question.visibility === 'GLOBAL'
+        if (question.visibility === 'PRIVATE') return currentQuestionCreatorIds.has(question.createdById)
+        if (question.visibility === 'GLOBAL' || question.visibility === 'NETWORK') return true
+        if (roleProfile === 'PROFESSOR') return allowedSchoolIds.has(question.schoolId) || currentQuestionCreatorIds.has(question.createdById)
+        if (isSchoolLeadership(roleProfile)) return allowedSchoolIds.has(question.schoolId)
         return currentQuestionCreatorIds.has(question.createdById)
       }),
     }
@@ -1124,8 +1145,10 @@ export default function App() {
       assessmentDescriptors: data.assessmentDescriptors ?? [],
       questionBank: (data.questionBank ?? []).filter((question) => {
         if (question.sourceType === 'INEP_ENEM') return true
-        if (roleProfile === 'PROFESSOR') return currentQuestionCreatorIds.has(question.createdById)
-        if (isSchoolLeadership(roleProfile)) return allowedSchoolIds.has(question.schoolId) || question.visibility === 'GLOBAL'
+        if (question.visibility === 'PRIVATE') return currentQuestionCreatorIds.has(question.createdById)
+        if (question.visibility === 'GLOBAL' || question.visibility === 'NETWORK') return true
+        if (roleProfile === 'PROFESSOR') return allowedSchoolIds.has(question.schoolId) || currentQuestionCreatorIds.has(question.createdById)
+        if (isSchoolLeadership(roleProfile)) return allowedSchoolIds.has(question.schoolId)
         return currentQuestionCreatorIds.has(question.createdById)
       }),
     }
@@ -1245,6 +1268,18 @@ export default function App() {
       showToast({ tone: 'error', message: error instanceof Error ? error.message : 'Nao foi possivel salvar a alteracao.' })
       throw error
     }
+  }
+
+  function saveDownloadedFile(file: { blob: Blob; filename: string }) {
+    const url = URL.createObjectURL(file.blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = file.filename
+    anchor.rel = 'noopener'
+    document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000)
   }
 
   const userInitials = useMemo(() => {
@@ -1539,11 +1574,15 @@ export default function App() {
               updateScreenData('evaluations', (current) => ({ ...current, evaluations: [createdWithBlueprint, ...current.evaluations] }))
               invalidateScreens(['dashboard', 'calendar', 'pedagogy'])
             }, 'Prova criada.') : blockUnauthorizedAction('Seu perfil pode acompanhar provas, mas nao criar novas avaliacoes.')}
-            onDelete={(id) => isAdminProfile(roleProfile) ? runAction(async () => {
+            onDelete={isAdminProfile(roleProfile) ? (id) => runAction(async () => {
               await deleteEvaluation(token, id)
               updateScreenData('evaluations', (current) => ({ ...current, evaluations: removeById(current.evaluations, id) }))
               invalidateScreens(['dashboard', 'calendar', 'pedagogy'])
-            }, 'Prova excluida.') : blockUnauthorizedAction('Somente ADMIN pode excluir provas.')}
+            }, 'Prova excluida.') : undefined}
+            onDownload={(id) => runAction(async () => {
+              const file = await downloadEvaluationFile(token, id)
+              saveDownloadedFile(file)
+            }, 'Download da prova iniciado.')}
             onCreateQuestion={async (draft) => {
               if (!canManageEvaluations) {
                 await blockUnauthorizedAction('Seu perfil pode acompanhar questoes, mas nao criar novas.')
@@ -1602,6 +1641,54 @@ export default function App() {
                 }))
                 invalidateScreens(['dashboard', 'pedagogy'])
               }, 'Questao excluida.')
+            }}
+          />
+        )
+      }
+
+      case 'evaluation-corrections': {
+        const data = screenData['evaluation-corrections']
+        if (!data) return renderMissingScreen('evaluation-corrections')
+        const scopedData = getScopedEvaluationsData(data)
+        const upsertCorrection = (current: EvaluationsScreenPayload, correction: EvaluationCorrection): EvaluationsScreenPayload => ({
+          ...current,
+          evaluationCorrections: [
+            correction,
+            ...(current.evaluationCorrections ?? []).filter((item) => item.id !== correction.id && !(item.evaluationId === correction.evaluationId && item.studentId === correction.studentId)),
+          ],
+        })
+
+        return (
+          <EvaluationCorrectionsView
+            evaluations={scopedData.evaluations}
+            classes={scopedData.classes}
+            students={scopedData.students ?? []}
+            corrections={scopedData.evaluationCorrections ?? []}
+            onDownloadEvaluation={(id) => runAction(async () => {
+              const file = await downloadEvaluationFile(token, id)
+              saveDownloadedFile(file)
+            }, 'Download da prova iniciado.')}
+            onProcess={async (evaluationId, studentId, image) => {
+              let processed: EvaluationCorrection | null = null
+              await runAction(async () => {
+                processed = await processEvaluationOmr(token, evaluationId, studentId, image)
+                updateScreenData('evaluation-corrections', (current) => upsertCorrection(current, processed as EvaluationCorrection))
+                updateScreenData('evaluations', (current) => upsertCorrection(current, processed as EvaluationCorrection))
+                invalidateScreens(['dashboard', 'pedagogy'])
+              }, 'Sugestao de correcao gerada.')
+              if (!processed) throw new Error('A API nao retornou a sugestao de correcao.')
+              return processed
+            }}
+            onReview={async (correctionId, payload) => {
+              let reviewed: EvaluationCorrection | null = null
+              await runAction(async () => {
+                reviewed = await reviewEvaluationCorrection(token, correctionId, payload)
+                updateScreenData('evaluation-corrections', (current) => upsertCorrection(current, reviewed as EvaluationCorrection))
+                updateScreenData('evaluations', (current) => upsertCorrection(current, reviewed as EvaluationCorrection))
+                invalidateScreens(['dashboard', 'pedagogy', 'evaluations'])
+              }, 'Revisao da correcao salva.')
+              if (!reviewed) throw new Error('A API nao retornou a correcao revisada.')
+              return reviewed
             }}
           />
         )

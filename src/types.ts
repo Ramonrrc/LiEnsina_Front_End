@@ -11,6 +11,7 @@ export type AppSection =
   | 'classes'
   | 'people'
   | 'evaluations'
+  | 'evaluation-corrections'
   | 'calendar'
   | 'meals'
   | 'food-requests'
@@ -191,6 +192,67 @@ export interface Evaluation {
     name?: string
     email?: string
   }
+}
+
+export type EvaluationCorrectionStatus = 'SUGGESTED' | 'CONFIRMED' | 'NEEDS_RETAKE' | 'REJECTED'
+
+export interface EvaluationAnswerKeyItem {
+  questionNumber: number
+  questionId: string
+  correctOption: string
+}
+
+export interface EvaluationCorrectionOptionScore {
+  option: string
+  fillRatio: number
+}
+
+export interface EvaluationCorrectionDetectedAnswer {
+  questionNumber: number
+  questionId: string | null
+  detectedOption: string | null
+  correctOption: string
+  isCorrect: boolean
+  status: 'ok' | 'blank' | 'multiple' | 'low_confidence' | 'unreadable'
+  confidence: number
+  markedOptions: string[]
+  optionScores: EvaluationCorrectionOptionScore[]
+}
+
+export interface EvaluationCorrection {
+  id: string
+  evaluationId: string
+  classId: string
+  studentId: string
+  status: EvaluationCorrectionStatus
+  imageUrl: string | null
+  suggestedScore: number
+  finalScore: number | null
+  correctCount: number
+  wrongCount: number
+  blankCount: number
+  multipleCount: number
+  totalQuestions: number
+  confidence: number
+  requiresReview: boolean
+  shouldRetakeImage: boolean
+  failures: string[]
+  detectedAnswers: EvaluationCorrectionDetectedAnswer[]
+  answerKey: EvaluationAnswerKeyItem[]
+  rawOmrResponse: Record<string, unknown>
+  teacherNotes: string | null
+  reviewedById: string | null
+  reviewedAt: string | null
+  createdById: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface EvaluationCorrectionReviewPayload {
+  status?: EvaluationCorrectionStatus
+  finalScore?: number | null
+  detectedAnswers?: EvaluationCorrectionDetectedAnswer[]
+  teacherNotes?: string | null
 }
 
 export interface LessonRecord {
@@ -891,6 +953,8 @@ export interface SchoolsScreenPayload {
 export interface EvaluationsScreenPayload {
   evaluations: Evaluation[]
   classes: ClassRoom[]
+  students?: Student[]
+  evaluationCorrections?: EvaluationCorrection[]
   schools?: School[]
   teachers?: Teacher[]
   curriculumBases?: CurriculumBase[]
@@ -994,6 +1058,7 @@ export interface ScreenPayloads {
   classes: SchoolsScreenPayload
   people: SchoolsScreenPayload
   evaluations: EvaluationsScreenPayload
+  'evaluation-corrections': EvaluationsScreenPayload
   calendar: CalendarScreenPayload
   meals: MealsScreenPayload
   'food-requests': MealsScreenPayload

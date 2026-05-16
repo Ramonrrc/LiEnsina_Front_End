@@ -15,6 +15,8 @@ import type {
   DashboardAlertsPageQuery,
   DashboardScreenPayload,
   Evaluation,
+  EvaluationCorrection,
+  EvaluationCorrectionReviewPayload,
   EvaluationsScreenPayload,
   GenerateQuestionSelectionRequest,
   GenerateQuestionSelectionResponse,
@@ -151,6 +153,54 @@ async function apiFormRequest<T>(path: string, options: { method?: 'POST' | 'PAT
   }
 
   return payload as T
+}
+
+function sanitizeDownloadFilename(value?: string | null) {
+  const filename = String(value ?? '').trim().split(/[\\/]/).pop()?.replace(/[\u0000-\u001F\u007F]/g, '') ?? ''
+  return filename || null
+}
+
+function filenameFromContentDisposition(value: string | null) {
+  if (!value) return null
+
+  const encoded = value.match(/filename\*=UTF-8''([^;]+)/i)?.[1]
+  if (encoded) {
+    try {
+      return sanitizeDownloadFilename(decodeURIComponent(encoded))
+    } catch {
+      return sanitizeDownloadFilename(encoded)
+    }
+  }
+
+  return sanitizeDownloadFilename(value.match(/filename="([^"]+)"/i)?.[1] ?? value.match(/filename=([^;]+)/i)?.[1])
+}
+
+async function apiFileRequest(path: string, options: { token?: string | null; filenameFallback: string }) {
+  const headers: HeadersInit = { Accept: 'application/pdf' }
+  if (options.token) headers.Authorization = `Bearer ${options.token}`
+
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    method: 'GET',
+    headers,
+    credentials: 'include',
+    cache: 'no-store',
+  })
+
+  if (!response.ok) {
+    const raw = await response.text().catch(() => '')
+    let message = 'Nao foi possivel baixar o arquivo.'
+    try {
+      message = JSON.parse(raw)?.message ?? message
+    } catch {
+      if (raw.trim()) message = raw.trim()
+    }
+    throw new ApiError(message, response.status)
+  }
+
+  return {
+    blob: await response.blob(),
+    filename: filenameFromContentDisposition(response.headers.get('Content-Disposition')) ?? options.filenameFallback,
+  }
 }
 
 export function resolveApiAssetUrl(value?: string | null, version?: string | number | null) {
@@ -334,6 +384,30 @@ export async function createEvaluation(token: string, payload: Partial<Evaluatio
 
 export async function deleteEvaluation(token: string, id: string) {
   return apiRequest<{ success: boolean }>(`/evaluations/${id}`, { method: 'DELETE', token })
+}
+
+export async function downloadEvaluationFile(token: string, id: string) {
+  return apiFileRequest(`/evaluations/${encodeURIComponent(id)}/download`, {
+    token,
+    filenameFallback: `prova-${id}.pdf`,
+  })
+}
+
+export async function processEvaluationOmr(token: string, evaluationId: string, studentId: string, image: File) {
+  const formData = new FormData()
+  formData.append('image', image)
+  return apiFormRequest<EvaluationCorrection>(
+    `/evaluations/${encodeURIComponent(evaluationId)}/students/${encodeURIComponent(studentId)}/omr`,
+    { method: 'POST', token, body: formData },
+  )
+}
+
+export async function reviewEvaluationCorrection(token: string, id: string, payload: EvaluationCorrectionReviewPayload) {
+  return apiRequest<EvaluationCorrection>(`/evaluation-corrections/${encodeURIComponent(id)}/review`, {
+    method: 'PATCH',
+    token,
+    body: payload,
+  })
 }
 
 export async function generateQuestionSelection(token: string, payload: GenerateQuestionSelectionRequest) {
