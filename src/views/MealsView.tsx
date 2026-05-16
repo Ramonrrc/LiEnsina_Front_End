@@ -30,7 +30,6 @@ import {
   Soup,
   ToggleLeft,
   ToggleRight,
-  Trash2,
   TrendingUp,
   Utensils,
   Wallet,
@@ -41,22 +40,18 @@ import {
 
 import DateInput from '../components/ui/date-input'
 import { CompactSelect, type CompactSelectOption } from '../components/ui/compact-select'
-import { ConfirmDialog } from '../components/ui/confirm-dialog'
 import { PageTitleBar } from '../components/ui/page-title-bar'
 import { FieldMessage, fieldStateClass, zodFieldErrors, type FieldErrors } from '../components/ui/form-field'
-import { formatCurrencyInput, formatCurrencyInputValue } from '../lib/currency'
-import { formatMealUnit, mealUnitLabels, mealUnitOrder } from '../lib/meal-formatters'
 import type {
   AddMealFoodRequestToStockPayload,
-  CreateMealManagementPayload,
   CreateMealFoodRequestPayload,
   CreateMealItemPayload,
+  CreateMealManagementPayload,
   FoodRequestStatus,
   FoodRequestUrgency,
   MealBudgetStatus,
   MealFood,
   MealFoodRequest,
-  MealItem,
   MealManagement,
   MealManagementsPagePayload,
   MealMenu,
@@ -81,15 +76,15 @@ interface MealsViewProps {
   mealManagements: MealManagement[]
   foodRequests: MealFoodRequest[]
   mealRequestHistory: MealRequestHistory[]
-  onLoadSchoolPage: (page: number, limit: number, search?: string) => Promise<MealManagementsPagePayload>
+  onLoadSchoolPage: (page: number, limit: number) => Promise<MealManagementsPagePayload>
   onSearchFoods: (query: string, limit?: number) => Promise<MealFood[]>
   onCreateFoodRequest: (draft: CreateMealFoodRequestPayload) => Promise<void>
-  onUpdateFoodRequest: (id: string, draft: UpdateMealFoodRequestPayload) => Promise<void>
-  onDeleteFoodRequest: (id: string) => Promise<void>
+  onCreateManagement: (draft: CreateMealManagementPayload) => Promise<void>
   onAddFoodRequestToStock: (id: string, draft: AddMealFoodRequestToStockPayload) => Promise<void>
-  onCreateManagement: (draft: CreateMealManagementPayload) => Promise<MealManagement>
   onCreateItem: (managementId: string, draft: CreateMealItemPayload) => Promise<void>
   onUpdateBudget: (managementId: string, draft: UpdateMealBudgetPayload) => Promise<void>
+  onDeleteFoodRequest: (id: string) => Promise<void>
+  onUpdateFoodRequest: (id: string, draft: UpdateMealFoodRequestPayload) => Promise<void>
 }
 
 type MealFormState = {
@@ -115,7 +110,16 @@ type FoodRequestFormState = {
 }
 type FoodRequestFormField = keyof FoodRequestFormState
 
-const mealUnitOptions: Array<CompactSelectOption<MealUnit>> = mealUnitOrder.map((unit) => ({ value: unit, label: mealUnitLabels[unit] }))
+const mealUnitOptions: Array<CompactSelectOption<MealUnit>> = [
+  { value: 'KG', label: 'kg' },
+  { value: 'G', label: 'g' },
+  { value: 'L', label: 'L' },
+  { value: 'ML', label: 'ml' },
+  { value: 'UNIT', label: 'unidade' },
+  { value: 'BOX', label: 'caixa' },
+  { value: 'PACKAGE', label: 'pacote' },
+  { value: 'DOZEN', label: 'dúzia' },
+]
 
 const foodRequestStatusLabels: Record<FoodRequestStatus, string> = {
   PENDING_NUTRITIONIST_APPROVAL: 'Aguardando aprovação do nutricionista',
@@ -139,18 +143,12 @@ const foodRequestUrgencyOptions: Array<CompactSelectOption<FoodRequestUrgency>> 
   Object.keys(foodRequestUrgencyLabels) as FoodRequestUrgency[]
 ).map((urgency) => ({ value: urgency, label: foodRequestUrgencyLabels[urgency] }))
 
-const creatorFoodRequestMutationStatuses = new Set<FoodRequestStatus>([
-  'PENDING_NUTRITIONIST_APPROVAL',
-  'NEEDS_ADJUSTMENT',
-  'REJECTED_BY_NUTRITIONIST',
-])
-
 const foodRequestSchema = z.object({
   itemName: z.string().trim().min(1, 'Informe o alimento.'),
   quantity: z.coerce.number().positive('Quantidade deve ser maior que zero.'),
   unit: z.enum(['KG', 'G', 'L', 'ML', 'UNIT', 'BOX', 'PACKAGE', 'DOZEN']),
   unitPrice: z.preprocess((value) => typeof value === 'string' ? value : '', z.string().trim())
-    .refine((value) => !value || (Number.isFinite(parseDecimalInput(value)) && parseDecimalInput(value) > 0), 'Valor unitário deve ser maior que zero.'),
+    .refine((value) => !value || (Number.isFinite(parseDecimalInput(value)) && parseDecimalInput(value) >= 0), 'Valor unitário deve ser maior que zero.'),
   reason: z.string().trim().min(1, 'Informe o motivo da solicitação.'),
   urgencyLevel: z.enum(['LOW', 'MEDIUM', 'HIGH', 'URGENT']),
   expirationDate: z.string().trim().optional(),
@@ -286,7 +284,6 @@ const mealTypeOrder: Record<MealMenu['tipoRefeicao'], number> = {
 const defaultSupplier = 'Distribuidora Alimentos Brasil'
 const schoolSelectorPageSize = 5
 const foodSuggestionLimit = 5
-const virtualMealManagementPrefix = 'virtual-meal-management-'
 
 function formatMonthReference(monthReference: string) {
   const [year, month] = monthReference.split('-').map(Number)
@@ -294,6 +291,16 @@ function formatMonthReference(monthReference: string) {
   return new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric' }).format(
     new Date(year, month - 1, 1, 12),
   )
+}
+
+/* ── NOVA FUNÇÃO: formata "2025-06" → "Jun/2025" compacto para o card ── */
+function formatMonthReferenceShort(monthReference: string) {
+  const [year, month] = monthReference.split('-').map(Number)
+  if (!year || !month) return monthReference
+  return new Intl.DateTimeFormat('pt-BR', { month: 'short', year: 'numeric' })
+    .format(new Date(year, month - 1, 1, 12))
+    .replace('.', '')
+    .replace(/^\w/, (c) => c.toUpperCase())
 }
 
 function getWeekdayIndex(value: string) {
@@ -311,123 +318,6 @@ function getWeekdayIndex(value: string) {
   if (normalized.includes('sexta')) return 5
   if (normalized.includes('sabado')) return 6
   return -1
-}
-
-function getCurrentMonthReference() {
-  const now = new Date()
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
-}
-
-const demoMealFoods: MealFood[] = [
-  { id: 101, nome: 'Arroz Branco', categoria: 'Cereal', unidadeMedida: 'KG', iconKey: 'wheat', ativo: true, criadoEm: '2026-05-01T12:00:00.000Z' },
-  { id: 102, nome: 'Feijão Carioca', categoria: 'Leguminosa', unidadeMedida: 'KG', iconKey: 'bean', ativo: true, criadoEm: '2026-05-01T12:00:00.000Z' },
-  { id: 103, nome: 'Frango Desfiado', categoria: 'Proteína', unidadeMedida: 'KG', iconKey: 'drumstick', ativo: true, criadoEm: '2026-05-01T12:00:00.000Z' },
-  { id: 104, nome: 'Macarrão', categoria: 'Massa', unidadeMedida: 'KG', iconKey: 'wheat', ativo: true, criadoEm: '2026-05-01T12:00:00.000Z' },
-  { id: 105, nome: 'Leite Integral', categoria: 'Laticínio', unidadeMedida: 'L', iconKey: 'milk', ativo: true, criadoEm: '2026-05-01T12:00:00.000Z' },
-  { id: 106, nome: 'Banana Prata', categoria: 'Fruta', unidadeMedida: 'KG', iconKey: 'banana', ativo: true, criadoEm: '2026-05-01T12:00:00.000Z' },
-  { id: 107, nome: 'Maçã Nacional', categoria: 'Fruta', unidadeMedida: 'KG', iconKey: 'apple', ativo: true, criadoEm: '2026-05-01T12:00:00.000Z' },
-  { id: 108, nome: 'Iogurte', categoria: 'Laticínio', unidadeMedida: 'L', iconKey: 'milk', ativo: true, criadoEm: '2026-05-01T12:00:00.000Z' },
-  { id: 109, nome: 'Carne Moída', categoria: 'Proteína', unidadeMedida: 'KG', iconKey: 'beef', ativo: true, criadoEm: '2026-05-01T12:00:00.000Z' },
-  { id: 110, nome: 'Cenoura', categoria: 'Hortaliça', unidadeMedida: 'KG', iconKey: 'carrot', ativo: true, criadoEm: '2026-05-01T12:00:00.000Z' },
-]
-
-const demoWeekdayNames = ['Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira']
-
-function createEmptyMealManagement(schoolId: string, monthReference = getCurrentMonthReference(), withDemoData = false): MealManagement {
-  const schoolSeed = Array.from(schoolId).reduce((sum, char) => sum + char.charCodeAt(0), 0) % 7
-  const stockQuantities = [570, 320, 185, 210, 240, 160, 145, 120, 170, 130].map((value) => value + schoolSeed * 6)
-  const mealItems = withDemoData
-    ? demoMealFoods.map((food, index) => ({
-        id: `${virtualMealManagementPrefix}item-${schoolId}-${food.id}`,
-        alimentoId: food.id,
-        nomeAlimento: food.nome,
-        categoria: food.categoria,
-        quantidade: stockQuantities[index],
-        unidadeMedida: food.unidadeMedida,
-        valorUnitario: [6.2, 8.9, 14.5, 5.8, 4.6, 3.9, 5.2, 6.8, 19.5, 4.1][index],
-        valorTotal: stockQuantities[index] * [6.2, 8.9, 14.5, 5.8, 4.6, 3.9, 5.2, 6.8, 19.5, 4.1][index],
-        dataValidade: `2026-${String(7 + (index % 4)).padStart(2, '0')}-${String(10 + index).padStart(2, '0')}`,
-        possuiValidade: true,
-        lote: `DEMO-${schoolSeed + 1}${String(index + 1).padStart(2, '0')}`,
-        fornecedor: { id: `${virtualMealManagementPrefix}supplier-${schoolId}`, nome: defaultSupplier },
-        statusEstoque: index === 7 ? 'BAIXO' : 'DISPONIVEL',
-        adicionadoPorId: 'demo-diretor',
-        adicionadoEm: '2026-05-01T12:00:00.000Z',
-      } satisfies MealItem))
-    : []
-  const stockItems = mealItems.map((item, index) => ({
-    id: `${virtualMealManagementPrefix}stock-${schoolId}-${item.alimentoId}`,
-    itemMerendaId: item.id,
-    alimentoId: item.alimentoId,
-    nomeAlimento: item.nomeAlimento,
-    quantidadeAtual: item.quantidade,
-    quantidadeMinima: index === 7 ? item.quantidade + 20 : Math.max(20, Math.round(item.quantidade * 0.18)),
-    unidadeMedida: item.unidadeMedida,
-    dataValidade: item.dataValidade,
-    status: item.statusEstoque,
-  } satisfies MealStockItem))
-  const menus = withDemoData
-    ? demoWeekdayNames.flatMap((weekday, weekdayIndex) => [
-        { tipoRefeicao: 'CAFE_DA_MANHA' as const, turno: 'MANHA' as const, titulo: weekdayIndex % 2 === 0 ? 'Leite com fruta e cereal' : 'Iogurte com fruta', alimentoIds: weekdayIndex % 2 === 0 ? [105, 106, 101] : [108, 107] },
-        { tipoRefeicao: 'LANCHE' as const, turno: 'MANHA' as const, titulo: weekdayIndex % 2 === 0 ? 'Fruta da estação' : 'Vitamina de banana', alimentoIds: weekdayIndex % 2 === 0 ? [106, 107] : [105, 106] },
-        { tipoRefeicao: 'ALMOCO' as const, turno: 'INTEGRAL' as const, titulo: weekdayIndex % 2 === 0 ? 'Arroz, feijão e frango' : 'Massa com acompanhamento', alimentoIds: weekdayIndex % 2 === 0 ? [101, 102, 103, 110] : [104, 109, 110] },
-        { tipoRefeicao: 'JANTAR' as const, turno: 'NOITE' as const, titulo: weekdayIndex % 2 === 0 ? 'Sopa nutritiva' : 'Arroz com carne e legumes', alimentoIds: weekdayIndex % 2 === 0 ? [103, 110, 104] : [101, 109, 110] },
-      ].map((menu, index) => ({
-        id: `${virtualMealManagementPrefix}menu-${schoolId}-${weekdayIndex}-${index}`,
-        diaSemana: weekday,
-        tipoRefeicao: menu.tipoRefeicao,
-        turno: menu.turno,
-        titulo: menu.titulo,
-        alimentoIds: menu.alimentoIds,
-        observacao: 'Cardápio aprovado pelo nutricionista para visualização.',
-        status: 'APROVADO' as const,
-      })))
-    : []
-  const usedValue = mealItems.reduce((sum, item) => sum + item.valorTotal, 0)
-  const budgetLimit = withDemoData ? Math.max(30000, Math.round(usedValue * 1.25)) : 0
-
-  return {
-    id: `${virtualMealManagementPrefix}${schoolId}`,
-    escolaId: schoolId,
-    mesReferencia: monthReference,
-    status: 'ATIVO',
-    orcamentoMensal: {
-      id: `${virtualMealManagementPrefix}budget-${schoolId}`,
-      valorLimite: budgetLimit,
-      valorUtilizado: usedValue,
-      valorDisponivel: Math.max(0, budgetLimit - usedValue),
-      percentualUtilizado: budgetLimit > 0 ? (usedValue / budgetLimit) * 100 : 0,
-      status: 'DENTRO_DO_LIMITE',
-      alertaAoAtingirPercentual: 80,
-      permitirUltrapassarLimite: false,
-    },
-    responsaveisGestao: {
-      diretorId: '',
-      nutricionistaId: '',
-      merendeiroId: '',
-      responsavelFinanceiroId: '',
-    },
-    alimentosCadastrados: withDemoData ? demoMealFoods : [],
-    cardapios: menus,
-    itensMerenda: mealItems,
-    movimentacoesOrcamento: [],
-    estoqueMerenda: stockItems,
-    resumo: {
-      totalItens: mealItems.length,
-      totalKgComprado: stockItems.filter((item) => item.unidadeMedida === 'KG').reduce((sum, item) => sum + item.quantidadeAtual, 0),
-      valorTotalComprado: usedValue,
-      orcamentoInicial: budgetLimit,
-      orcamentoRestante: Math.max(0, budgetLimit - usedValue),
-      percentualUtilizado: budgetLimit > 0 ? (usedValue / budgetLimit) * 100 : 0,
-      statusOrcamento: 'DENTRO_DO_LIMITE',
-      itensBaixoEstoque: stockItems.filter((item) => item.status === 'BAIXO').length,
-      itensVencidos: 0,
-    },
-  }
-}
-
-function isVirtualMealManagement(management: MealManagement | null) {
-  return Boolean(management?.id.startsWith(virtualMealManagementPrefix))
 }
 
 function normalizeFoodSearchText(value: string) {
@@ -582,36 +472,12 @@ function formatNumber(value: number) {
   return new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 2 }).format(value)
 }
 
-function formatQuantity(value: number, unit?: MealUnit | null) {
-  return `${formatNumber(value)} ${formatMealUnit(unit)}`
-}
-
 function formatStockDate(value: string) {
   return new Date(`${value}T12:00:00`).toLocaleDateString('pt-BR')
 }
 
 function formatRequestDate(value: string) {
   return new Date(value).toLocaleDateString('pt-BR')
-}
-
-function getFoodRequestUnitPrice(request: MealFoodRequest) {
-  return request.suggestedUnitPrice ?? request.unitPrice ?? null
-}
-
-function canCreatorMutateFoodRequest(request: MealFoodRequest, userId: string) {
-  return request.requestedBy === userId && creatorFoodRequestMutationStatuses.has(request.status)
-}
-
-function normalizeRoleValue(value?: string | null) {
-  return (value ?? '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toUpperCase()
-}
-
-function roleMatches(role: Role | null, tokens: string[]) {
-  const roleText = normalizeRoleValue(`${role?.code ?? ''} ${role?.name ?? ''} ${role?.description ?? ''}`)
-  return tokens.some((token) => roleText.includes(token))
 }
 
 /* ─────────────────────────────────────────────
@@ -719,11 +585,6 @@ function parseDecimalInput(value: string) {
   )
 }
 
-function formatCurrencyFromInput(value: string, fallback = '—') {
-  const parsed = parseDecimalInput(value)
-  return Number.isFinite(parsed) && parsed > 0 ? formatCurrency(parsed) : fallback
-}
-
 const requiredMealText = (message: string) =>
   z.preprocess((value) => typeof value === 'string' ? value : '', z.string().trim().min(1, message))
 
@@ -771,7 +632,7 @@ function Field({ label, hint, error, children, className }: { label: string; hin
         {hint && (
           <span className="group relative cursor-default">
             <Info className="h-3 w-3 text-slate-400" />
-            <span className="pointer-events-none absolute -top-8 left-1/2 z-10 -translate-x-1/2 whitespace-nowrap rounded-md bg-slate-800 px-2 py-1 text-[10px] text-white opacity-0 shadow group-hover:opacity-100 transition-opacity">
+            <span className="pointer-events-none absolute -top-8 left-1/2 z-10 -translate-x-1/2 whitespace-nowrap rounded-sm bg-slate-800 px-2 py-1 text-[10px] text-white opacity-0 shadow group-hover:opacity-100 transition-opacity">
               {hint}
             </span>
           </span>
@@ -793,45 +654,68 @@ function Stat({ label, value, tone = 'text-slate-900', size = 'md' }: { label: s
 }
 
 /* ─────────────────────────────────────────────
+   AlertBanner
 ───────────────────────────────────────────── */
+function AlertBanner({ lowStock, expired }: { lowStock: number; expired: number }) {
+  if (lowStock === 0 && expired === 0) return null
+  return (
+    <div className="flex flex-wrap items-center gap-3 rounded-xl border border-amber-400 bg-amber-50 px-4 py-3">
+      <AlertTriangle className="h-5 w-5 shrink-0 text-amber-600" />
+      <div className="flex flex-1 flex-wrap gap-3">
+        {expired > 0 && (
+          <span className="rounded-full border border-red-400 bg-red-100 px-2.5 py-0.5 text-xs font-bold text-red-700">
+            ⚠️ {expired} item{expired !== 1 ? 's' : ''} vencido{expired !== 1 ? 's' : ''}
+          </span>
+        )}
+        {lowStock > 0 && (
+          <span className="rounded-full border border-amber-400 bg-amber-100 px-2.5 py-0.5 text-xs font-bold text-amber-700">
+            📦 {lowStock} item{lowStock !== 1 ? 's' : ''} com estoque baixo
+          </span>
+        )}
+      </div>
+      <span className="text-xs font-semibold text-amber-600">Ação necessária</span>
+    </div>
+  )
+}
+
 /* ─────────────────────────────────────────────
-   MetricCard
+   MetricCard — REDESENHADO: mais compacto, horizontal, com barra lateral colorida
 ───────────────────────────────────────────── */
 function MetricCard({
   icon,
   label,
   value,
   detail,
-  iconBg = 'bg-indigo-50 text-indigo-700',
-  iconBorder = 'border-indigo-400',
+  accentColor = 'border-l-indigo-500',
+  iconBg = 'bg-indigo-50 text-indigo-600',
   highlight,
 }: {
   icon: ReactNode
   label: string
   value: string
   detail: string
+  accentColor?: string
   iconBg?: string
-  iconBorder?: string
   highlight?: boolean
 }) {
   return (
-    <article className={`grid h-full min-h-[132px] min-w-0 gap-2 rounded-xl border bg-white p-4 shadow-sm transition-all hover:shadow-md ${highlight ? 'border-amber-400 ring-2 ring-amber-200' : 'border-slate-300'}`}>
-      <div className="flex items-center justify-between gap-3">
-        <span className="truncate text-[11px] font-semibold uppercase tracking-wider text-slate-500">{label}</span>
-        <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl border ${iconBorder} ${iconBg}`}>
-          {icon}
-        </span>
+    <article
+      className={`flex items-center gap-3.5 rounded-xl border border-l-[3px] bg-white px-4 py-3 shadow-sm transition-shadow hover:shadow-md ${accentColor} ${highlight ? 'border-amber-400 ring-2 ring-amber-100' : 'border-slate-200'}`}
+    >
+      <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl ${iconBg}`}>
+        {icon}
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-[10px] font-bold uppercase tracking-widest text-slate-400">{label}</p>
+        <p className="mt-0.5 truncate font-['Sora',system-ui,sans-serif] text-lg font-black leading-tight text-slate-900">{value}</p>
+        <p className="truncate text-[11px] font-medium text-slate-500">{detail}</p>
       </div>
-      <strong className="min-w-0 truncate font-['Sora',system-ui,sans-serif] text-2xl font-black leading-tight text-slate-950">
-        {value}
-      </strong>
-      <span className="truncate text-xs font-medium text-slate-500">{detail}</span>
     </article>
   )
 }
 
 /* ─────────────────────────────────────────────
-   SchoolMealCard
+   SchoolMealCard — data formatada com formatMonthReferenceShort
 ───────────────────────────────────────────── */
 function SchoolMealCard({
   management,
@@ -863,7 +747,10 @@ function SchoolMealCard({
       <div className="flex min-w-0 items-start justify-between gap-2">
         <div className="min-w-0">
           <strong className="block truncate text-sm font-black text-slate-900">{schoolName}</strong>
-          <span className="mt-0.5 block text-[11px] font-medium text-slate-500">{management.mesReferencia}</span>
+          {/* Data formatada de forma legível: "Jun. 2025" */}
+          <span className="mt-0.5 block text-[11px] font-medium text-slate-500 capitalize">
+            {formatMonthReferenceShort(management.mesReferencia)}
+          </span>
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">
           {hasAlerts && (
@@ -1130,7 +1017,7 @@ function BudgetPanel({
 }
 
 /* ─────────────────────────────────────────────
-   MenuCard
+   MenuCard (Compact)
 ───────────────────────────────────────────── */
 function MenuCard({ menu, foods }: { menu: MealMenu; foods: MealFood[] }) {
   const menuFoods = menu.alimentoIds
@@ -1138,37 +1025,37 @@ function MenuCard({ menu, foods }: { menu: MealMenu; foods: MealFood[] }) {
     .filter((f): f is MealFood => Boolean(f))
 
   return (
-    <article className="grid h-full min-h-[122px] min-w-0 grid-rows-[auto_1fr] gap-0 overflow-hidden rounded-lg border border-slate-300 bg-white transition-all hover:border-slate-400 hover:shadow-sm">
-      <div className="border-b border-slate-300 bg-slate-50 px-3 py-2">
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold ${mealTypeColors[menu.tipoRefeicao]}`}>
+    <article className="grid min-h-[100px] min-w-0 grid-rows-[auto_1fr] gap-0 overflow-hidden rounded-lg border border-slate-300 bg-white transition-all hover:border-slate-400 hover:shadow-sm">
+      <div className="border-b border-slate-200 bg-slate-50 px-2.5 py-2">
+        <div className="flex flex-wrap items-center gap-1">
+          <span className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[9px] font-bold ${mealTypeColors[menu.tipoRefeicao]}`}>
             {mealTypeLabels[menu.tipoRefeicao]}
           </span>
-          <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${shiftColors[menu.turno]}`}>
+          <span className={`rounded-full border px-1.5 py-0.5 text-[9px] font-bold ${shiftColors[menu.turno]}`}>
             {shiftLabels[menu.turno]}
           </span>
-          <span className="ml-auto flex items-center gap-1 text-[10px] font-semibold text-indigo-600">
-            <CalendarDays className="h-3 w-3" />
+          <span className="ml-auto flex items-center gap-0.5 text-[9px] font-semibold text-indigo-600">
+            <CalendarDays className="h-2.5 w-2.5" />
             {menu.diaSemana}
           </span>
         </div>
-        <strong className="mt-1.5 block truncate text-[13px] font-black text-slate-900">{menu.titulo}</strong>
+        <strong className="mt-1 block truncate text-xs font-black text-slate-900">{menu.titulo}</strong>
       </div>
 
-      <div className="grid content-start gap-1 px-3 py-2">
+      <div className="grid content-start gap-1 px-2.5 py-2">
         {menuFoods.slice(0, 3).map((food) => (
-          <span key={food.id} className="flex min-w-0 items-center gap-2 text-[11px] font-semibold text-slate-700">
-            <span className="grid h-6 w-6 shrink-0 place-items-center rounded-md border border-slate-300 bg-slate-50">
-              <FoodIcon food={food} className="h-4 w-4" />
+          <span key={food.id} className="flex min-w-0 items-center gap-1.5 text-[11px] font-semibold text-slate-700">
+            <span className="grid h-5 w-5 shrink-0 place-items-center rounded border border-slate-200 bg-slate-50">
+              <FoodIcon food={food} className="h-3.5 w-3.5" />
             </span>
             <span className="truncate">{food.nome}</span>
           </span>
         ))}
         {menuFoods.length > 3 && (
-          <span className="pl-8 text-[10px] font-semibold text-slate-400">+{menuFoods.length - 3} mais</span>
+          <span className="pl-6 text-[9px] font-semibold text-slate-400">+{menuFoods.length - 3} mais</span>
         )}
         {menuFoods.length === 0 && (
-          <span className="text-xs text-slate-400">Nenhum alimento vinculado</span>
+          <span className="text-[11px] text-slate-400">Nenhum alimento</span>
         )}
       </div>
     </article>
@@ -1227,13 +1114,13 @@ function StockCard({
             <div className="rounded-lg border border-slate-300 bg-slate-50 px-2 py-1.5">
               <div className="text-[9px] font-semibold uppercase tracking-widest text-slate-400">Disponível</div>
               <strong className="text-sm font-black text-slate-800">
-                {formatNumber(stock.quantidadeAtual)} <span className="text-[10px] font-semibold text-slate-400">{formatMealUnit(stock.unidadeMedida)}</span>
+                {formatNumber(stock.quantidadeAtual)} <span className="text-[10px] font-semibold text-slate-400">{stock.unidadeMedida}</span>
               </strong>
             </div>
             <div className="rounded-lg border border-slate-300 bg-slate-50 px-2 py-1.5">
               <div className="text-[9px] font-semibold uppercase tracking-widest text-slate-400">Mínimo</div>
               <strong className="text-sm font-black text-slate-500">
-                {formatNumber(stock.quantidadeMinima)} <span className="text-[10px] font-semibold text-slate-400">{formatMealUnit(stock.unidadeMedida)}</span>
+                {formatNumber(stock.quantidadeMinima)} <span className="text-[10px] font-semibold text-slate-400">{stock.unidadeMedida}</span>
               </strong>
             </div>
           </div>
@@ -1279,7 +1166,7 @@ function StockCard({
 }
 
 /* ─────────────────────────────────────────────
-   Modal wrapper (portal) — mais compacto
+   StockCompactCard
 ───────────────────────────────────────────── */
 function StockCompactCard({
   stock,
@@ -1326,7 +1213,7 @@ function StockCompactCard({
         </div>
         <div className="flex min-w-0 flex-nowrap items-center gap-x-2 text-[11px] font-semibold text-slate-500">
           <span className="font-black text-slate-700">
-            {formatQuantity(stock.quantidadeAtual, stock.unidadeMedida)}
+            {formatNumber(stock.quantidadeAtual)} {stock.unidadeMedida}
           </span>
           <span className="min-w-0 truncate">
             {supplierName ?? 'Fornecedor não informado'}
@@ -1345,6 +1232,9 @@ function StockCompactCard({
   )
 }
 
+/* ─────────────────────────────────────────────
+   Modal wrapper (portal)
+───────────────────────────────────────────── */
 function Modal({
   id,
   title,
@@ -1409,7 +1299,7 @@ function Modal({
 }
 
 /* ─────────────────────────────────────────────
-   MovementsModal — compacto
+   MovementsModal
 ───────────────────────────────────────────── */
 function MovementsModal({
   management,
@@ -1423,55 +1313,42 @@ function MovementsModal({
   const movements = [...management.movimentacoesOrcamento].sort(
     (a, b) => new Date(b.dataMovimentacao).getTime() - new Date(a.dataMovimentacao).getTime(),
   )
-  const getMovementDisplayAmount = (movement: MealManagement['movimentacoesOrcamento'][number]) => {
-    const isWithdrawal = movement.saldoDepois < movement.saldoAntes || movement.tipo === 'COMPRA'
-    const amount = Math.abs(movement.valor)
-    return isWithdrawal ? -amount : amount
-  }
-  const total = movements.reduce((sum, movement) => sum + getMovementDisplayAmount(movement), 0)
-  const formatSignedCurrency = (value: number) => {
-    if (value < 0) return `-${formatCurrency(Math.abs(value))}`
-    return formatCurrency(value)
-  }
+  const total = movements.reduce((sum, m) => sum + m.valor, 0)
 
   return (
     <Modal id="mv-movements-title" title="Movimentações do Mês" subtitle={schoolName} onClose={onClose} maxWidth="640px">
       <div className="grid grid-cols-3 gap-2 border-b border-slate-300 bg-slate-50 px-4 py-3">
         <Stat label="Registros" value={String(movements.length)} size="sm" />
-        <Stat label="Total movimentado" value={formatSignedCurrency(total)} tone={total < 0 ? 'text-red-700' : 'text-blue-700'} size="sm" />
-        <Stat label="Saldo disponível" value={formatCurrency(management.orcamentoMensal.valorDisponivel)} tone={management.orcamentoMensal.valorDisponivel < 0 ? 'text-red-700' : 'text-emerald-700'} size="sm" />
+        <Stat label="Total movimentado" value={formatCurrency(total)} size="sm" />
+        <Stat label="Saldo disponível" value={formatCurrency(management.orcamentoMensal.valorDisponivel)} tone="text-emerald-700" size="sm" />
       </div>
 
       <div className="max-h-[55vh] overflow-y-auto p-4">
         {movements.length > 0 ? (
           <div className="grid gap-2">
-            {movements.map((m) => {
-              const displayAmount = getMovementDisplayAmount(m)
-              const isWithdrawal = displayAmount < 0
-              return (
-                <article key={m.id} className="grid gap-2.5 overflow-hidden rounded-xl border border-slate-300 bg-white p-3.5 shadow-sm">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <strong className="block text-sm font-bold text-slate-900">{m.descricao}</strong>
-                      <span className="mt-0.5 block text-xs text-slate-400">
-                        {new Date(m.dataMovimentacao).toLocaleDateString('pt-BR', {
-                          day: '2-digit',
-                          month: 'long',
-                          year: 'numeric',
-                        })}
-                      </span>
-                    </div>
-                    <span className={`shrink-0 rounded-full border px-3 py-1 text-sm font-black ${isWithdrawal ? 'border-red-400 bg-red-50 text-red-700' : 'border-blue-400 bg-blue-50 text-blue-700'}`}>
-                      {formatSignedCurrency(displayAmount)}
+            {movements.map((m) => (
+              <article key={m.id} className="grid gap-2.5 overflow-hidden rounded-xl border border-slate-300 bg-white p-3.5 shadow-sm">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <strong className="block text-sm font-bold text-slate-900">{m.descricao}</strong>
+                    <span className="mt-0.5 block text-xs text-slate-400">
+                      {new Date(m.dataMovimentacao).toLocaleDateString('pt-BR', {
+                        day: '2-digit',
+                        month: 'long',
+                        year: 'numeric',
+                      })}
                     </span>
                   </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <Stat label="Saldo antes" value={formatCurrency(m.saldoAntes)} size="sm" />
-                    <Stat label="Saldo depois" value={formatCurrency(m.saldoDepois)} tone={m.saldoDepois < 0 ? 'text-red-700' : 'text-blue-700'} size="sm" />
-                  </div>
-                </article>
-              )
-            })}
+                  <span className="shrink-0 rounded-full border border-indigo-400 bg-indigo-50 px-3 py-1 text-sm font-black text-indigo-700">
+                    {formatCurrency(m.valor)}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <Stat label="Saldo antes" value={formatCurrency(m.saldoAntes)} size="sm" />
+                  <Stat label="Saldo depois" value={formatCurrency(m.saldoDepois)} size="sm" />
+                </div>
+              </article>
+            ))}
           </div>
         ) : (
           <div className="grid min-h-[120px] place-items-center rounded-xl border border-dashed border-slate-300 bg-white text-center">
@@ -1487,7 +1364,7 @@ function MovementsModal({
 }
 
 /* ─────────────────────────────────────────────
-   MenuCalendarModal — responsivo e visual de cardápio
+   MenuCalendarModal
 ───────────────────────────────────────────── */
 function MenuCalendarModal({
   management,
@@ -1514,7 +1391,6 @@ function MenuCalendarModal({
   const selectedResources = selectedCell?.weekday ? byWeekday.get(selectedCell.weekday) ?? [] : []
   const isBusinessDay = selectedCell?.weekday !== null && selectedCell?.weekday !== undefined && selectedCell.weekday >= 1 && selectedCell.weekday <= 5
 
-  /* Group menus by weekday for the "Cardápios" tab */
   const menusByWeekday = useMemo(() => {
     const map = new Map<number, MealMenu[]>()
     for (const menu of management.cardapios) {
@@ -1537,7 +1413,6 @@ function MenuCalendarModal({
       onClose={onClose}
       maxWidth="860px"
     >
-      {/* Tabs */}
       <div className="flex border-b border-slate-300 bg-slate-50">
         {(['menus', 'calendar'] as const).map((tab) => (
           <button
@@ -1555,10 +1430,8 @@ function MenuCalendarModal({
         ))}
       </div>
 
-      {/* ── MENUS TAB: Cardápio semanal estilo restaurante ── */}
       {activeTab === 'menus' && (
         <div className="max-h-[70vh] overflow-y-auto p-4">
-          {/* Legend */}
           <div className="mb-4 flex flex-wrap items-center gap-3">
             <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Legenda:</span>
             {(Object.entries(mealTypeLabels) as [MealMenu['tipoRefeicao'], string][]).map(([type, label]) => (
@@ -1569,13 +1442,11 @@ function MenuCalendarModal({
             ))}
           </div>
 
-          {/* Weekly table */}
           <div className="grid gap-3">
             {businessWeekdays.map((wd) => {
               const dayMenus = menusByWeekday.get(wd) ?? []
               return (
                 <div key={wd} className={`overflow-hidden rounded-xl border ${dayMenus.length > 0 ? 'border-slate-300' : 'border-dashed border-slate-300'} bg-white`}>
-                  {/* Day header */}
                   <div className={`flex items-center justify-between px-4 py-2.5 ${dayMenus.length > 0 ? 'bg-indigo-600' : 'bg-slate-100'}`}>
                     <span className={`text-sm font-black ${dayMenus.length > 0 ? 'text-white' : 'text-slate-400'}`}>
                       {weekDayFullLabels[wd]}
@@ -1629,10 +1500,8 @@ function MenuCalendarModal({
         </div>
       )}
 
-      {/* ── CALENDAR TAB ── */}
       {activeTab === 'calendar' && (
         <div className="grid max-h-[70vh] gap-0 overflow-hidden lg:grid-cols-[1fr_280px]">
-          {/* Calendar grid */}
           <div className="overflow-y-auto p-4">
             <div className="grid grid-cols-7 gap-1 pb-2">
               {weekDayShortLabels.map((label) => (
@@ -1671,7 +1540,7 @@ function MenuCalendarModal({
                           {cell.day}
                         </span>
                         {cell.menus.slice(0, 2).map((menu) => (
-                          <div key={menu.id} className={`mb-0.5 flex items-center gap-0.5 rounded px-1 py-0.5`}>
+                          <div key={menu.id} className="mb-0.5 flex items-center gap-0.5 rounded px-1 py-0.5">
                             <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${mealTypeDotColors[menu.tipoRefeicao]}`} />
                             <span className="truncate text-[9px] font-bold text-slate-600">{mealTypeLabels[menu.tipoRefeicao]}</span>
                           </div>
@@ -1687,7 +1556,6 @@ function MenuCalendarModal({
             </div>
           </div>
 
-          {/* Day detail panel */}
           <aside className="grid content-start gap-3 overflow-y-auto border-l border-slate-300 bg-white p-4">
             <div>
               <p className="text-[10px] font-black uppercase tracking-[0.15em] text-indigo-600">Detalhes do dia</p>
@@ -1744,7 +1612,6 @@ function MenuCalendarModal({
               </div>
             )}
 
-            {/* Stock resources */}
             {isBusinessDay && selectedResources.length > 0 && (
               <div className="grid gap-2">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
@@ -1759,8 +1626,8 @@ function MenuCalendarModal({
                       <strong className="min-w-0 truncate text-xs font-black text-slate-900">{stock.nomeAlimento}</strong>
                     </div>
                     <div className="grid grid-cols-2 gap-1.5">
-                      <Stat label="Para o dia" value={formatQuantity(dailyQuantity, stock.unidadeMedida)} size="sm" />
-                      <Stat label="Total" value={formatQuantity(stock.quantidadeAtual, stock.unidadeMedida)} size="sm" />
+                      <Stat label="Para o dia" value={`${formatNumber(dailyQuantity)} ${stock.unidadeMedida}`} size="sm" />
+                      <Stat label="Total" value={`${formatNumber(stock.quantidadeAtual)} ${stock.unidadeMedida}`} size="sm" />
                     </div>
                   </div>
                 ))}
@@ -1774,7 +1641,7 @@ function MenuCalendarModal({
 }
 
 /* ─────────────────────────────────────────────
-   StockDetailModal — compacto
+   StockDetailModal
 ───────────────────────────────────────────── */
 function StockDetailModal({
   stock,
@@ -1805,8 +1672,8 @@ function StockDetailModal({
 
         <div className="grid grid-cols-2 gap-2">
           {[
-            { label: 'Quantidade atual', value: formatQuantity(stock.quantidadeAtual, stock.unidadeMedida) },
-            { label: 'Quantidade mínima', value: formatQuantity(stock.quantidadeMinima, stock.unidadeMedida) },
+            { label: 'Quantidade atual', value: `${formatNumber(stock.quantidadeAtual)} ${stock.unidadeMedida}` },
+            { label: 'Quantidade mínima', value: `${formatNumber(stock.quantidadeMinima)} ${stock.unidadeMedida}` },
             { label: 'Fornecedor', value: supplierName ?? 'Não informado' },
             {
               label: 'Data de validade',
@@ -1852,7 +1719,7 @@ function StockDetailModal({
 }
 
 /* ─────────────────────────────────────────────
-   WizardStepIndicator
+   StockOverviewModal
 ───────────────────────────────────────────── */
 function StockOverviewModal({
   management,
@@ -1869,7 +1736,7 @@ function StockOverviewModal({
   )
   const totalsText = (Object.entries(unitTotals) as Array<[MealStockItem['unidadeMedida'], number]>)
     .filter(([, total]) => total > 0)
-    .map(([unit, total]) => formatQuantity(total, unit))
+    .map(([unit, total]) => `${formatNumber(total)} ${unit}`)
     .join(' · ')
 
   return (
@@ -1920,7 +1787,7 @@ function StockOverviewModal({
                       Quantidade total
                     </span>
                     <strong className="text-sm font-black text-slate-900">
-                      {formatQuantity(row.totalQuantity, row.unit)}
+                      {formatNumber(row.totalQuantity)} {row.unit}
                     </strong>
                   </div>
 
@@ -1964,6 +1831,9 @@ function StockOverviewModal({
   )
 }
 
+/* ─────────────────────────────────────────────
+   WizardStepIndicator
+───────────────────────────────────────────── */
 function WizardStepIndicator({ current }: { current: WizardStep }) {
   const steps: { n: WizardStep; label: string; hint: string }[] = [
     { n: 1, label: 'Alimento', hint: 'Escolha o item' },
@@ -2033,18 +1903,12 @@ function ConfirmRow({ label, value, accent }: { label: string; value: string; ac
 ───────────────────────────────────────────── */
 function PurchaseForm({
   management,
-  schoolId,
-  mode = 'stock',
   onSearchFoods,
   onCreateItem,
-  onCreateFoodRequest,
 }: {
   management: MealManagement
-  schoolId?: string
-  mode?: 'stock' | 'request'
   onSearchFoods: (query: string, limit?: number) => Promise<MealFood[]>
-  onCreateItem?: (managementId: string, draft: CreateMealItemPayload) => Promise<void>
-  onCreateFoodRequest?: (draft: CreateMealFoodRequestPayload) => Promise<void>
+  onCreateItem: (managementId: string, draft: CreateMealItemPayload) => Promise<void>
 }) {
   const [step, setStep] = useState<WizardStep>(1)
   const [query, setQuery] = useState('')
@@ -2117,38 +1981,6 @@ function PurchaseForm({
   const shouldShowFoodOptions = !selectedFood || foodSearchTerm !== selectedFood.nome
   const estimatedTotal = parseDecimalInput(form.quantidade || '0') * parseDecimalInput(form.valorUnitario || '0')
   const step2Valid = !!form.quantidade && !!form.valorUnitario && !!form.fornecedorNome
-  const isRequestMode = mode === 'request'
-  const actionCopy = isRequestMode
-    ? {
-        eyebrow: 'Solicitar alimento',
-        title: 'Enviar para avaliacao nutricional',
-        selectHint: 'Selecione o alimento para solicitar:',
-        successEyebrow: 'Solicitacao enviada',
-        successTitle: 'Pedido encaminhado ao nutricionista',
-        successMessage: 'O nutricionista ira avaliar o estoque e os itens solicitados antes da entrada oficial.',
-        resetLabel: 'Solicitar novo alimento',
-        reviewLabel: 'Revisar solicitacao',
-        confirmLabel: 'Enviar solicitacao',
-        savingLabel: 'Enviando...',
-        selectedSectionLabel: 'Alimento solicitado',
-        dataSectionLabel: 'Dados da solicitacao',
-        totalLabel: 'Valor estimado',
-      }
-    : {
-        eyebrow: 'Registrar Compra',
-        title: 'Adicionar alimento ao estoque',
-        selectHint: 'Selecione o alimento comprado:',
-        successEyebrow: 'Compra registrada',
-        successTitle: 'Alimento adicionado ao estoque',
-        successMessage: '',
-        resetLabel: 'Registrar nova compra',
-        reviewLabel: 'Revisar compra',
-        confirmLabel: 'Confirmar compra',
-        savingLabel: 'Registrando...',
-        selectedSectionLabel: 'Alimento selecionado',
-        dataSectionLabel: 'Dados da compra',
-        totalLabel: 'Total da compra',
-      }
 
   function updateFormField<K extends keyof MealFormState>(field: K, value: MealFormState[K]) {
     setFieldErrors((current) => ({ ...current, [field]: undefined }))
@@ -2180,38 +2012,16 @@ function PurchaseForm({
     }
     setIsSaving(true)
     try {
-      if (isRequestMode) {
-        if (!onCreateFoodRequest) return
-        const details = [
-          `Fornecedor sugerido: ${parsed.fornecedorNome}`,
-          parsed.lote ? `Lote informado: ${parsed.lote}` : '',
-          parsed.quantidadeMinima ? `Quantidade minima sugerida: ${parsed.quantidadeMinima} ${formatMealUnit(selectedFood.unidadeMedida)}` : '',
-        ].filter(Boolean).join(' | ')
-
-        await onCreateFoodRequest({
-          schoolId,
-          itemName: selectedFood.nome,
-          quantity: parseDecimalInput(parsed.quantidade),
-          unit: selectedFood.unidadeMedida,
-          unitPrice: parseDecimalInput(parsed.valorUnitario),
-          reason: 'Solicitacao do diretor para avaliacao de estoque e necessidade de reposicao.',
-          urgencyLevel: 'MEDIUM',
-          expirationDate: parsed.possuiValidade ? parsed.dataValidade || null : null,
-          observation: details || null,
-        })
-      } else {
-        if (!onCreateItem) return
-        await onCreateItem(management.id, {
-          alimentoId: selectedFood.id,
-          quantidade: parseDecimalInput(parsed.quantidade),
-          valorUnitario: parseDecimalInput(parsed.valorUnitario),
-          fornecedorNome: parsed.fornecedorNome,
-          dataValidade: parsed.possuiValidade ? parsed.dataValidade || null : null,
-          possuiValidade: parsed.possuiValidade,
-          lote: parsed.lote || null,
-          quantidadeMinima: parsed.quantidadeMinima ? parseDecimalInput(parsed.quantidadeMinima) : undefined,
-        })
-      }
+      await onCreateItem(management.id, {
+        alimentoId: selectedFood.id,
+        quantidade: parseDecimalInput(parsed.quantidade),
+        valorUnitario: parseDecimalInput(parsed.valorUnitario),
+        fornecedorNome: parsed.fornecedorNome,
+        dataValidade: parsed.possuiValidade ? parsed.dataValidade || null : null,
+        possuiValidade: parsed.possuiValidade,
+        lote: parsed.lote || null,
+        quantidadeMinima: parsed.quantidadeMinima ? parseDecimalInput(parsed.quantidadeMinima) : undefined,
+      })
       setSaved(true)
     } catch {
       // The parent action already shows the API error as a toast.
@@ -2239,8 +2049,8 @@ function PurchaseForm({
             <CheckCircle2 className="h-4 w-4 text-white" />
           </div>
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-600">{actionCopy.successEyebrow}</p>
-            <h2 className="text-sm font-black text-slate-800">{actionCopy.successTitle}</h2>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-600">Compra registrada</p>
+            <h2 className="text-sm font-black text-slate-800">Alimento adicionado ao estoque</h2>
           </div>
         </div>
         <div className="grid place-items-center gap-4 p-6 text-center">
@@ -2252,7 +2062,7 @@ function PurchaseForm({
               {selectedFood?.nome ?? 'Item'} registrado com sucesso!
             </p>
             <p className="mt-1 text-sm text-slate-500">
-              {formatCurrency(estimatedTotal)} · {form.quantidade} {formatMealUnit(selectedFood?.unidadeMedida)}
+              {formatCurrency(estimatedTotal)} · {form.quantidade} {selectedFood?.unidadeMedida}
             </p>
           </div>
           <button
@@ -2261,7 +2071,7 @@ function PurchaseForm({
             className="inline-flex min-h-9 items-center gap-2 rounded-xl bg-indigo-600 px-5 text-sm font-black text-white transition-all hover:bg-indigo-700"
           >
             <Plus className="h-4 w-4" />
-            {actionCopy.resetLabel}
+            Registrar nova compra
           </button>
         </div>
       </section>
@@ -2275,18 +2085,17 @@ function PurchaseForm({
           <Plus className="h-4 w-4 text-white" />
         </div>
         <div>
-          <p className="text-[10px] font-bold uppercase tracking-wider text-indigo-600">{actionCopy.eyebrow}</p>
-          <h2 className="text-sm font-black text-slate-800">{actionCopy.title}</h2>
+          <p className="text-[10px] font-bold uppercase tracking-wider text-indigo-600">Registrar Compra</p>
+          <h2 className="text-sm font-black text-slate-800">Adicionar alimento ao estoque</h2>
         </div>
       </div>
 
       <WizardStepIndicator current={step} />
 
-      {/* ── STEP 1 ── */}
       {step === 1 && (
         <div>
           <div className="border-b border-slate-300 bg-white px-4 py-3">
-            <p className="mb-2 text-xs font-semibold text-slate-500">{actionCopy.selectHint}</p>
+            <p className="mb-2 text-xs font-semibold text-slate-500">Selecione o alimento comprado:</p>
             <div>
               <div className="relative">
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
@@ -2308,67 +2117,67 @@ function PurchaseForm({
           </div>
 
           {shouldShowFoodOptions && (
-          <div className="border-b border-slate-300 p-3">
-            <div className="mb-2 flex h-6 items-center justify-between gap-3">
-              <span className="truncate text-[10px] font-black uppercase tracking-wider text-slate-400">
-                {foodSearchTerm ? 'Resultados mais próximos' : 'Sugestões de alimentos'}
-              </span>
-              <span className="shrink-0 rounded-full border border-slate-300 bg-slate-50 px-2 py-0.5 text-[10px] font-bold text-slate-500">
-                {foodSuggestionLimit} alimentos
-              </span>
-            </div>
+            <div className="border-b border-slate-300 p-3">
+              <div className="mb-2 flex h-6 items-center justify-between gap-3">
+                <span className="truncate text-[10px] font-black uppercase tracking-wider text-slate-400">
+                  {foodSearchTerm ? 'Resultados mais próximos' : 'Sugestões de alimentos'}
+                </span>
+                <span className="shrink-0 rounded-full border border-slate-300 bg-slate-50 px-2 py-0.5 text-[10px] font-bold text-slate-500">
+                  {foodSuggestionLimit} alimentos
+                </span>
+              </div>
               <div className="grid h-[204px] grid-rows-[repeat(5,36px)] gap-1.5 overflow-hidden">
-              {isSearchingFoods && (
-                <div className="row-span-5 grid place-items-center rounded-xl border border-dashed border-slate-300 bg-slate-50">
-                  <p className="text-sm font-semibold text-slate-400">Buscando alimentos...</p>
-                </div>
-              )}
+                {isSearchingFoods && (
+                  <div className="row-span-5 grid place-items-center rounded-xl border border-dashed border-slate-300 bg-slate-50">
+                    <p className="text-sm font-semibold text-slate-400">Buscando alimentos...</p>
+                  </div>
+                )}
 
-              {!isSearchingFoods && foodOptions.slice(0, foodSuggestionLimit).map((food) => {
-                const isSelected = selectedFood?.id === food.id
-                return (
-                  <button
-                    key={food.id}
-                    type="button"
-                    onClick={() => {
-                      setFieldErrors((current) => ({ ...current, alimentoId: undefined }))
-                      setSelectedFood(food)
-                      setQuery(food.nome)
-                      setFoodOptions([])
-                      setFoodSearchError('')
-                      setForm((c) => ({ ...c, alimentoId: food.id }))
-                    }}
+                {!isSearchingFoods && foodOptions.slice(0, foodSuggestionLimit).map((food) => {
+                  const isSelected = selectedFood?.id === food.id
+                  return (
+                    <button
+                      key={food.id}
+                      type="button"
+                      onClick={() => {
+                        setFieldErrors((current) => ({ ...current, alimentoId: undefined }))
+                        setSelectedFood(food)
+                        setQuery(food.nome)
+                        setFoodOptions([])
+                        setFoodSearchError('')
+                        setForm((c) => ({ ...c, alimentoId: food.id }))
+                      }}
                       className={`flex h-9 min-w-0 items-center gap-2.5 overflow-hidden rounded-xl border px-2.5 text-left transition-all ${
-                      isSelected
-                        ? 'border-indigo-500 bg-indigo-50 shadow-[0_0_0_2px_rgba(99,102,241,0.1)]'
-                        : 'border-slate-300 bg-white hover:border-indigo-400 hover:bg-indigo-50/40'
-                    }`}
-                  >
+                        isSelected
+                          ? 'border-indigo-500 bg-indigo-50 shadow-[0_0_0_2px_rgba(99,102,241,0.1)]'
+                          : 'border-slate-300 bg-white hover:border-indigo-400 hover:bg-indigo-50/40'
+                      }`}
+                    >
                       <span className="grid h-6 w-6 shrink-0 place-items-center rounded-lg border border-slate-300 bg-white shadow-sm">
                         <FoodIcon food={food} className="h-4 w-4" />
                       </span>
-                    <span className="min-w-0 flex-1">
-                      <strong className="block truncate text-sm font-black leading-4 text-slate-900">{food.nome}</strong>
-                      <span className="mt-0.5 block truncate text-[10px] font-semibold leading-3 text-slate-400">
-                        {food.categoria} · {formatMealUnit(food.unidadeMedida)}
+                      <span className="min-w-0 flex-1">
+                        <strong className="block truncate text-sm font-black leading-4 text-slate-900">{food.nome}</strong>
+                        <span className="mt-0.5 block truncate text-[10px] font-semibold leading-3 text-slate-400">
+                          {food.categoria} · {food.unidadeMedida}
+                        </span>
                       </span>
-                    </span>
-                    {isSelected && <CheckCircle2 className="ml-auto h-4 w-4 shrink-0 text-indigo-500" />}
-                  </button>
-                )
-              })}
-              {!isSearchingFoods && foodSearchError && (
-                <div className="row-span-5 grid place-items-center rounded-xl border border-dashed border-red-300 bg-red-50 px-3 text-center">
-                  <p className="text-sm font-semibold text-red-500">{foodSearchError}</p>
-                </div>
-              )}
-              {!isSearchingFoods && !foodSearchError && foodOptions.length === 0 && !selectedFood && (
-                <div className="row-span-5 grid place-items-center rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 text-center">
-                  <p className="text-sm text-slate-400">Nenhum alimento retornado pelo endpoint</p>
-                </div>
-              )}
+                      {isSelected && <CheckCircle2 className="ml-auto h-4 w-4 shrink-0 text-indigo-500" />}
+                    </button>
+                  )
+                })}
+                {!isSearchingFoods && foodSearchError && (
+                  <div className="row-span-5 grid place-items-center rounded-xl border border-dashed border-red-300 bg-red-50 px-3 text-center">
+                    <p className="text-sm font-semibold text-red-500">{foodSearchError}</p>
+                  </div>
+                )}
+                {!isSearchingFoods && !foodSearchError && foodOptions.length === 0 && !selectedFood && (
+                  <div className="row-span-5 grid place-items-center rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 text-center">
+                    <p className="text-sm text-slate-400">Nenhum alimento retornado pelo endpoint</p>
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
           )}
 
           <div className="flex min-h-[61px] items-center justify-between gap-3 border-t border-slate-300 bg-slate-50 px-4 py-3">
@@ -2404,7 +2213,6 @@ function PurchaseForm({
         </div>
       )}
 
-      {/* ── STEP 2 ── */}
       {step === 2 && (
         <div>
           {selectedFood && (
@@ -2414,7 +2222,7 @@ function PurchaseForm({
               </span>
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-black text-slate-900">{selectedFood.nome}</p>
-                <p className="text-[10px] font-semibold text-indigo-500">{selectedFood.categoria} · {formatMealUnit(selectedFood.unidadeMedida)}</p>
+                <p className="text-[10px] font-semibold text-indigo-500">{selectedFood.categoria} · {selectedFood.unidadeMedida}</p>
               </div>
               <button
                 type="button"
@@ -2430,7 +2238,7 @@ function PurchaseForm({
             <div className="grid gap-2.5">
               <SectionDivider label="Quantidade e valor" />
               <div className="grid grid-cols-2 gap-3">
-                <Field label={`Quantidade (${formatMealUnit(selectedFood?.unidadeMedida) || 'un'})`} hint="Digite a quantidade total comprada." error={fieldErrors.quantidade}>
+                <Field label={`Quantidade (${selectedFood?.unidadeMedida ?? 'un'})`} hint="Digite a quantidade total comprada." error={fieldErrors.quantidade}>
                   <input
                     className={`${inputCls} ${fieldStateClass(fieldErrors.quantidade)}`}
                     type="number"
@@ -2446,12 +2254,13 @@ function PurchaseForm({
                 <Field label="Valor unitário (R$)" hint="Digite o preço pago por unidade." error={fieldErrors.valorUnitario}>
                   <input
                     className={`${inputCls} ${fieldStateClass(fieldErrors.valorUnitario)}`}
-                    type="text"
-                    inputMode="numeric"
+                    type="number"
+                    min="0.01"
+                    step="0.01"
                     required
-                    placeholder="R$ 0,00"
+                    placeholder="0,00"
                     value={form.valorUnitario}
-                    onChange={(e) => updateFormField('valorUnitario', formatCurrencyInput(e.target.value))}
+                    onChange={(e) => updateFormField('valorUnitario', e.target.value)}
                     aria-invalid={Boolean(fieldErrors.valorUnitario) || undefined}
                   />
                 </Field>
@@ -2459,7 +2268,7 @@ function PurchaseForm({
               <div className="flex items-center justify-between rounded-xl border border-indigo-300 bg-indigo-50 px-4 py-2.5">
                 <div>
                   <p className="text-[10px] font-semibold uppercase tracking-widest text-indigo-400">Total da compra</p>
-                  <p className="text-[11px] text-indigo-400">{form.quantidade || '0'} × {formatCurrencyFromInput(form.valorUnitario, 'R$ —')}</p>
+                  <p className="text-[11px] text-indigo-400">{form.quantidade || '0'} × {form.valorUnitario ? formatCurrency(Number(form.valorUnitario)) : 'R$ —'}</p>
                 </div>
                 <strong className="font-['Sora',system-ui,sans-serif] text-xl font-black text-indigo-700">
                   {formatCurrency(Number.isFinite(estimatedTotal) ? estimatedTotal : 0)}
@@ -2565,21 +2374,20 @@ function PurchaseForm({
               }}
               className="inline-flex min-h-9 flex-1 items-center justify-center gap-2 rounded-sm bg-indigo-600 px-4 text-sm font-black text-white transition-all hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-40"
             >
-              {actionCopy.reviewLabel}
+              Revisar compra
               <ChevronRight className="h-4 w-4" />
             </button>
           </div>
         </div>
       )}
 
-      {/* ── STEP 3 ── */}
       {step === 3 && (
         <div>
           <div className="grid gap-3 p-4">
             <div className="overflow-hidden rounded-xl border border-slate-300 bg-slate-50">
               <div className="flex items-center gap-2 border-b border-slate-300 px-4 py-2">
                 <Package className="h-3.5 w-3.5 text-slate-400" />
-                <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{actionCopy.selectedSectionLabel}</span>
+                <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Alimento selecionado</span>
               </div>
               {selectedFood && (
                 <div className="flex items-center gap-3 px-4 py-3">
@@ -2588,7 +2396,7 @@ function PurchaseForm({
                   </span>
                   <div>
                     <p className="font-bold text-slate-900">{selectedFood.nome}</p>
-                    <p className="text-[10px] font-semibold text-slate-400">{selectedFood.categoria} · {formatMealUnit(selectedFood.unidadeMedida)}</p>
+                    <p className="text-[10px] font-semibold text-slate-400">{selectedFood.categoria} · {selectedFood.unidadeMedida}</p>
                   </div>
                 </div>
               )}
@@ -2596,12 +2404,12 @@ function PurchaseForm({
 
             <div className="overflow-hidden rounded-xl border border-slate-300 bg-white">
               <div className="border-b border-slate-300 bg-slate-50 px-4 py-2">
-                <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{actionCopy.dataSectionLabel}</span>
+                <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Dados da compra</span>
               </div>
               <div className="divide-y divide-slate-100 px-4">
-                <ConfirmRow label="Quantidade" value={`${form.quantidade || '—'} ${formatMealUnit(selectedFood?.unidadeMedida)}`} />
-                <ConfirmRow label="Valor unitário" value={formatCurrencyFromInput(form.valorUnitario)} />
-                <ConfirmRow label="Qtd. mínima" value={form.quantidadeMinima ? `${form.quantidadeMinima} ${formatMealUnit(selectedFood?.unidadeMedida)}` : 'Automático'} />
+                <ConfirmRow label="Quantidade" value={`${form.quantidade || '—'} ${selectedFood?.unidadeMedida ?? ''}`} />
+                <ConfirmRow label="Valor unitário" value={form.valorUnitario ? formatCurrency(Number(form.valorUnitario)) : '—'} />
+                <ConfirmRow label="Qtd. mínima" value={form.quantidadeMinima ? `${form.quantidadeMinima} ${selectedFood?.unidadeMedida ?? ''}` : 'Automático'} />
                 <ConfirmRow label="Lote" value={form.lote || '—'} />
                 <ConfirmRow
                   label="Data de validade"
@@ -2617,9 +2425,9 @@ function PurchaseForm({
 
             <div className="flex items-center justify-between rounded-xl border border-indigo-400 bg-indigo-50 px-4 py-3">
               <div>
-                <p className="text-[10px] font-bold uppercase tracking-widest text-indigo-400">{actionCopy.totalLabel}</p>
+                <p className="text-[10px] font-bold uppercase tracking-widest text-indigo-400">Total da compra</p>
                 <p className="mt-0.5 text-xs text-indigo-400">
-                  {form.quantidade} {formatMealUnit(selectedFood?.unidadeMedida)} × {formatCurrencyFromInput(form.valorUnitario)}
+                  {form.quantidade} {selectedFood?.unidadeMedida} × {form.valorUnitario ? formatCurrency(Number(form.valorUnitario)) : '—'}
                 </p>
               </div>
               <strong className="font-['Sora',system-ui,sans-serif] text-xl font-black text-indigo-700">
@@ -2644,7 +2452,7 @@ function PurchaseForm({
               className="inline-flex min-h-9 flex-1 items-center justify-center gap-2 rounded-sm bg-indigo-600 px-4 text-sm font-black text-white transition-all hover:bg-indigo-700 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-50"
             >
               <CheckCircle2 className="h-4 w-4" />
-              {isSaving ? actionCopy.savingLabel : actionCopy.confirmLabel}
+              {isSaving ? 'Registrando...' : 'Confirmar compra'}
             </button>
           </div>
         </div>
@@ -2661,7 +2469,7 @@ function createRequestFormState(request?: MealFoodRequest | null): FoodRequestFo
     itemName: request?.itemName ?? '',
     quantity: request ? String(request.quantity) : '',
     unit: request?.unit ?? 'KG',
-    unitPrice: formatCurrencyInputValue(request?.unitPrice),
+    unitPrice: request?.unitPrice ? String(request.unitPrice) : '',
     reason: request?.reason ?? '',
     urgencyLevel: request?.urgencyLevel ?? 'MEDIUM',
     expirationDate: request?.expirationDate ?? '',
@@ -2692,7 +2500,6 @@ function FoodRequestModal({
   const [foodSearchError, setFoodSearchError] = useState('')
   const [errors, setErrors] = useState<FieldErrors<FoodRequestFormField>>({})
   const [isSaving, setIsSaving] = useState(false)
-  const requestInputCls = inputCls.replace('rounded-lg', 'rounded-sm')
 
   useEffect(() => {
     const initialForm = createRequestFormState(request)
@@ -2795,7 +2602,6 @@ function FoodRequestModal({
       itemName: selectedCatalogFood.nome,
       quantity: parsed.data.quantity,
       unit: parsed.data.unit,
-      unitPrice: parsed.data.unitPrice ? parseDecimalInput(parsed.data.unitPrice) : null,
       reason: parsed.data.reason,
       urgencyLevel: parsed.data.urgencyLevel,
       expirationDate: nextForm.expirationDate || null,
@@ -2815,134 +2621,123 @@ function FoodRequestModal({
     <Modal id="mv-food-request-title" title={request ? 'Corrigir solicitação' : 'Solicitar alimento'} subtitle="Fluxo nutricional" onClose={onClose} maxWidth="520px">
       <form onSubmit={handleSubmit} className="grid min-h-0 grid-rows-[1fr_auto] overflow-hidden" noValidate>
         <div className="mv-scroll grid max-h-[calc(100svh-156px)] gap-3 overflow-y-auto p-4 sm:max-h-[calc(100svh-196px)] sm:p-5">
-        <div className="flex min-w-0 flex-col gap-1.5">
-          <span className="text-[11px] font-bold text-slate-600">Alimento</span>
-          <div className="grid gap-2">
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
-              <input
-                className={`${requestInputCls} pl-9 pr-10 ${fieldStateClass(errors.itemName)}`}
-                value={foodQuery}
-                onChange={(event) => updateFoodQuery(event.target.value)}
-                placeholder="Buscar alimento cadastrado..."
-                autoFocus
-                aria-invalid={Boolean(errors.itemName) || undefined}
-              />
-              {foodQuery && (
-                <button
-                  type="button"
-                  onClick={() => updateFoodQuery('')}
-                  className="absolute right-2 top-1/2 grid h-6 w-6 -translate-y-1/2 place-items-center rounded-full text-slate-400 transition-all hover:bg-slate-100 hover:text-slate-700"
-                  aria-label="Limpar busca"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              )}
-            </div>
-            <div className="flex h-5 items-center justify-between gap-3">
-              <span className="truncate text-[10px] font-black uppercase tracking-wider text-slate-400">
-                {foodQuery.trim() ? 'Resultados mais proximos' : 'Sugestoes de alimentos'}
-              </span>
-              <span className="shrink-0 rounded-full border border-slate-300 bg-slate-50 px-2 py-0.5 text-[10px] font-bold text-slate-500">
-                {foodSuggestionLimit} opcoes
-              </span>
-            </div>
-            <div className={`grid gap-1.5 overflow-hidden ${foodQuery.trim() ? 'h-[178px] grid-rows-[repeat(5,32px)]' : 'h-11'}`}>
-              {!foodQuery.trim() ? (
-                <div className="grid place-items-center rounded-sm border border-dashed border-slate-300 bg-slate-50 px-3 text-center">
-                  <p className="text-xs font-semibold text-slate-400">Digite para buscar no banco de alimentos.</p>
-                </div>
-              ) : isSearchingFoods ? (
-                <div className="row-span-5 grid place-items-center rounded-sm border border-dashed border-slate-300 bg-slate-50 px-3 text-center">
-                  <p className="text-sm font-semibold text-slate-400">Buscando alimentos no banco...</p>
-                </div>
-              ) : foodSearchError ? (
-                <div className="row-span-5 grid place-items-center rounded-sm border border-dashed border-red-300 bg-red-50 px-3 text-center">
-                  <p className="text-sm font-semibold text-red-500">{foodSearchError}</p>
-                </div>
-              ) : foodOptions.length === 0 ? (
-                <div className="row-span-5 grid place-items-center rounded-sm border border-dashed border-slate-300 bg-slate-50 px-3 text-center">
-                  <p className="text-sm font-semibold text-slate-400">Nenhum alimento retornado pelo endpoint.</p>
-                </div>
-              ) : foodOptions.map((food) => {
-                const isSelected = selectedFood?.id === food.id
-                return (
+          <div className="flex min-w-0 flex-col gap-1.5">
+            <span className="text-[11px] font-bold text-slate-600">Alimento</span>
+            <div className="grid gap-2">
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+                <input
+                  className={`${inputCls} pl-9 pr-10 ${fieldStateClass(errors.itemName)}`}
+                  value={foodQuery}
+                  onChange={(event) => updateFoodQuery(event.target.value)}
+                  placeholder="Buscar alimento cadastrado..."
+                  autoFocus
+                  aria-invalid={Boolean(errors.itemName) || undefined}
+                />
+                {foodQuery && (
                   <button
-                    key={food.id}
                     type="button"
-                    onClick={() => selectFood(food)}
-                    className={`flex h-8 min-w-0 items-center gap-2 overflow-hidden rounded-sm border px-2 text-left transition-all ${
-                      isSelected
-                        ? 'border-indigo-500 bg-indigo-50 shadow-[0_0_0_2px_rgba(99,102,241,0.1)]'
-                        : 'border-slate-300 bg-white hover:border-indigo-400 hover:bg-indigo-50/40'
-                    }`}
+                    onClick={() => updateFoodQuery('')}
+                    className="absolute right-2 top-1/2 grid h-6 w-6 -translate-y-1/2 place-items-center rounded-full text-slate-400 transition-all hover:bg-slate-100 hover:text-slate-700"
+                    aria-label="Limpar busca"
                   >
-                    <span className="grid h-6 w-6 shrink-0 place-items-center rounded-sm border border-slate-300 bg-white shadow-sm">
-                      <FoodIcon food={food} className="h-4 w-4" />
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <strong className="block truncate text-[13px] font-black leading-4 text-slate-900">{food.nome}</strong>
-                      <span className="block truncate text-[10px] font-semibold leading-3 text-slate-400">
-                        {food.categoria} - {formatMealUnit(food.unidadeMedida)}
-                      </span>
-                    </span>
-                    {isSelected && <CheckCircle2 className="ml-auto h-3.5 w-3.5 shrink-0 text-indigo-500" />}
+                    <X className="h-3.5 w-3.5" />
                   </button>
-                )
-              })}
+                )}
+              </div>
+              <div className="flex h-5 items-center justify-between gap-3">
+                <span className="truncate text-[10px] font-black uppercase tracking-wider text-slate-400">
+                  {foodQuery.trim() ? 'Resultados mais proximos' : 'Sugestoes de alimentos'}
+                </span>
+                <span className="shrink-0 rounded-full border border-slate-300 bg-slate-50 px-2 py-0.5 text-[10px] font-bold text-slate-500">
+                  {foodSuggestionLimit} opcoes
+                </span>
+              </div>
+              <div className={`grid gap-1.5 overflow-hidden ${foodQuery.trim() ? 'h-[178px] grid-rows-[repeat(5,32px)]' : 'h-11'}`}>
+                {!foodQuery.trim() ? (
+                  <div className="grid place-items-center rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 text-center">
+                    <p className="text-xs font-semibold text-slate-400">Digite para buscar no banco de alimentos.</p>
+                  </div>
+                ) : isSearchingFoods ? (
+                  <div className="row-span-5 grid place-items-center rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 text-center">
+                    <p className="text-sm font-semibold text-slate-400">Buscando alimentos no banco...</p>
+                  </div>
+                ) : foodSearchError ? (
+                  <div className="row-span-5 grid place-items-center rounded-xl border border-dashed border-red-300 bg-red-50 px-3 text-center">
+                    <p className="text-sm font-semibold text-red-500">{foodSearchError}</p>
+                  </div>
+                ) : foodOptions.length === 0 ? (
+                  <div className="row-span-5 grid place-items-center rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 text-center">
+                    <p className="text-sm font-semibold text-slate-400">Nenhum alimento retornado pelo endpoint.</p>
+                  </div>
+                ) : foodOptions.map((food) => {
+                  const isSelected = selectedFood?.id === food.id
+                  return (
+                    <button
+                      key={food.id}
+                      type="button"
+                      onClick={() => selectFood(food)}
+                      className={`flex h-8 min-w-0 items-center gap-2 overflow-hidden rounded-lg border px-2 text-left transition-all ${
+                        isSelected
+                          ? 'border-indigo-500 bg-indigo-50 shadow-[0_0_0_2px_rgba(99,102,241,0.1)]'
+                          : 'border-slate-300 bg-white hover:border-indigo-400 hover:bg-indigo-50/40'
+                      }`}
+                    >
+                      <span className="grid h-6 w-6 shrink-0 place-items-center rounded-md border border-slate-300 bg-white shadow-sm">
+                        <FoodIcon food={food} className="h-4 w-4" />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <strong className="block truncate text-[13px] font-black leading-4 text-slate-900">{food.nome}</strong>
+                        <span className="block truncate text-[10px] font-semibold leading-3 text-slate-400">
+                          {food.categoria} - {food.unidadeMedida}
+                        </span>
+                      </span>
+                      {isSelected && <CheckCircle2 className="ml-auto h-3.5 w-3.5 shrink-0 text-indigo-500" />}
+                    </button>
+                  )
+                })}
+              </div>
             </div>
+            <FieldMessage error={errors.itemName} />
           </div>
-          <FieldMessage error={errors.itemName} />
-        </div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Quantidade" error={errors.quantity}>
-            <input className={requestInputCls} type="number" min="0" step="0.01" value={form.quantity} onChange={(event) => setField('quantity', event.target.value)} />
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Quantidade" error={errors.quantity}>
+              <input className={inputCls} type="number" min="0" step="0.01" value={form.quantity} onChange={(event) => setField('quantity', event.target.value)} />
+            </Field>
+            <Field label="Unidade">
+              <CompactSelect<MealUnit>
+                value={form.unit}
+                options={mealUnitOptions}
+                onChange={(unit) => setField('unit', unit)}
+                className={`${inputCls} ${fieldStateClass(errors.unit)}`}
+                error={errors.unit}
+                dropdownWidth="trigger"
+                dropdownMinWidth={180}
+              />
+            </Field>
+          </div>
+          <Field label="Motivo" error={errors.reason}>
+            <textarea className={`${inputCls} min-h-16 py-2`} value={form.reason} onChange={(event) => setField('reason', event.target.value)} />
           </Field>
-          <Field label="Unidade">
-            <CompactSelect<MealUnit>
-              value={form.unit}
-              options={mealUnitOptions}
-              onChange={(unit) => setField('unit', unit)}
-              className={`${requestInputCls} ${fieldStateClass(errors.unit)}`}
-              error={errors.unit}
-              dropdownWidth="trigger"
-              dropdownMinWidth={180}
-            />
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Urgência">
+              <CompactSelect<FoodRequestUrgency>
+                value={form.urgencyLevel}
+                options={foodRequestUrgencyOptions}
+                onChange={(urgencyLevel) => setField('urgencyLevel', urgencyLevel)}
+                className={`${inputCls} ${fieldStateClass(errors.urgencyLevel)}`}
+                error={errors.urgencyLevel}
+                dropdownWidth="trigger"
+                dropdownMinWidth={180}
+              />
+            </Field>
+            <Field label="Validade prevista" hint="Opcional">
+              <DateInput value={form.expirationDate} onChange={(event) => setField('expirationDate', event.target.value)} className={inputCls} />
+            </Field>
+          </div>
+          <Field label="Observação" hint="Opcional">
+            <textarea className={`${inputCls} min-h-14 py-2`} value={form.observation} onChange={(event) => setField('observation', event.target.value)} />
           </Field>
-        </div>
-        <Field label="Valor unitário (R$)" hint="Opcional: preço estimado por unidade." error={errors.unitPrice}>
-          <input
-            className={`${requestInputCls} ${fieldStateClass(errors.unitPrice)}`}
-            type="text"
-            inputMode="numeric"
-            value={form.unitPrice}
-            onChange={(event) => setField('unitPrice', formatCurrencyInput(event.target.value))}
-            placeholder="R$ 0,00"
-            aria-invalid={Boolean(errors.unitPrice) || undefined}
-          />
-        </Field>
-        <Field label="Motivo" error={errors.reason}>
-          <textarea className={`${requestInputCls} min-h-16 py-2`} value={form.reason} onChange={(event) => setField('reason', event.target.value)} />
-        </Field>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Urgência">
-            <CompactSelect<FoodRequestUrgency>
-              value={form.urgencyLevel}
-              options={foodRequestUrgencyOptions}
-              onChange={(urgencyLevel) => setField('urgencyLevel', urgencyLevel)}
-              className={`${requestInputCls} ${fieldStateClass(errors.urgencyLevel)}`}
-              error={errors.urgencyLevel}
-              dropdownWidth="trigger"
-              dropdownMinWidth={180}
-            />
-          </Field>
-          <Field label="Validade prevista" hint="Opcional">
-            <DateInput value={form.expirationDate} onChange={(event) => setField('expirationDate', event.target.value)} className={requestInputCls} />
-          </Field>
-        </div>
-        <Field label="Observação" hint="Opcional">
-          <textarea className={`${requestInputCls} min-h-14 py-2`} value={form.observation} onChange={(event) => setField('observation', event.target.value)} />
-        </Field>
         </div>
         <div className="flex shrink-0 justify-end gap-2 border-t border-slate-200 bg-white px-4 py-3 sm:px-5">
           <button type="button" onClick={onClose} className="min-h-10 rounded-sm border border-slate-300 bg-white px-4 text-sm font-bold text-slate-600 hover:bg-slate-50">Cancelar</button>
@@ -2966,11 +2761,10 @@ function AddRequestToStockModal({
   onClose: () => void
   onConfirm: (id: string, draft: AddMealFoodRequestToStockPayload) => Promise<void>
 }) {
+  const [form, setForm] = useState({ fornecedorNome: '', valorUnitario: '', dataCompra: '', dataValidade: request.expirationDate ?? '', observacao: '', quantidadeMinima: '' })
+  const [isSaving, setIsSaving] = useState(false)
   const quantity = request.suggestedQuantity && request.suggestedQuantity > 0 ? request.suggestedQuantity : request.quantity
   const unit = request.suggestedUnit ?? request.unit
-  const requestUnitPrice = getFoodRequestUnitPrice(request)
-  const [form, setForm] = useState({ fornecedorNome: '', valorUnitario: formatCurrencyInputValue(requestUnitPrice), dataCompra: '', dataValidade: request.expirationDate ?? '', observacao: '', quantidadeMinima: '' })
-  const [isSaving, setIsSaving] = useState(false)
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -2978,11 +2772,11 @@ function AddRequestToStockModal({
     try {
       await onConfirm(request.id, {
         fornecedorNome: form.fornecedorNome.trim() || null,
-        valorUnitario: form.valorUnitario ? parseDecimalInput(form.valorUnitario) : null,
+        valorUnitario: form.valorUnitario ? Number(form.valorUnitario) : null,
         dataCompra: form.dataCompra || null,
         dataValidade: form.dataValidade || null,
         observacao: form.observacao.trim() || null,
-        quantidadeMinima: form.quantidadeMinima ? parseDecimalInput(form.quantidadeMinima) : null,
+        quantidadeMinima: form.quantidadeMinima ? Number(form.quantidadeMinima) : null,
       })
       onClose()
     } finally {
@@ -2995,17 +2789,14 @@ function AddRequestToStockModal({
       <form onSubmit={handleSubmit} className="grid gap-4 p-5">
         <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-4">
           <p className="text-sm font-black text-slate-900">{request.itemName}</p>
-          <p className="mt-1 text-xs font-semibold text-indigo-700">
-            {formatQuantity(quantity, unit)} para entrada no estoque
-            {requestUnitPrice ? ` · ${formatCurrency(requestUnitPrice)} por unidade` : ''}
-          </p>
+          <p className="mt-1 text-xs font-semibold text-indigo-700">{formatNumber(quantity)} {unit} aprovados pelo nutricionista</p>
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Fornecedor" hint="Opcional">
             <input className={inputCls} value={form.fornecedorNome} onChange={(event) => setForm((current) => ({ ...current, fornecedorNome: event.target.value }))} />
           </Field>
           <Field label="Valor unitário" hint="Opcional">
-            <input className={inputCls} type="text" inputMode="numeric" placeholder="R$ 0,00" value={form.valorUnitario} onChange={(event) => setForm((current) => ({ ...current, valorUnitario: formatCurrencyInput(event.target.value) }))} />
+            <input className={inputCls} type="number" min="0" step="0.01" value={form.valorUnitario} onChange={(event) => setForm((current) => ({ ...current, valorUnitario: event.target.value }))} />
           </Field>
           <Field label="Data da compra" hint="Opcional">
             <DateInput value={form.dataCompra} onChange={(event) => setForm((current) => ({ ...current, dataCompra: event.target.value }))} className={inputCls} />
@@ -3033,84 +2824,78 @@ function AddRequestToStockModal({
 
 function FoodRequestsPanel({
   requests,
-  currentUserId,
+  isDirector,
   isAdmin,
+  onCreateClick,
   onEditClick,
-  onDeleteClick,
   onAddToStockClick,
 }: {
   requests: MealFoodRequest[]
-  currentUserId: string
+  isDirector: boolean
   isAdmin: boolean
+  onCreateClick: () => void
   onEditClick: (request: MealFoodRequest) => void
-  onDeleteClick: (request: MealFoodRequest) => void
   onAddToStockClick: (request: MealFoodRequest) => void
 }) {
-  const directStockBlockedStatuses = new Set<FoodRequestStatus>(['ADDED_TO_STOCK', 'CANCELLED'])
-  const visibleRequests = requests
+  const visibleRequests = isAdmin
+    ? requests.filter((request) => request.status === 'APPROVED_BY_NUTRITIONIST' || request.status === 'ADDED_TO_STOCK' || request.status === 'PENDING_PURCHASE' || request.status === 'PURCHASED')
+    : requests
 
   return (
     <section className="overflow-hidden rounded-xl border border-slate-300 bg-white shadow-sm">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-300 bg-slate-50 px-4 py-3">
         <div>
           <p className="text-[10px] font-bold uppercase tracking-wider text-indigo-600">Solicitações</p>
-          <h2 className="text-sm font-black text-slate-800">{isAdmin ? 'Entrada direta no estoque' : 'Acompanhamento da escola'}</h2>
+          <h2 className="text-sm font-black text-slate-800">{isAdmin ? 'Aprovadas para estoque' : 'Acompanhamento da escola'}</h2>
         </div>
+        {(isDirector || isAdmin) && (
+          <button type="button" onClick={onCreateClick} className="inline-flex min-h-9 items-center gap-2 rounded-sm bg-indigo-600 px-3 text-[11px] font-black uppercase tracking-wider text-white hover:bg-indigo-700">
+            <Plus className="h-4 w-4" />
+            Solicitar alimento
+          </button>
+        )}
       </div>
       <div className="mv-scroll grid max-h-[280px] gap-2 overflow-y-auto p-3">
         {visibleRequests.length === 0 ? (
           <div className="grid min-h-[90px] place-items-center rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4 text-center">
             <p className="text-sm font-semibold text-slate-400">Nenhuma solicitação para exibir.</p>
           </div>
-        ) : visibleRequests.map((request) => {
-          const requestUnitPrice = getFoodRequestUnitPrice(request)
-          const canMutateAsCreator = canCreatorMutateFoodRequest(request, currentUserId)
-          return (
-            <article key={request.id} className="rounded-xl border border-slate-300 bg-white p-3">
-              <div className="flex flex-wrap items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <h3 className="truncate text-sm font-black text-slate-900">{request.itemName}</h3>
-                  <p className="mt-0.5 text-xs font-semibold text-slate-500">
-                    {formatQuantity(request.quantity, request.unit)} · {formatRequestDate(request.createdAt)}
-                    {requestUnitPrice ? ` · ${formatCurrency(requestUnitPrice)} por unidade` : ''}
-                  </p>
-                </div>
-                <span className={`rounded-full border px-2 py-0.5 text-[10px] font-black ${foodRequestUrgencyTone(request.urgencyLevel)}`}>
-                  {foodRequestUrgencyLabels[request.urgencyLevel]}
-                </span>
+        ) : visibleRequests.map((request) => (
+          <article key={request.id} className="rounded-xl border border-slate-300 bg-white p-3">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div className="min-w-0">
+                <h3 className="truncate text-sm font-black text-slate-900">{request.itemName}</h3>
+                <p className="mt-0.5 text-xs font-semibold text-slate-500">{formatNumber(request.quantity)} {request.unit} · {formatRequestDate(request.createdAt)}</p>
               </div>
-              <p className="mt-2 line-clamp-2 text-xs leading-5 text-slate-500">{request.reason}</p>
-              <div className="mt-2 flex flex-wrap items-center gap-2">
-                <span className={`rounded-full border px-2 py-0.5 text-[10px] font-black ${foodRequestStatusTone(request.status)}`}>
-                  {foodRequestStatusLabels[request.status]}
-                </span>
-                {request.nutritionistObservation && (
-                  <span className="truncate text-[11px] font-semibold text-slate-400">Obs.: {request.nutritionistObservation}</span>
-                )}
-              </div>
-              <div className="mt-3 flex flex-wrap gap-2">
-                {canMutateAsCreator && (
-                  <button type="button" onClick={() => onEditClick(request)} className="inline-flex min-h-8 items-center gap-1.5 rounded-sm border border-amber-300 bg-amber-50 px-3 text-[11px] font-black text-amber-700 hover:bg-amber-100">
-                    <Pencil className="h-3.5 w-3.5" />
-                    {request.status === 'NEEDS_ADJUSTMENT' ? 'Corrigir' : 'Editar'}
-                  </button>
-                )}
-                {canMutateAsCreator && (
-                  <button type="button" onClick={() => onDeleteClick(request)} className="inline-flex min-h-8 items-center gap-1.5 rounded-sm border border-red-300 bg-red-50 px-3 text-[11px] font-black text-red-700 hover:bg-red-100">
-                    <Trash2 className="h-3.5 w-3.5" />
-                    Excluir
-                  </button>
-                )}
-                {isAdmin && !directStockBlockedStatuses.has(request.status) && (
-                  <button type="button" onClick={() => onAddToStockClick(request)} className="inline-flex min-h-8 items-center gap-1.5 rounded-sm border border-emerald-300 bg-emerald-50 px-3 text-[11px] font-black text-emerald-700 hover:bg-emerald-100">
-                    <PackageCheck className="h-3.5 w-3.5" />
-                    Adicionar ao estoque
-                  </button>
-                )}
-              </div>
-            </article>
-          )
-        })}
+              <span className={`rounded-full border px-2 py-0.5 text-[10px] font-black ${foodRequestUrgencyTone(request.urgencyLevel)}`}>
+                {foodRequestUrgencyLabels[request.urgencyLevel]}
+              </span>
+            </div>
+            <p className="mt-2 line-clamp-2 text-xs leading-5 text-slate-500">{request.reason}</p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <span className={`rounded-full border px-2 py-0.5 text-[10px] font-black ${foodRequestStatusTone(request.status)}`}>
+                {foodRequestStatusLabels[request.status]}
+              </span>
+              {request.nutritionistObservation && (
+                <span className="truncate text-[11px] font-semibold text-slate-400">Obs.: {request.nutritionistObservation}</span>
+              )}
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {isDirector && request.status === 'NEEDS_ADJUSTMENT' && (
+                <button type="button" onClick={() => onEditClick(request)} className="inline-flex min-h-8 items-center gap-1.5 rounded-sm border border-amber-300 bg-amber-50 px-3 text-[11px] font-black text-amber-700 hover:bg-amber-100">
+                  <Pencil className="h-3.5 w-3.5" />
+                  Corrigir
+                </button>
+              )}
+              {isAdmin && request.status === 'APPROVED_BY_NUTRITIONIST' && (
+                <button type="button" onClick={() => onAddToStockClick(request)} className="inline-flex min-h-8 items-center gap-1.5 rounded-sm border border-emerald-300 bg-emerald-50 px-3 text-[11px] font-black text-emerald-700 hover:bg-emerald-100">
+                  <PackageCheck className="h-3.5 w-3.5" />
+                  Adicionar ao estoque
+                </button>
+              )}
+            </div>
+          </article>
+        ))}
       </div>
     </section>
   )
@@ -3127,50 +2912,18 @@ export default function MealsView({
   onSearchFoods,
   onCreateFoodRequest,
   onUpdateFoodRequest,
-  onDeleteFoodRequest,
   onAddFoodRequestToStock,
-  onCreateManagement,
   onCreateItem,
   onUpdateBudget,
 }: MealsViewProps) {
   const [selectedManagementId, setSelectedManagementId] = useState(mealManagements[0]?.id ?? '')
   const [schoolPage, setSchoolPage] = useState(1)
-  const [schoolSearch, setSchoolSearch] = useState('')
-  const [schoolSearchQuery, setSchoolSearchQuery] = useState('')
   const [schoolPageData, setSchoolPageData] = useState<MealManagementsPagePayload | null>(null)
   const [isSchoolPageLoading, setIsSchoolPageLoading] = useState(false)
   const [schoolPageError, setSchoolPageError] = useState('')
-  const [schoolPageRefreshKey, setSchoolPageRefreshKey] = useState(0)
-  const availableManagements = useMemo(() => {
-    const byId = new Map<string, MealManagement>()
-    const realManagementBySchoolId = new Map<string, MealManagement>()
-    for (const management of mealManagements) byId.set(management.id, management)
-    for (const management of schoolPageData?.mealManagements ?? []) byId.set(management.id, management)
-    for (const management of byId.values()) {
-      if (!isVirtualMealManagement(management)) realManagementBySchoolId.set(management.escolaId, management)
-    }
-
-    for (const school of schools) {
-      if (!realManagementBySchoolId.has(school.id)) {
-        byId.set(`${virtualMealManagementPrefix}${school.id}`, createEmptyMealManagement(school.id))
-      }
-    }
-
-    return Array.from(byId.values())
-  }, [mealManagements, schoolPageData?.mealManagements, schools])
-  const displayManagements = useMemo(
-    () => {
-      const schoolIds = new Set(schools.map((school) => school.id))
-      const scopedManagements = schoolIds.size > 0
-        ? availableManagements.filter((management) => schoolIds.has(management.escolaId))
-        : availableManagements
-      return scopedManagements.length > 0 ? scopedManagements : availableManagements
-    },
-    [availableManagements, schools],
-  )
   const selectedManagement = useMemo(
-    () => displayManagements.find((m) => m.id === selectedManagementId) ?? displayManagements[0] ?? null,
-    [displayManagements, selectedManagementId],
+    () => mealManagements.find((m) => m.id === selectedManagementId) ?? mealManagements[0] ?? null,
+    [mealManagements, selectedManagementId],
   )
 
   const [movementsModal, setMovementsModal] = useState<MovementsModalState | null>(null)
@@ -3179,38 +2932,24 @@ export default function MealsView({
   const [stockDetail, setStockDetail] = useState<StockDetailState | null>(null)
   const [foodRequestModal, setFoodRequestModal] = useState<MealFoodRequest | 'new' | null>(null)
   const [stockRequestModal, setStockRequestModal] = useState<MealFoodRequest | null>(null)
-  const [deleteRequestTarget, setDeleteRequestTarget] = useState<MealFoodRequest | null>(null)
-  const [isDeletingRequest, setIsDeletingRequest] = useState(false)
 
-  const isAdmin = roleMatches(currentRole, ['ADMIN', 'ADMINISTRADOR', 'ADMINISTRADORA'])
-  const isDirector = roleMatches(currentRole, ['DIRETOR', 'DIRETORA', 'DIRECAO', 'DIRETORIA'])
-  const canManagePurchases = isAdmin
+  const canManagePurchases = currentRole?.code === 'ADMIN' || currentRole?.name === 'ADMIN'
+  const isDirector = currentRole?.code === 'DIRETOR' || currentRole?.name === 'DIRETOR'
+  const isAdmin = currentRole?.code === 'ADMIN' || currentRole?.name === 'ADMIN'
 
   useEffect(() => {
-    if (!displayManagements.length) return
-    if (!displayManagements.some((m) => m.id === selectedManagementId)) {
-      setSelectedManagementId(displayManagements[0].id)
+    if (!mealManagements.length) return
+    if (!mealManagements.some((m) => m.id === selectedManagementId)) {
+      setSelectedManagementId(mealManagements[0].id)
     }
-  }, [displayManagements, selectedManagementId])
-
-  useEffect(() => {
-    const timeoutId = window.setTimeout(() => {
-      setSchoolSearchQuery(schoolSearch.trim())
-    }, 300)
-
-    return () => window.clearTimeout(timeoutId)
-  }, [schoolSearch])
-
-  useEffect(() => {
-    setSchoolPage(1)
-  }, [schoolSearchQuery])
+  }, [mealManagements, selectedManagementId])
 
   useEffect(() => {
     let isCurrent = true
     setIsSchoolPageLoading(true)
     setSchoolPageError('')
 
-    onLoadSchoolPage(schoolPage, schoolSelectorPageSize, schoolSearchQuery)
+    onLoadSchoolPage(schoolPage, schoolSelectorPageSize)
       .then((data) => {
         if (!isCurrent) return
         setSchoolPageData(data)
@@ -3228,7 +2967,7 @@ export default function MealsView({
     return () => {
       isCurrent = false
     }
-  }, [onLoadSchoolPage, schoolPage, schoolPageRefreshKey, schoolSearchQuery])
+  }, [onLoadSchoolPage, schoolPage])
 
   useEffect(() => {
     setMovementsModal(null)
@@ -3237,42 +2976,18 @@ export default function MealsView({
     setStockDetail(null)
     setFoodRequestModal(null)
     setStockRequestModal(null)
-    setDeleteRequestTarget(null)
   }, [selectedManagementId])
 
   const schoolById = useMemo(
     () => new Map([...schools, ...(schoolPageData?.schools ?? [])].map((s) => [s.id, s])),
     [schools, schoolPageData?.schools],
   )
-  const localSchoolSelectorManagements = useMemo(() => {
-    const normalizedSearch = normalizeFoodSearchText(schoolSearchQuery)
-    if (!normalizedSearch) return displayManagements
-
-    return displayManagements.filter((management) => {
-      const school = schoolById.get(management.escolaId)
-      return normalizeFoodSearchText(school?.name ?? '').includes(normalizedSearch)
-    })
-  }, [displayManagements, schoolById, schoolSearchQuery])
-  const hasRemoteSchoolPage = Boolean(
-    schoolPageData && (schoolPageData.schools.length > 0 || schoolPageData.mealManagements.length > 0),
-  )
-  const schoolSelectorManagements = useMemo(() => {
-    if (!hasRemoteSchoolPage || !schoolPageData) {
-      return localSchoolSelectorManagements.slice((schoolPage - 1) * schoolSelectorPageSize, schoolPage * schoolSelectorPageSize)
-    }
-
-    const bySchoolId = new Map(availableManagements.map((management) => [management.escolaId, management]))
-    const managementsFromSchools = schoolPageData.schools
-      .map((school) => bySchoolId.get(school.id))
-      .filter((management): management is MealManagement => Boolean(management))
-
-    return managementsFromSchools.length > 0 ? managementsFromSchools : schoolPageData.mealManagements
-  }, [availableManagements, hasRemoteSchoolPage, localSchoolSelectorManagements, schoolPage, schoolPageData])
-  const schoolSelectorPagination = hasRemoteSchoolPage && schoolPageData?.pagination ? schoolPageData.pagination : {
-    page: schoolPage,
+  const schoolSelectorManagements = schoolPageData?.mealManagements ?? mealManagements.slice(0, schoolSelectorPageSize)
+  const schoolSelectorPagination = schoolPageData?.pagination ?? {
+    page: 1,
     limit: schoolSelectorPageSize,
-    total: localSchoolSelectorManagements.length,
-    totalPages: Math.max(1, Math.ceil(localSchoolSelectorManagements.length / schoolSelectorPageSize)),
+    total: mealManagements.length,
+    totalPages: Math.max(1, Math.ceil(mealManagements.length / schoolSelectorPageSize)),
   }
   const selectedSchool = selectedManagement ? schoolById.get(selectedManagement.escolaId) ?? null : null
   const selectedSchoolId = selectedManagement?.escolaId ?? currentUser.schoolId ?? ''
@@ -3280,117 +2995,39 @@ export default function MealsView({
     .filter((request) => request.schoolId === selectedSchoolId)
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
   const selectedMenus = selectedManagement?.cardapios ?? []
-  const selectedMenusPreview = selectedMenus.slice(0, 4)
-  const hiddenMenuCount = Math.max(0, selectedMenus.length - selectedMenusPreview.length)
   const selectedStock = selectedManagement?.estoqueMerenda ?? []
   const selectedStockPreview = selectedStock.slice(0, 4)
   const hiddenStockCount = Math.max(0, selectedStock.length - selectedStockPreview.length)
 
-  async function handleDeleteFoodRequest() {
-    if (!deleteRequestTarget) return
-
-    setIsDeletingRequest(true)
-    try {
-      await onDeleteFoodRequest(deleteRequestTarget.id)
-      setDeleteRequestTarget(null)
-    } finally {
-      setIsDeletingRequest(false)
-    }
-  }
-
-  async function ensurePersistedManagement(management: MealManagement, budgetDraft?: UpdateMealBudgetPayload) {
-    if (!isVirtualMealManagement(management)) return management
-
-    const created = await onCreateManagement({
-      escolaId: management.escolaId,
-      mesReferencia: management.mesReferencia,
-      valorLimite: budgetDraft?.valorLimite ?? Math.max(30000, management.orcamentoMensal.valorLimite),
-      alertaAoAtingirPercentual: budgetDraft?.alertaAoAtingirPercentual ?? management.orcamentoMensal.alertaAoAtingirPercentual,
-      permitirUltrapassarLimite: budgetDraft?.permitirUltrapassarLimite ?? management.orcamentoMensal.permitirUltrapassarLimite,
-    })
-
-    setSelectedManagementId(created.id)
-    setSchoolPageData((current) => current ? {
-      ...current,
-      mealManagements: [
-        created,
-        ...current.mealManagements.filter((item) => item.escolaId !== created.escolaId && item.id !== created.id),
-      ],
-    } : current)
-
-    return created
-  }
-
-  async function handleCreateItem(managementId: string, draft: CreateMealItemPayload) {
-    const management = availableManagements.find((item) => item.id === managementId)
-    const persistedManagement = management ? await ensurePersistedManagement(management) : null
-    await onCreateItem(persistedManagement?.id ?? managementId, draft)
-  }
-
-  async function handleUpdateBudget(managementId: string, draft: UpdateMealBudgetPayload) {
-    const management = availableManagements.find((item) => item.id === managementId)
-    const persistedManagement = management ? await ensurePersistedManagement(management, draft) : null
-    await onUpdateBudget(persistedManagement?.id ?? managementId, draft)
-  }
-
   const networkSummary = useMemo(() => {
-    const schoolIds = new Set(availableManagements.map((m) => m.escolaId))
+    const schoolIds = new Set(mealManagements.map((m) => m.escolaId))
     return {
-      schools: Math.max(schoolIds.size, schools.length),
-      value: availableManagements.reduce((s, m) => s + m.orcamentoMensal.valorUtilizado, 0),
-      available: availableManagements.reduce((s, m) => s + m.orcamentoMensal.valorDisponivel, 0),
-      items: availableManagements.reduce((s, m) => s + m.resumo.totalItens, 0),
-      alerts: availableManagements.reduce((s, m) => s + m.resumo.itensBaixoEstoque + m.resumo.itensVencidos, 0),
+      schools: schoolIds.size,
+      value: mealManagements.reduce((s, m) => s + m.orcamentoMensal.valorUtilizado, 0),
+      available: mealManagements.reduce((s, m) => s + m.orcamentoMensal.valorDisponivel, 0),
+      items: mealManagements.reduce((s, m) => s + m.resumo.totalItens, 0),
+      alerts: mealManagements.reduce((s, m) => s + m.resumo.itensBaixoEstoque + m.resumo.itensVencidos, 0),
     }
-  }, [availableManagements, schools.length])
+  }, [mealManagements])
 
   if (!selectedManagement) {
-    const isWaitingForAdminManagements = isAdmin && (isSchoolPageLoading || (!schoolPageData && !schoolPageError))
-    const didAdminLoadWithoutManagements = isAdmin && Boolean(schoolPageData) && !isSchoolPageLoading && !schoolPageError
-    const title = isAdmin
-      ? schoolPageError
-        ? 'Nao foi possivel carregar a gestao alimentar'
-        : didAdminLoadWithoutManagements
-          ? 'Gestao alimentar nao retornada'
-          : 'Carregando gestao alimentar'
-      : 'Gestao de merenda nao configurada'
-    const description = isAdmin
-      ? schoolPageError || (
-          didAdminLoadWithoutManagements
-            ? 'As escolas carregaram, mas a API nao retornou as gestoes alimentares. Tente carregar novamente.'
-            : 'Buscando as gestoes alimentares das escolas cadastradas.'
-        )
-      : 'Nenhuma escola possui gestao alimentar ativa para o mes de referencia.'
-
     return (
       <div className="grid min-h-screen place-items-center bg-slate-50 p-6 text-center">
         <div className="grid max-w-md gap-3">
           <div className="mx-auto grid h-14 w-14 place-items-center rounded-xl border-2 border-dashed border-slate-300">
-            {isWaitingForAdminManagements ? (
-              <div className="h-7 w-7 animate-spin rounded-full border-4 border-indigo-100 border-t-indigo-600" />
-            ) : (
-              <Utensils className="h-7 w-7 text-slate-400" />
-            )}
+            <Utensils className="h-7 w-7 text-slate-400" />
           </div>
           <h1 className="font-['Sora',system-ui,sans-serif] text-xl font-black text-slate-900">
-            {title}
+            Gestão de merenda não configurada
           </h1>
           <p className="text-sm leading-6 text-slate-500">
-            {description}
+            Nenhuma escola possui gestão alimentar ativa para o mês de referência.
           </p>
-          {isAdmin && (schoolPageError || didAdminLoadWithoutManagements) && (
-            <button
-              type="button"
-              onClick={() => setSchoolPageRefreshKey((current) => current + 1)}
-              className="mx-auto mt-1 inline-flex min-h-10 items-center justify-center rounded-sm bg-indigo-600 px-4 text-sm font-black text-white transition-colors hover:bg-indigo-700"
-            >
-              Tentar novamente
-            </button>
-          )}
         </div>
       </div>
     )
   }
+
   return (
     <>
       <style>{`
@@ -3428,7 +3065,6 @@ export default function MealsView({
           animation: mv-scale-in 0.2s cubic-bezier(0.22,1,0.36,1) both;
         }
 
-        /* Scrollbar styling for inner panels */
         .mv-scroll::-webkit-scrollbar { width: 4px; }
         .mv-scroll::-webkit-scrollbar-track { background: transparent; }
         .mv-scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
@@ -3444,89 +3080,101 @@ export default function MealsView({
           icon={<Utensils />}
           actions={(
             <div className="flex flex-wrap items-center gap-2">
-            <span className="rounded-full border border-slate-300 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-500">
-              {selectedManagement.mesReferencia}
-            </span>
-            <span
-              className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-bold ${
-                canManagePurchases || isDirector
-                  ? 'border-indigo-400 bg-indigo-50 text-indigo-700'
-                  : 'border-slate-300 bg-slate-100 text-slate-500'
-              }`}
-            >
-              {canManagePurchases || isDirector ? <ShieldCheck className="h-3.5 w-3.5" /> : <Lock className="h-3.5 w-3.5" />}
-              {canManagePurchases ? 'Admin: estoque direto' : isDirector ? 'Diretor: solicita avaliacao' : 'Somente leitura'}
-            </span>
+              <span className="rounded-full border border-slate-300 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-500">
+                {selectedManagement.mesReferencia}
+              </span>
+              <span
+                className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-bold ${
+                  canManagePurchases
+                    ? 'border-indigo-400 bg-indigo-50 text-indigo-700'
+                    : 'border-slate-300 bg-slate-100 text-slate-500'
+                }`}
+              >
+                {canManagePurchases ? <ShieldCheck className="h-3.5 w-3.5" /> : <Lock className="h-3.5 w-3.5" />}
+                {canManagePurchases ? 'Administrador' : 'Somente leitura'}
+              </span>
             </div>
           )}
         />
 
-        {/* ══ NETWORK METRICS ══ */}
-        <div className="mv-section grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {/* ══ NETWORK METRICS — compacto, 4 colunas fixas, altura uniforme ══ */}
+        <div className="mv-section grid grid-cols-2 gap-2.5 xl:grid-cols-4">
           <MetricCard
             icon={<Building2 className="h-4 w-4" />}
             label="Escolas ativas"
             value={String(networkSummary.schools)}
-            detail="Com gestão alimentar este mês"
+            detail="Com gestão alimentar"
+            accentColor="border-l-blue-500"
             iconBg="bg-blue-50 text-blue-600"
-            iconBorder="border-blue-400"
           />
           <MetricCard
             icon={<Wallet className="h-4 w-4" />}
             label="Gasto na rede"
             value={formatCurrency(networkSummary.value)}
             detail={`${formatCurrency(networkSummary.available)} disponível`}
+            accentColor="border-l-indigo-500"
             iconBg="bg-indigo-50 text-indigo-600"
-            iconBorder="border-indigo-400"
           />
           <MetricCard
             icon={<PackageCheck className="h-4 w-4" />}
             label="Lotes em estoque"
             value={String(networkSummary.items)}
-            detail="Registros ativos na rede"
+            detail="Registros ativos"
+            accentColor="border-l-violet-500"
             iconBg="bg-violet-50 text-violet-600"
-            iconBorder="border-violet-400"
           />
           <MetricCard
             icon={<AlertTriangle className="h-4 w-4" />}
             label="Alertas de estoque"
             value={String(networkSummary.alerts)}
-            detail={networkSummary.alerts > 0 ? 'Itens vencidos ou em falta' : 'Tudo em ordem 👍'}
+            detail={networkSummary.alerts > 0 ? 'Itens vencidos ou em falta' : 'Tudo em ordem'}
+            accentColor={networkSummary.alerts > 0 ? 'border-l-amber-500' : 'border-l-emerald-500'}
             iconBg={networkSummary.alerts > 0 ? 'bg-amber-50 text-amber-600' : 'bg-emerald-50 text-emerald-600'}
-            iconBorder={networkSummary.alerts > 0 ? 'border-amber-400' : 'border-emerald-400'}
             highlight={networkSummary.alerts > 0}
           />
         </div>
 
         {/* ══ MAIN 3-COL LAYOUT ══ */}
-        <div className="mv-section grid items-start gap-4 xl:items-stretch xl:grid-cols-[300px_minmax(0,1fr)_420px] 2xl:grid-cols-[320px_minmax(0,1fr)_440px]">
+        <div className="mv-section grid items-start gap-4 xl:grid-cols-[300px_minmax(0,1fr)_420px] 2xl:grid-cols-[320px_minmax(0,1fr)_440px]">
 
           {/* ── LEFT: SCHOOL SELECTOR ── */}
-          <aside className="grid min-w-0 gap-4 xl:sticky xl:top-4 xl:h-full">
-            <section className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-slate-300 bg-white shadow-sm xl:h-full">
-              {/* Centered header */}
-              <div className="border-b border-slate-300 bg-slate-50 px-4 py-4 text-center">
-                <div className="mx-auto mb-2 grid h-9 w-9 place-items-center rounded-xl bg-indigo-600">
-                  <Building2 className="h-4 w-4 text-white" />
+          <aside className="grid min-w-0 gap-4 xl:sticky xl:top-4">
+            <section className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-slate-300 bg-white shadow-sm">
+
+              {/* Header redesenhado: mais profissional, com divisão visual clara */}
+              <div className="border-b border-slate-300 bg-white px-0 py-0">
+                {/* Topo: título com accent colorido à esquerda */}
+                <div className="flex items-center gap-0 border-b border-slate-200">
+                  <div className="w-1 self-stretch rounded-tl-xl bg-indigo-600" />
+                  <div className="flex flex-1 items-center justify-between gap-3 px-4 py-3.5">
+                    <div className="flex items-center gap-2.5">
+                      <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-indigo-200 bg-indigo-50">
+                        <Building2 className="h-4 w-4 text-indigo-600" />
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-indigo-500">Unidades escolares</p>
+                        <h2 className="text-sm font-black leading-tight text-slate-900">Selecione a escola</h2>
+                      </div>
+                    </div>
+                    <span className="shrink-0 rounded-lg border border-slate-300 bg-slate-50 px-2.5 py-1 text-[11px] font-black text-slate-600 tabular-nums">
+                      {mealManagements.length} {mealManagements.length === 1 ? 'escola' : 'escolas'}
+                    </span>
+                  </div>
                 </div>
-                <p className="text-[10px] font-bold uppercase tracking-wider text-indigo-600">Escolas</p>
-                <h2 className="mt-0.5 text-sm font-black text-slate-800">Selecione a unidade</h2>
-                <p className="mt-1 text-[11px] font-medium text-slate-400">
-                  {schoolSelectorPagination.total} escola{schoolSelectorPagination.total !== 1 ? 's' : ''} disponível{schoolSelectorPagination.total !== 1 ? 'is' : ''}
-                </p>
-                <div className="relative mt-2">
-                  <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
-                  <input
-                    type="text"
-                    value={schoolSearch}
-                    onChange={(event) => setSchoolSearch(event.target.value)}
-                    placeholder="Buscar escola..."
-                    className="h-8 w-full rounded-lg border border-slate-300 bg-white pl-8 pr-3 text-xs font-medium text-slate-700 outline-none placeholder:text-slate-400 focus:border-indigo-400 focus:ring-1 focus:ring-indigo-100"
-                  />
+                {/* Campo de busca */}
+                <div className="px-3 py-2.5">
+                  <div className="relative">
+                    <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="text"
+                      placeholder="Buscar escola por nome..."
+                      className="h-8 w-full rounded-lg border border-slate-300 bg-slate-50 pl-8 pr-3 text-xs font-medium text-slate-700 outline-none placeholder:text-slate-400 focus:border-indigo-400 focus:bg-white focus:ring-2 focus:ring-indigo-100 transition-all"
+                    />
+                  </div>
                 </div>
               </div>
 
-              <div className="mv-scroll grid auto-rows-max content-start max-h-[calc(100vh-280px)] gap-2 overflow-y-auto p-3 xl:min-h-0 xl:flex-1">
+              <div className="mv-scroll flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-3">
                 {schoolPageError && (
                   <div className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-center text-xs font-bold text-red-600">
                     {schoolPageError}
@@ -3549,11 +3197,7 @@ export default function MealsView({
                     />
                   )
                 })}
-                {!isSchoolPageLoading && schoolSelectorManagements.length === 0 && (
-                  <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-4 text-center text-xs font-bold text-slate-400">
-                    Nenhuma escola encontrada.
-                  </div>
-                )}
+                <div className="flex-1" />
               </div>
 
               <div className="flex items-center justify-between gap-2 border-t border-slate-300 bg-slate-50 px-3 py-2">
@@ -3574,7 +3218,7 @@ export default function MealsView({
                   onClick={() => setSchoolPage((current) => Math.min(schoolSelectorPagination.totalPages, current + 1))}
                   className="rounded-sm border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-black text-slate-500 transition-all hover:border-indigo-400 hover:text-indigo-600 disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  Proxima
+                  Próxima
                 </button>
               </div>
             </section>
@@ -3592,7 +3236,7 @@ export default function MealsView({
                     {selectedSchool?.name ?? 'Escola selecionada'}
                   </h2>
                   <p className="mt-1 text-sm text-slate-400">
-                    {selectedManagement.mesReferencia} &middot; {selectedManagement.estoqueMerenda.length} lotes em estoque
+                    {formatMonthReferenceShort(selectedManagement.mesReferencia)} &middot; {selectedManagement.estoqueMerenda.length} lotes em estoque
                   </p>
                 </div>
                 <div className="grid min-w-0 grid-cols-2 gap-2 self-center text-center">
@@ -3602,16 +3246,22 @@ export default function MealsView({
               </div>
             </section>
 
+            {/* Alert banner */}
+            <AlertBanner
+              lowStock={selectedManagement.resumo.itensBaixoEstoque}
+              expired={selectedManagement.resumo.itensVencidos}
+            />
+
             {/* MENUS section */}
-            <section className="overflow-hidden rounded-xl border border-slate-300 bg-white shadow-sm xl:h-[260px]">
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-300 bg-slate-50 px-4 py-3">
-                <div className="flex items-center gap-2.5">
+            <section className="overflow-hidden rounded-xl border border-slate-300 bg-white shadow-sm xl:h-[280px]">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-300 bg-slate-50 px-4 py-3">
+                <div className="flex items-center gap-2">
                   <div className="grid h-7 w-7 place-items-center rounded-lg bg-amber-500">
                     <ClipboardList className="h-3.5 w-3.5 text-white" />
                   </div>
                   <div>
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-amber-600">Cardápios</p>
-                    <h2 className="text-[13px] font-black text-slate-800">Planejamento alimentar da escola</h2>
+                    <p className="text-[9px] font-bold uppercase tracking-wider text-amber-600">Cardápios</p>
+                    <h2 className="text-xs font-black text-slate-800">Planejamento alimentar</h2>
                   </div>
                 </div>
                 <button
@@ -3622,42 +3272,29 @@ export default function MealsView({
                       schoolName: selectedSchool?.name ?? 'Escola',
                     })
                   }
-                  className="inline-flex min-h-8 items-center gap-2 rounded-lg border border-amber-400 bg-white px-3 text-[10px] font-black uppercase tracking-wider text-amber-700 transition-all hover:bg-amber-100 hover:active:bg-amber-200"
+                  className="inline-flex min-h-8 items-center gap-1.5 rounded-lg border border-amber-400 bg-white px-2.5 text-[10px] font-black uppercase tracking-wider text-amber-700 transition-all hover:bg-amber-100 hover:active:bg-amber-200"
                 >
                   <CalendarDays className="h-3.5 w-3.5" />
-                  Calendário do mês
+                  Calendário
                 </button>
               </div>
 
-              <div className="mv-scroll grid content-start gap-3 overflow-y-auto p-3 pb-4 sm:grid-cols-2 xl:max-h-[200px]">
+              <div className="mv-scroll grid auto-rows-max grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-2 overflow-y-auto p-3 xl:max-h-[220px]">
                 {selectedMenus.length > 0 ? (
-                  selectedMenusPreview.map((menu) => (
+                  selectedMenus.map((menu) => (
                     <MenuCard key={menu.id} menu={menu} foods={selectedManagement.alimentosCadastrados} />
                   ))
                 ) : (
-                  <div className="col-span-full grid min-h-[120px] place-items-center rounded-xl border border-dashed border-slate-300 bg-slate-50 text-center">
+                  <div className="col-span-full grid min-h-[80px] place-items-center rounded-lg border border-dashed border-slate-300 bg-slate-50 text-center">
                     <div>
-                      <ClipboardList className="mx-auto h-8 w-8 text-slate-300" />
-                      <p className="mt-2 text-sm font-semibold text-slate-400">Nenhum cardápio cadastrado</p>
+                      <ClipboardList className="mx-auto h-6 w-6 text-slate-300" />
+                      <p className="mt-1 text-xs font-semibold text-slate-400">Nenhum cardápio cadastrado</p>
                     </div>
                   </div>
                 )}
-                {hiddenMenuCount > 0 && (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setMenuCalendarModal({
-                        management: selectedManagement,
-                        schoolName: selectedSchool?.name ?? 'Escola',
-                      })
-                    }
-                    className="col-span-full mt-1 grid min-h-[76px] place-items-center rounded-lg border border-dashed border-amber-300 bg-amber-50 px-3 text-center text-xs font-black text-amber-700 transition-all hover:border-amber-400 hover:bg-amber-100"
-                  >
-                    +{hiddenMenuCount} cardapio{hiddenMenuCount !== 1 ? 's' : ''} no calendario do mes
-                  </button>
-                )}
               </div>
             </section>
+
             {/* STOCK section */}
             <section className="overflow-hidden rounded-xl border border-slate-300 bg-white shadow-sm xl:h-[330px]">
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-300 bg-slate-50 px-5 py-3">
@@ -3734,15 +3371,7 @@ export default function MealsView({
               <PurchaseForm
                 management={selectedManagement}
                 onSearchFoods={onSearchFoods}
-                onCreateItem={handleCreateItem}
-              />
-            ) : isDirector ? (
-              <PurchaseForm
-                management={selectedManagement}
-                schoolId={selectedSchoolId}
-                mode="request"
-                onSearchFoods={onSearchFoods}
-                onCreateFoodRequest={onCreateFoodRequest}
+                onCreateItem={onCreateItem}
               />
             ) : (
               <section className="flex flex-col items-start gap-3 rounded-xl border border-slate-300 bg-white p-5 shadow-sm">
@@ -3762,10 +3391,10 @@ export default function MealsView({
 
             <FoodRequestsPanel
               requests={selectedFoodRequests}
-              currentUserId={currentUser.id}
+              isDirector={isDirector}
               isAdmin={isAdmin}
+              onCreateClick={() => setFoodRequestModal('new')}
               onEditClick={(request) => setFoodRequestModal(request)}
-              onDeleteClick={(request) => setDeleteRequestTarget(request)}
               onAddToStockClick={(request) => setStockRequestModal(request)}
             />
 
@@ -3773,7 +3402,7 @@ export default function MealsView({
               management={selectedManagement}
               schoolName={selectedSchool?.name ?? 'Rede municipal'}
               canEdit={canManagePurchases}
-              onUpdateBudget={handleUpdateBudget}
+              onUpdateBudget={onUpdateBudget}
               onShowMovements={() =>
                 setMovementsModal({
                   management: selectedManagement,
@@ -3803,20 +3432,6 @@ export default function MealsView({
           schoolName={selectedSchool?.name ?? 'Escola'}
           onClose={() => setStockRequestModal(null)}
           onConfirm={onAddFoodRequestToStock}
-        />
-      )}
-
-      {deleteRequestTarget && (
-        <ConfirmDialog
-          title="Excluir solicitação"
-          description={`A solicitação de ${deleteRequestTarget.itemName} será cancelada e deixará de seguir para aprovação.`}
-          confirmLabel="Excluir solicitação"
-          loading={isDeletingRequest}
-          tone="danger"
-          onCancel={() => {
-            if (!isDeletingRequest) setDeleteRequestTarget(null)
-          }}
-          onConfirm={handleDeleteFoodRequest}
         />
       )}
 

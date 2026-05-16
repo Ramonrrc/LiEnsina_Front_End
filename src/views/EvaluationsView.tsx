@@ -56,8 +56,7 @@ import { ConfirmDialog } from '../components/ui/confirm-dialog'
 import DateInput from '../components/ui/date-input'
 import { PageTitleBar } from '../components/ui/page-title-bar'
 import { FieldMessage, fieldStateClass, zodFieldErrors, type FieldErrors } from '../components/ui/form-field'
-import { formatClassGrade, getClassGradeOptions, normalizeClassGradeValue } from '../class-grade-options'
-import { resolveApiAssetUrl } from '../api'
+import { formatClassGrade } from '../class-grade-options'
 import type {
   AssessmentDescriptor,
   ClassRoom,
@@ -70,14 +69,24 @@ import type {
   GenerateQuestionSelectionResponse,
   Question,
   QuestionImportPlan,
-  QuestionSelectionSourceMode,
   QuestionSourceType,
   QuestionStatus,
   QuestionVisibility,
   Role,
-  Teacher,
   UserAccount,
 } from '../types'
+
+export interface Teacher {
+  id: string
+  userId: string
+  name: string
+  email: string
+  schoolId: string
+  specialty: string
+  active: boolean
+  avatarUrl?: string
+  bannerUrl?: string
+}
 
 interface EvaluationsViewProps {
   currentUser: UserAccount
@@ -90,8 +99,7 @@ interface EvaluationsViewProps {
   questionBank: Question[]
   questionImportPlans: QuestionImportPlan[]
   onCreate: (draft: Partial<Evaluation>) => Promise<void>
-  onDelete?: (id: string) => Promise<void>
-  onDownload?: (id: string) => Promise<void>
+  onDelete: (id: string) => Promise<void>
   onCreateQuestion: (draft: CreateQuestionRequest) => Promise<Question>
   onGenerateQuestions: (draft: GenerateQuestionSelectionRequest) => Promise<GenerateQuestionSelectionResponse>
   onDeleteQuestion?: (id: string) => Promise<void>
@@ -99,38 +107,22 @@ interface EvaluationsViewProps {
 
 type WorkspaceTab = 'builder' | 'bank' | 'inep' | 'create'
 type OptionLabel = 'A' | 'B' | 'C' | 'D' | 'E'
-type QuestionOriginMode = QuestionSelectionSourceMode
+type QuestionOriginMode = 'system' | 'enem' | 'mixed'
 type BankFilters = {
   search: string; gradeLevel: string; difficulty: string; status: string
   skillCode: string; descriptorCode: string; sourceType: string
   schoolId: string; createdById: string
 }
-type AutoFilters = { gradeLevel: string; difficulty: string; skillCode: string; sourceMode: QuestionOriginMode }
+type AutoFilters = { gradeLevel: string; difficulty: string; skillCode: string; descriptorCode: string; sourceMode: QuestionOriginMode }
 type TeacherQuestionDraft = {
   title: string; context: string; statement: string; explanation: string
-  gradeLevel: string; subject: string; difficulty: Difficulty; visibility: QuestionVisibility
+  gradeLevel: string; difficulty: Difficulty; visibility: QuestionVisibility
   status: QuestionStatus; sourceName: string; keywords: string
-  estimatedTimeSeconds: number; skillId: string
+  estimatedTimeSeconds: number; skillId: string; descriptorId: string
   options: Record<OptionLabel, string>; correctOption: OptionLabel
 }
 
 const optionLabels: OptionLabel[] = ['A', 'B', 'C', 'D', 'E']
-const defaultQuestionSubjects = [
-  'Matematica',
-  'Lingua Portuguesa',
-  'Geografia',
-  'Historia',
-  'Ingles',
-  'Espanhol',
-  'Biologia',
-  'Quimica',
-  'Fisica',
-  'Educacao Fisica',
-  'Sociologia',
-  'Ciencias da Natureza',
-  'Ciencias Humanas',
-  'Linguagens',
-]
 const QUESTIONS_PER_PAGE = 10
 const emptyEvaluation: Partial<Evaluation> = {
   title: '', classId: '', subject: 'Matematica',
@@ -154,11 +146,11 @@ const evaluationFormSchema = z.object({
 const teacherQuestionStep1Schema = z.object({
   title: requiredEvaluationText('Informe o título da questão.').pipe(z.string().min(4, 'Título deve ter pelo menos 4 caracteres.')),
   gradeLevel: requiredEvaluationText('Informe o ano escolar.'),
-  subject: requiredEvaluationText('Selecione a disciplina.'),
   difficulty: z.enum(['EASY', 'MEDIUM', 'HARD']),
   visibility: z.enum(['PRIVATE', 'SCHOOL', 'NETWORK', 'GLOBAL']),
   status: z.enum(['DRAFT', 'PENDING_REVIEW', 'APPROVED']),
   skillId: requiredEvaluationText('Selecione a habilidade BNCC.'),
+  descriptorId: requiredEvaluationText('Selecione o descritor.'),
   estimatedTimeSeconds: z.coerce.number().int('Informe o tempo em segundos.').min(30, 'Tempo mínimo é 30 segundos.'),
   sourceName: requiredEvaluationText('Informe a fonte da questão.'),
 })
@@ -183,12 +175,12 @@ const teacherQuestionFormSchema = teacherQuestionStep1Schema
 type EvaluationFormField = keyof z.infer<typeof evaluationFormSchema>
 type TeacherQuestionFormField = keyof z.infer<typeof teacherQuestionFormSchema>
 
-function createEmptyQuestionDraft(skillId = ''): TeacherQuestionDraft {
+function createEmptyQuestionDraft(skillId = '', descriptorId = ''): TeacherQuestionDraft {
   return {
     title: '', context: '', statement: '', explanation: '',
-    gradeLevel: 'EF8', subject: 'Matematica', difficulty: 'EASY', visibility: 'SCHOOL',
+    gradeLevel: '8o ano', difficulty: 'EASY', visibility: 'SCHOOL',
     status: 'DRAFT', sourceName: 'Questao criada pelo professor',
-    keywords: '', estimatedTimeSeconds: 90, skillId,
+    keywords: '', estimatedTimeSeconds: 90, skillId, descriptorId,
     options: { A: '', B: '', C: '', D: '', E: '' }, correctOption: 'A',
   }
 }
@@ -201,161 +193,36 @@ function getSubjectGroup(value?: string | null) {
   const text = normalizeAcademicText(value)
   if (!text) return null
   if (text.includes('matematica')) return 'matematica'
-  if (/(linguagens|portugues|literatura|redacao|ingles|espanhol|educacao fisica)/.test(text)) return 'linguagens'
+  if (/(linguagens|portugues|literatura|redacao|ingles|espanhol|arte|educacao fisica)/.test(text)) return 'linguagens'
   if (/(humanas|historia|geografia|filosofia|sociologia|sociais)/.test(text)) return 'humanas'
   if (/(natureza|biologia|fisica|quimica|ciencias naturais)/.test(text) || text === 'ciencias') return 'natureza'
   return null
 }
 function getLanguageSubject(value?: string | null) {
   const text = normalizeAcademicText(value)
-  if (/\b(ingles|lingua inglesa|english|foreign language english|idioma ingles)\b/.test(text)) return 'ingles'
-  if (/\b(espanhol|lingua espanhola|spanish|espanol|castellano|idioma espanhol)\b/.test(text)) return 'espanhol'
-  if (/\b(portugues|lingua portuguesa|literatura|redacao)\b/.test(text)) return 'portugues'
+  if (/(ingles|lingua inglesa)/.test(text)) return 'ingles'
+  if (/(espanhol|lingua espanhola)/.test(text)) return 'espanhol'
+  if (/(portugues|lingua portuguesa|literatura|redacao)/.test(text)) return 'portugues'
   return null
-}
-type QuestionLanguage = NonNullable<ReturnType<typeof getLanguageSubject>>
-const inferredQuestionLanguageCache = new WeakMap<Question, QuestionLanguage | null>()
-const englishSignalWords = new Set([
-  'the', 'and', 'of', 'to', 'in', 'is', 'are', 'was', 'were', 'for', 'with', 'on',
-  'from', 'by', 'about', 'people', 'world', 'not', 'can', 'will', 'would', 'have',
-  'has', 'had', 'this', 'that', 'they', 'their', 'them', 'you', 'your', 'we', 'our',
-  'what', 'when', 'where', 'why', 'how', 'which', 'who', 'because', 'there',
-])
-const spanishSignalWords = new Set([
-  'el', 'los', 'las', 'una', 'unas', 'unos', 'que', 'para', 'con', 'por', 'como',
-  'pero', 'mas', 'muy', 'esta', 'este', 'estos', 'estas', 'son', 'fue', 'era',
-  'tiene', 'tienen', 'desde', 'sobre', 'cuando', 'donde', 'porque', 'usted',
-  'nosotros', 'ellos', 'ellas', 'mundo', 'personas', 'tambien',
-])
-function metadataAcademicText(metadata: Question['metadata']) {
-  return Object.entries(metadata ?? {})
-    .flatMap(([, value]) => Array.isArray(value) ? value : [value])
-    .filter((value): value is string | number | boolean => ['string', 'number', 'boolean'].includes(typeof value))
-    .map(value => String(value))
-    .join(' ')
 }
 function questionAcademicText(q: Question) {
-  return [
-    q.subject,
-    q.component,
-    q.area,
-    q.title,
-    q.sourceName,
-    metadataAcademicText(q.metadata),
-  ].map(value => String(value ?? '')).join(' ')
-}
-function questionFullText(q: Question) {
-  return [
-    questionAcademicText(q),
-    q.context,
-    q.statement,
-    q.explanation,
-    q.options.map(option => option.text).join(' '),
-    q.skills.map(skill => `${skill.code} ${skill.description} ${skill.knowledgeObject}`).join(' '),
-    q.descriptors.map(descriptor => `${descriptor.code} ${descriptor.description}`).join(' '),
-  ].map(value => String(value ?? '')).join(' ')
-}
-function getQuestionSkillNumbers(q: Question) {
-  const metadataValues = Object.entries(q.metadata ?? {})
-    .filter(([key]) => /habilidade|skill|ability|competencia|competence/i.test(key))
-    .flatMap(([, value]) => Array.isArray(value) ? value : [value])
-  return [
-    ...q.skills.map(skill => skill.code),
-    ...metadataValues.map(value => String(value ?? '')),
-  ].flatMap(value => String(value).match(/\d+/g) ?? []).map(Number)
-}
-function hasAnyTerm(text: string, terms: string[]) {
-  return terms.some(term => text.includes(normalizeAcademicText(term)))
-}
-function getSpecificQuestionSubject(q: Question) {
-  const source = normalizeAcademicText(questionAcademicText(q))
-  const text = normalizeAcademicText(questionFullText(q))
-  const skillNumbers = getQuestionSkillNumbers(q)
-  const hasSkill = (skillNumber: number) => skillNumbers.includes(skillNumber)
-  const areaIsNature = getSubjectGroup(q.area) === 'natureza' || getSubjectGroup(q.subject) === 'natureza' || source.includes('natureza')
-  const areaIsHuman = getSubjectGroup(q.area) === 'humanas' || getSubjectGroup(q.subject) === 'humanas' || source.includes('humanas')
-  const physicsTerms = ['velocidade', 'forca', 'força', 'energia', 'aceleracao', 'aceleração', 'movimento', 'pressao', 'pressão', 'potencia', 'potência', 'circuito', 'eletrica', 'elétrica', 'onda', 'calor', 'temperatura']
-  const chemistryTerms = ['mol', 'reacao', 'reação', 'atomo', 'átomo', 'molecula', 'molécula', 'substancia', 'substância', 'quimica', 'química', 'solucao', 'solução', 'ion', 'íon', 'oxidacao', 'oxidação', 'estequiometria']
-  const historyTerms = ['era vargas', 'revolucao francesa', 'revolução francesa', 'ditadura militar', 'guerra fria', 'colonizacao', 'colonização', 'iluminismo', 'escravidao', 'escravidão', 'industrializacao', 'industrialização', 'republica velha', 'república velha', 'revolucao', 'revolução', 'guerra', 'ditadura', 'imperio', 'império']
-
-  if (source.includes('quimica')) return 'quimica'
-  if (source.includes('fisica') && !source.includes('educacao fisica')) return 'fisica'
-  if (source.includes('historia')) return 'historia'
-  if (areaIsNature && ((hasSkill(17) && hasAnyTerm(text, ['velocidade', 'forca', 'força', 'energia'])) || hasAnyTerm(text, physicsTerms))) return 'fisica'
-  if (areaIsNature && ((hasSkill(21) && hasAnyTerm(text, ['mol', 'reacao', 'reação', 'atomo', 'átomo'])) || hasAnyTerm(text, chemistryTerms))) return 'quimica'
-  if (areaIsHuman && hasAnyTerm(text, historyTerms)) return 'historia'
-  return null
-}
-function getQuestionLanguage(q: Question) {
-  const explicitLanguage = getLanguageSubject([
-    q.subject,
-    q.component,
-    q.area,
-    q.title,
-    q.sourceName,
-    metadataAcademicText(q.metadata),
-  ].map(value => String(value ?? '')).join(' '))
-  if (explicitLanguage) return explicitLanguage
-
-  const classificationGroup = getSubjectGroup(questionAcademicText(q))
-  if (q.sourceType !== 'INEP_ENEM' && classificationGroup !== 'linguagens') return null
-  if (inferredQuestionLanguageCache.has(q)) return inferredQuestionLanguageCache.get(q) ?? null
-
-  const inferredLanguage = inferQuestionLanguageFromText(q)
-  inferredQuestionLanguageCache.set(q, inferredLanguage)
-  return inferredLanguage
-}
-function inferQuestionLanguageFromText(q: Question): QuestionLanguage | null {
-  const text = normalizeAcademicText([
-    q.statement,
-    q.context,
-    q.options.map(option => option.text).join(' '),
-  ].map(value => String(value ?? '')).join(' ').slice(0, 6000))
-  if (!text) return null
-
-  const tokens = text.match(/[a-z]+/g) ?? []
-  const englishScore = tokens.reduce((score, token) => score + (englishSignalWords.has(token) ? 1 : 0), 0)
-  const spanishScore = tokens.reduce((score, token) => score + (spanishSignalWords.has(token) ? 1 : 0), 0)
-
-  if (englishScore >= 8 && englishScore >= spanishScore + 4) return 'ingles'
-  if (spanishScore >= 8 && spanishScore >= englishScore + 4) return 'espanhol'
-  return null
+  const metadataKeywords = Array.isArray(q.metadata.keywords) ? q.metadata.keywords.join(' ') : ''
+  return [q.subject, q.component, q.area, q.metadata.enemDiscipline, q.metadata.enemLanguage, metadataKeywords].map(value => String(value ?? '')).join(' ')
 }
 function questionMatchesSubject(q: Question, subject?: string | null) {
   const target = normalizeAcademicText(subject)
   if (!target) return true
   const source = normalizeAcademicText(questionAcademicText(q))
-  const specificTarget = ['fisica', 'quimica', 'historia'].includes(target) ? target : null
-  if (specificTarget) return getSpecificQuestionSubject(q) === specificTarget
   if (source.includes(target) || isSameAcademicText(q.subject, subject)) return true
   const targetGroup = getSubjectGroup(subject)
   const questionGroup = getSubjectGroup(source)
   const targetLanguage = getLanguageSubject(subject)
   if (targetLanguage) {
-    const questionLanguage = getQuestionLanguage(q)
-    if (targetLanguage === 'portugues') return questionLanguage ? questionLanguage === 'portugues' : questionGroup === 'linguagens'
+    const questionLanguage = getLanguageSubject(source)
+    if (targetLanguage === 'portugues') return questionGroup === 'linguagens' && questionLanguage !== 'ingles' && questionLanguage !== 'espanhol'
     return questionLanguage === targetLanguage
   }
   return Boolean(targetGroup && questionGroup && targetGroup === questionGroup)
-}
-function normalizeGradeComparable(value?: string | null) {
-  return normalizeClassGradeValue(value)
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[º°]/g, '')
-    .replace(/[^a-zA-Z0-9]+/g, ' ')
-    .trim()
-    .toUpperCase()
-}
-function questionMatchesGrade(q: Question, grade: string) {
-  if (grade === 'all') return true
-  const target = normalizeGradeComparable(grade)
-  const current = normalizeGradeComparable(q.gradeLevel)
-  if (!target || !current) return true
-  if (target === current) return true
-  if (target.startsWith('EM')) return current.startsWith('EM') || current.includes('ENSINO MEDIO')
-  const targetYear = target.match(/^EF([1-9])$/)?.[1]
-  return Boolean(targetYear && (current === `EF${targetYear}` || current.includes(`${targetYear}O ANO`) || current.includes(`${targetYear} ANO`)))
 }
 function questionSearchText(q: Question) {
   return normalizeSearch([q.title, q.context, q.statement, q.explanation, q.subject, q.gradeLevel, q.sourceName,
@@ -417,6 +284,7 @@ function formatQStatus(s: QuestionStatus) { return { DRAFT: 'Rascunho', PENDING_
 function formatBuildMode(m?: EvaluationBuildMode) { return m ? ({ automatic_bank: 'Automático', manual_bank: 'Manual', teacher_created: 'Professor', mixed: 'Misto' }[m]) : 'Planejado' }
 function formatSourceType(t: QuestionSourceType) { return { TEACHER_CREATED: 'Professor', SECRETARY_CREATED: 'Secretaria', AI_GENERATED: 'IA', INEP_ENEM: 'INEP/ENEM', IMPORTED_SPREADSHEET: 'Planilha', SCHOOL_BANK: 'Escola', GLOBAL_CURATED: 'Curadoria' }[t] }
 function formatPrintDate(v?: string | null) { if (!v) return ''; const d = new Date(v.includes('T') ? v : `${v}T00:00:00`); return isNaN(d.getTime()) ? v : new Intl.DateTimeFormat('pt-BR').format(d) }
+function escapeHtml(v?: string | number | null) { return String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;') }
 
 function diffColor(d: Difficulty) {
   return {
@@ -457,12 +325,8 @@ function uniquePrintableImages(images: PrintableImage[]) {
   const seen = new Set<string>()
   const unique: PrintableImage[] = []
   for (const image of images) {
-    const rawUrl = String(image.url ?? '').trim()
-    const supportedUrl = /^https?:\/\//i.test(rawUrl)
-      || /^(data:image\/[a-z0-9.+-]+;base64|blob:)/i.test(rawUrl)
-      || rawUrl.startsWith('/uploads/')
-    const url = resolveApiAssetUrl(rawUrl) ?? rawUrl
-    if (!supportedUrl || seen.has(url)) continue
+    const url = String(image.url ?? '').trim()
+    if (!(/^https?:\/\//i.test(url) || /^data:image\/[a-z0-9.+-]+;base64,/i.test(url)) || seen.has(url)) continue
     seen.add(url)
     unique.push({ url, alt: sanitizeText(image.alt || 'Imagem da questao') })
   }
@@ -471,104 +335,24 @@ function uniquePrintableImages(images: PrintableImage[]) {
 function getAttachmentImages(q: Question, positions: string[]) {
   return (q.attachments ?? []).filter(a => a.fileType === 'IMAGE' && positions.includes(a.position)).map(a => ({ url: a.fileUrl, alt: a.altText || 'Imagem da questao' }))
 }
-function skillMatchesSubject(skill: CurriculumSkill, subject?: string | null) {
-  const target = normalizeAcademicText(subject)
-  if (!target) return true
-  const source = normalizeAcademicText([
-    skill.area,
-    skill.component,
-    skill.thematicUnit,
-    skill.knowledgeObject,
-    skill.description,
-  ].join(' '))
-  if (source.includes(target)) return true
-  if (target === 'fisica') return /fisica|natureza|velocidade|forca|energia|movimento|eletric|onda/.test(source)
-  if (target === 'quimica') return /quimica|natureza|mol|reacao|atomo|substancia|materia/.test(source)
-  if (target === 'historia') return /historia|humanas|revolucao|guerra|ditadura|imperio|colonizacao/.test(source)
-  const targetGroup = getSubjectGroup(subject)
-  const skillGroup = getSubjectGroup(source)
-  return Boolean(targetGroup && skillGroup && targetGroup === skillGroup)
-}
-function skillMatchesGrade(skill: CurriculumSkill, grade: string) {
-  if (grade === 'all') return true
-  const target = normalizeGradeComparable(grade)
-  const current = normalizeGradeComparable(skill.gradeLevel)
-  if (!target || !current) return true
-  if (target === current) return true
-  if (target.startsWith('EM')) return current.startsWith('EM') || current.includes('SERIE') || current.includes('ENSINO MEDIO')
-  const targetYear = target.match(/^EF([1-9])$/)?.[1]
-  return Boolean(targetYear && (current === `EF${targetYear}` || current.includes(`${targetYear}O ANO`) || current.includes(`${targetYear} ANO`)))
-}
-function getOptionAttachmentImages(q: Question) {
-  return (q.attachments ?? [])
-    .filter(a => a.fileType === 'IMAGE' && a.position === 'OPTION')
-    .sort((a, b) => a.order - b.order)
-    .map(a => ({ order: a.order, image: { url: a.fileUrl, alt: a.altText || 'Imagem da alternativa' } }))
-}
-function getImagesForOption(
-  optionAttachments: ReturnType<typeof getOptionAttachmentImages>,
-  option: Question['options'][number],
-  optionIndex: number,
-  totalOptions: number,
-) {
-  const orderedImages = optionAttachments.filter(a => a.order === option.order).map(a => a.image)
-  if (orderedImages.length) return orderedImages
-  if (optionAttachments.length !== totalOptions) return []
-  return optionAttachments[optionIndex]?.image ? [optionAttachments[optionIndex].image] : []
-}
-function normalizeOptionPlaceholderText(value?: string | null) {
-  return sanitizeText(value ?? '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, ' ')
-    .trim()
-}
-function isOptionImagePlaceholderText(value: string, label: string) {
-  const text = normalizeOptionPlaceholderText(value)
-  const optionLabel = normalizeOptionPlaceholderText(label)
-  return [
-    `imagem da alternativa ${optionLabel}`,
-    `imagem alternativa ${optionLabel}`,
-    `alternativa ${optionLabel} imagem`,
-    `alternativa com imagem`,
-  ].includes(text)
-}
 function getQuestionPreviewText(value?: string | null) {
   const extracted = extractMarkdownImages(value)
   return extracted.text || (extracted.images.length ? 'Questao com imagem' : sanitizeText(value ?? ''))
 }
-function formatQuestionExplanation(value?: string | null) {
-  return String(value ?? '')
-    .replace(/Gabarito informado\s+pela API ENEM\s*:/gi, 'Gabarito informado:')
-    .replace(/\s+pela API ENEM\b/gi, '')
-    .replace(/[ \t]{2,}/g, ' ')
-    .trim()
-}
-function QuestionMedia({
-  images,
-  wrapperClassName = 'grid gap-3',
-  figureClassName = 'overflow-hidden rounded-xl border border-slate-300 bg-white p-2',
-  imageClassName = 'max-h-[420px] w-full object-contain',
-}: {
-  images: PrintableImage[]
-  wrapperClassName?: string
-  figureClassName?: string
-  imageClassName?: string
-}) {
+function QuestionMedia({ images }: { images: PrintableImage[] }) {
   const visibleImages = uniquePrintableImages(images)
   if (!visibleImages.length) return null
 
   return (
-    <div className={wrapperClassName}>
+    <div className="grid gap-3">
       {visibleImages.map((image) => (
-        <figure key={image.url} className={figureClassName}>
+        <figure key={image.url} className="overflow-hidden rounded-xl border border-slate-300 bg-white p-2">
           <img
             src={image.url}
             alt={image.alt}
             referrerPolicy="no-referrer"
             loading="eager"
-            className={imageClassName}
+            className="max-h-[420px] w-full object-contain"
           />
         </figure>
       ))}
@@ -579,16 +363,10 @@ function QuestionTextMediaBlock({
   value,
   images = [],
   textClassName = 'whitespace-pre-wrap text-sm leading-6 text-slate-700',
-  mediaWrapperClassName,
-  mediaFigureClassName,
-  mediaImageClassName,
 }: {
   value?: string | null
   images?: PrintableImage[]
   textClassName?: string
-  mediaWrapperClassName?: string
-  mediaFigureClassName?: string
-  mediaImageClassName?: string
 }) {
   const extracted = extractMarkdownImages(value)
   const visibleImages = uniquePrintableImages([...extracted.images, ...images])
@@ -598,15 +376,62 @@ function QuestionTextMediaBlock({
   return (
     <div className="grid gap-3">
       {extracted.text && <p className={textClassName}>{extracted.text}</p>}
-      <QuestionMedia
-        images={visibleImages}
-        wrapperClassName={mediaWrapperClassName}
-        figureClassName={mediaFigureClassName}
-        imageClassName={mediaImageClassName}
-      />
+      <QuestionMedia images={visibleImages} />
     </div>
   )
 }
+function renderPrintableText(value?: string | null, className = 'ctx') {
+  const text = sanitizeText(value ?? '')
+  if (!text) return ''
+  return text.split(/\n{2,}/).map(block => `<p class="${className}">${escapeHtml(block).replace(/\r?\n/g, '<br/>')}</p>`).join('')
+}
+function renderPrintableImages(images: PrintableImage[], className = 'media') {
+  return uniquePrintableImages(images).map(image => `<figure class="${className}"><img src="${escapeHtml(image.url)}" alt="${escapeHtml(image.alt)}" referrerpolicy="no-referrer" loading="eager"/></figure>`).join('')
+}
+function renderPrintableQuestion(q: Question, i: number) {
+  const statement = extractMarkdownImages(q.statement)
+  const context = extractMarkdownImages(q.context)
+  const statementImages = [...statement.images, ...getAttachmentImages(q, ['STATEMENT'])]
+  const contextImages = [...context.images, ...getAttachmentImages(q, ['CONTEXT'])]
+  const optionImages = getAttachmentImages(q, ['OPTION'])
+  const opts = [...q.options].sort((a, b) => a.order - b.order).map(o => {
+    const option = extractMarkdownImages(o.text)
+    return `<li><span class="ol">${escapeHtml(o.label)})</span><span>${escapeHtml(option.text)}${renderPrintableImages(option.images, 'media option-media')}</span></li>`
+  }).join('')
+  return `<article class="q"><h2>${i + 1}. ${escapeHtml(statement.text)}</h2>${renderPrintableImages(statementImages)}${renderPrintableText(context.text)}${renderPrintableImages(contextImages)}<ol class="opts">${opts}</ol>${renderPrintableImages(optionImages, 'media option-media')}</article>`
+}
+function exportEvaluationToA4(ev: Evaluation, qs: Question[], cls: string) {
+  const w = window.open('', '_blank', 'width=900,height=1200')
+  if (!w) return
+  const html = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"/><title>${escapeHtml(ev.title)}</title><style>
+    @page{size:A4;margin:14mm 13mm}*{box-sizing:border-box}body{margin:0;background:#fff;color:#111827;font-family:Arial,sans-serif;font-size:11pt;line-height:1.35}
+    header{border-bottom:1.5pt solid #111827;padding-bottom:8mm;margin-bottom:8mm}h1{margin:0 0 4mm;font-size:18pt;text-align:center;text-transform:uppercase}
+    .meta{display:grid;grid-template-columns:1fr 1fr;gap:3mm 8mm;font-size:10pt}.line{border-bottom:1pt solid #111827;min-height:7mm;padding-top:1.5mm}
+    .q{break-inside:avoid;margin:0 0 7mm}.q h2{margin:0 0 3mm;font-size:11.5pt;font-weight:700}.ctx{margin:0 0 3mm;color:#334155}
+    .media{break-inside:avoid;margin:3mm 0 4mm}.media img{display:block;max-width:100%;max-height:112mm;object-fit:contain;margin:0 auto}
+    .option-media img{max-height:52mm}
+    .opts{display:grid;gap:2mm;margin:0;padding:0;list-style:none}.opts li{display:grid;grid-template-columns:8mm 1fr;gap:2mm}.ol{font-weight:700}
+    .ag{break-inside:avoid;margin-top:9mm;border:1pt solid #111827;padding:4mm}.ag h2{margin:0 0 3mm;font-size:11pt}
+    .ai{display:grid;grid-template-columns:repeat(5,1fr);gap:2mm 4mm;font-size:9.5pt}
+    @media print{body,html{background:#fff}}
+  </style></head><body>
+  <header><h1>${escapeHtml(ev.title)}</h1><div class="meta">
+    <div><strong>Aluno:</strong><div class="line"></div></div>
+    <div><strong>Data:</strong><div class="line">${escapeHtml(formatPrintDate(ev.scheduledAt))}</div></div>
+    <div><strong>Turma:</strong><div class="line">${escapeHtml(cls)}</div></div>
+    <div><strong>Disciplina:</strong><div class="line">${escapeHtml(ev.subject)}</div></div>
+  </div></header>
+  ${qs.map(renderPrintableQuestion).join('')}
+  <section class="ag"><h2>Cartão de respostas</h2><div class="ai">
+    ${qs.map((_, i) => `<div>${i + 1}. A() B() C() D() E()</div>`).join('')}
+  </div></section>
+  <script>
+    function printWhenImagesAreReady(){var printed=false;var printOnce=function(){if(printed)return;printed=true;window.focus();window.print();};var imgs=Array.prototype.slice.call(document.images||[]);if(!imgs.length){printOnce();return;}var pending=imgs.length;var done=function(){pending-=1;if(pending<=0)printOnce();};window.setTimeout(printOnce,5000);imgs.forEach(function(img){if(img.complete){done();return;}img.addEventListener('load',done,{once:true});img.addEventListener('error',done,{once:true});});}
+    window.addEventListener('load',printWhenImagesAreReady);
+  </script></body></html>`
+  w.document.open(); w.document.write(html); w.document.close()
+}
+
 function EmptyState({ icon, title, sub }: { icon: React.ReactNode; title: string; sub: string }) {
   return (
     <div className="flex flex-col items-center justify-center gap-4 py-16 text-center">
@@ -766,29 +591,18 @@ function QuestionDetailModal({ question, onClose }: { question: Question; onClos
   const correctOpt = options.find((option) => option.isCorrect)
   const contextImages = getAttachmentImages(question, ['CONTEXT'])
   const statementImages = getAttachmentImages(question, ['STATEMENT'])
-  const optionAttachments = getOptionAttachmentImages(question)
-  const optionImagesById = new Map<string, PrintableImage[]>()
-  const usedOptionImageUrls = new Set<string>()
-  options.forEach((option, optionIndex) => {
-    const optionImages = getImagesForOption(optionAttachments, option, optionIndex, options.length)
-    optionImagesById.set(option.id, optionImages)
-    optionImages.forEach((image) => usedOptionImageUrls.add(image.url))
-  })
-  const unassignedOptionImages = optionAttachments
-    .filter((attachment) => !usedOptionImageUrls.has(attachment.image.url))
-    .map((attachment) => attachment.image)
-  const explanation = formatQuestionExplanation(question.explanation)
+  const optionImages = getAttachmentImages(question, ['OPTION'])
 
   return (
-    <div role="presentation" onMouseDown={onClose} className="fixed inset-0 z-[1100] grid place-items-center overflow-y-auto bg-slate-950/60 px-3 py-5 backdrop-blur-sm sm:px-4 sm:py-8">
+    <div role="presentation" onMouseDown={onClose} className="fixed inset-0 z-[1100] grid place-items-center overflow-y-auto bg-slate-950/60 px-4 py-8 backdrop-blur-sm">
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="question-detail-title"
         onMouseDown={(event) => event.stopPropagation()}
-        className="my-auto max-h-[calc(100svh-2.5rem)] w-full max-w-3xl overflow-hidden rounded-2xl border-2 border-slate-300 bg-white shadow-2xl sm:max-h-[calc(100svh-4rem)]"
+        className="my-auto max-h-[calc(100svh-4rem)] w-full max-w-3xl overflow-hidden rounded-2xl border-2 border-slate-300 bg-white shadow-2xl"
       >
-        <div className="flex items-start justify-between gap-4 border-b-2 border-slate-300 bg-gradient-to-r from-slate-50 to-white px-4 py-4 sm:px-6 sm:py-5">
+        <div className="flex items-start justify-between gap-4 border-b-2 border-slate-300 bg-gradient-to-r from-slate-50 to-white px-6 py-5">
           <div className="min-w-0">
             <p className="text-[10px] font-black uppercase tracking-widest text-indigo-500">Visualizar questao</p>
             <h2 id="question-detail-title" className="mt-1 font-['Sora',system-ui,sans-serif] text-lg font-black leading-tight text-slate-950">{question.title}</h2>
@@ -812,7 +626,7 @@ function QuestionDetailModal({ question, onClose }: { question: Question; onClos
           </button>
         </div>
 
-        <div className="max-h-[calc(100svh-11rem)] overflow-y-auto p-4 sm:max-h-[calc(100svh-13rem)] sm:p-6">
+        <div className="max-h-[calc(100svh-13rem)] overflow-y-auto p-6">
           {question.context && (
             <div className="mb-4 rounded-xl border-2 border-slate-300 bg-slate-50 px-4 py-3">
               <p className="mb-1 text-[10px] font-black uppercase tracking-widest text-slate-400">Texto de apoio</p>
@@ -830,45 +644,36 @@ function QuestionDetailModal({ question, onClose }: { question: Question; onClos
           </div>
 
           <div className="mt-4 grid gap-2">
-            {options.map((option) => {
-              const optionImages = optionImagesById.get(option.id) ?? []
-              const optionText = optionImages.length && isOptionImagePlaceholderText(option.text, option.label) ? '' : option.text
-
-              return (
-                <div
-                  key={option.id}
-                  className={`flex items-start gap-3 rounded-xl border-2 px-4 py-3 text-sm ${
-                    option.isCorrect
-                      ? 'border-emerald-400 bg-emerald-50 text-emerald-900 shadow-sm'
-                      : 'border-slate-300 bg-white text-slate-700'
-                  }`}
-                >
-                  <span className={`grid h-7 w-7 shrink-0 place-items-center rounded-lg text-xs font-black ${option.isCorrect ? 'bg-emerald-500 text-white' : 'bg-slate-100 text-slate-600'}`}>{option.label}</span>
-                  <div className="min-w-0 flex-1">
-                    <QuestionTextMediaBlock
-                      value={optionText}
-                      images={optionImages}
-                      textClassName="whitespace-pre-wrap leading-6"
-                      mediaWrapperClassName="flex flex-wrap items-start gap-2"
-                      mediaFigureClassName="shrink-0 overflow-hidden rounded-lg border border-slate-300 bg-white p-1.5"
-                      mediaImageClassName="h-auto max-h-28 w-auto max-w-44 object-contain"
-                    />
-                  </div>
-                  {option.isCorrect && (
-                    <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-emerald-300 bg-white/70 px-2 py-1 text-[10px] font-black uppercase tracking-widest text-emerald-700">
-                      <CheckCircle2 className="h-3.5 w-3.5" />
-                      Correta
-                    </span>
-                  )}
-                </div>
-              )
-            })}
+            {options.map((option) => (
+              <div
+                key={option.id}
+                className={`flex items-start gap-3 rounded-xl border-2 px-4 py-3 text-sm ${
+                  option.isCorrect
+                    ? 'border-emerald-400 bg-emerald-50 text-emerald-900 shadow-sm'
+                    : 'border-slate-300 bg-white text-slate-700'
+                }`}
+              >
+                <span className={`grid h-7 w-7 shrink-0 place-items-center rounded-lg text-xs font-black ${option.isCorrect ? 'bg-emerald-500 text-white' : 'bg-slate-100 text-slate-600'}`}>{option.label}</span>
+                <span className="min-w-0 flex-1">
+                  <QuestionTextMediaBlock
+                    value={option.text}
+                    textClassName="whitespace-pre-wrap leading-6"
+                  />
+                </span>
+                {option.isCorrect && (
+                  <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-emerald-300 bg-white/70 px-2 py-1 text-[10px] font-black uppercase tracking-widest text-emerald-700">
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                    Correta
+                  </span>
+                )}
+              </div>
+            ))}
           </div>
 
-          {unassignedOptionImages.length > 0 && (
+          {optionImages.length > 0 && (
             <div className="mt-4 rounded-xl border-2 border-slate-300 bg-slate-50 px-4 py-3">
               <p className="mb-2 text-[10px] font-black uppercase tracking-widest text-slate-400">Imagens das alternativas</p>
-              <QuestionMedia images={unassignedOptionImages} />
+              <QuestionMedia images={optionImages} />
             </div>
           )}
 
@@ -876,10 +681,10 @@ function QuestionDetailModal({ question, onClose }: { question: Question; onClos
             Resposta correta: {correctOpt?.label ?? '-'}
           </div>
 
-          {explanation && (
+          {question.explanation && (
             <div className="mt-4 rounded-xl border-2 border-slate-300 bg-slate-50 px-4 py-3">
               <p className="mb-1 text-[10px] font-black uppercase tracking-widest text-slate-400">Explicação</p>
-              <QuestionTextMediaBlock value={explanation} />
+              <QuestionTextMediaBlock value={question.explanation} />
             </div>
           )}
 
@@ -1135,10 +940,11 @@ function CompositionPanel({
           </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-3 border-b-2 border-slate-300 p-4 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 border-b-2 border-slate-300 p-4 sm:grid-cols-2 xl:grid-cols-4">
           {[
             { label: 'Tempo', value: estimatedMinutes ? `${estimatedMinutes}min` : '-', icon: Timer, color: 'text-cyan-600 bg-cyan-100' },
             { label: 'Habilidades', value: String(selectedSkillCodes.length), icon: Target, color: 'text-indigo-600 bg-indigo-100' },
+            { label: 'Descritores', value: String(selectedDescriptorCodes.length), icon: Layers, color: 'text-amber-600 bg-amber-100' },
             { label: 'Modo', value: formatBuildMode(buildMode), icon: Settings2, color: 'text-violet-600 bg-violet-100' },
           ].map((s, i) => (
             <div key={i} className="group rounded-xl border-2 border-slate-300 bg-gradient-to-br from-slate-50 to-white p-3 hover:border-indigo-300">
@@ -1187,26 +993,24 @@ function CompositionPanel({
 export default function EvaluationsView({
   currentUser,
   currentRole,
-  evaluations, classes, teachers = [], curriculumSkills, assessmentDescriptors,
-  questionBank, questionImportPlans, onCreate, onDelete, onDownload, onCreateQuestion, onGenerateQuestions, onDeleteQuestion,
+  evaluations, classes, curriculumSkills, assessmentDescriptors,
+  questionBank, questionImportPlans, onCreate, onDelete, onCreateQuestion, onDeleteQuestion,
 }: EvaluationsViewProps) {
   const firstSkillId = curriculumSkills[0]?.id ?? ''
+  const firstDescriptorId = assessmentDescriptors[0]?.id ?? ''
 
   const [draft, setDraft] = useState<Partial<Evaluation>>({ ...emptyEvaluation })
   const [statusFilter, setStatusFilter] = useState('all')
   const [workspace, setWorkspace] = useState<WorkspaceTab>('builder')
   const [buildMode, setBuildMode] = useState<EvaluationBuildMode>('manual_bank')
   const [selectedQuestionIds, setSelectedQuestionIds] = useState<string[]>([])
-  const [generatedQuestionCache, setGeneratedQuestionCache] = useState<Record<string, Question>>({})
   const [formNotice, setFormNotice] = useState<string | null>(null)
   const [evaluationFieldErrors, setEvaluationFieldErrors] = useState<FieldErrors<EvaluationFormField>>({})
   const [questionFormError, setQuestionFormError] = useState<string | null>(null)
   const [questionFieldErrors, setQuestionFieldErrors] = useState<FieldErrors<TeacherQuestionFormField>>({})
   const [deletingEvaluationId, setDeletingEvaluationId] = useState<string | null>(null)
-  const [downloadingEvaluationId, setDownloadingEvaluationId] = useState<string | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<Evaluation | null>(null)
   const [deletingQuestionId, setDeletingQuestionId] = useState<string | null>(null)
-  const [isGeneratingQuestions, setIsGeneratingQuestions] = useState(false)
   const [deleteQuestionTarget, setDeleteQuestionTarget] = useState<Question | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [evaluationsModalOpen, setEvaluationsModalOpen] = useState(false)
@@ -1214,8 +1018,8 @@ export default function EvaluationsView({
   const [bankPage, setBankPage] = useState(1)
   const [inepPage, setInepPage] = useState(1)
   const [bankFilters, setBankFilters] = useState<BankFilters>({ search: '', gradeLevel: 'all', difficulty: 'all', status: 'all', skillCode: 'all', descriptorCode: 'all', sourceType: 'all', schoolId: 'all', createdById: 'all' })
-  const [autoFilters, setAutoFilters] = useState<AutoFilters>({ gradeLevel: 'all', difficulty: 'all', skillCode: 'all', sourceMode: 'system' })
-  const [teacherQuestionDraft, setTeacherQuestionDraft] = useState<TeacherQuestionDraft>(createEmptyQuestionDraft(firstSkillId))
+  const [autoFilters, setAutoFilters] = useState<AutoFilters>({ gradeLevel: 'all', difficulty: 'all', skillCode: 'all', descriptorCode: 'all', sourceMode: 'system' })
+  const [teacherQuestionDraft, setTeacherQuestionDraft] = useState<TeacherQuestionDraft>(createEmptyQuestionDraft(firstSkillId, firstDescriptorId))
   const [createStep, setCreateStep] = useState<1 | 2 | 3>(1)
 
   useEffect(() => {
@@ -1227,61 +1031,51 @@ export default function EvaluationsView({
     setBankPage(1)
   }, [bankFilters])
 
+  const currentRoleText = normalizeAcademicText(`${currentRole?.code ?? ''} ${currentRole?.name ?? ''}`)
+  const canSeeAllBankQuestions = currentRoleText.includes('admin')
+    || currentRoleText.includes('diretor')
+    || currentRoleText.includes('coordenador')
+    || currentRoleText.includes('pedagog')
+  const currentQuestionCreatorIds = useMemo(
+    () => [currentUser.id, currentUser.linkedTeacherId].filter((id): id is string => Boolean(id)),
+    [currentUser.id, currentUser.linkedTeacherId],
+  )
   const bankQuestionPool = useMemo(() => questionBank.filter(q => q.sourceType !== 'INEP_ENEM'), [questionBank])
-  const visibleBankQuestionPool = bankQuestionPool
+  const visibleBankQuestionPool = useMemo(
+    () => canSeeAllBankQuestions ? bankQuestionPool : bankQuestionPool.filter(q => currentQuestionCreatorIds.includes(q.createdById)),
+    [bankQuestionPool, canSeeAllBankQuestions, currentQuestionCreatorIds],
+  )
   const inepPlan = questionImportPlans.find(p => p.active && p.sourceType === 'INEP_ENEM') ?? null
   const inepQuestions = questionBank.filter(q => q.sourceType === 'INEP_ENEM')
 
   const filteredEvaluations = useMemo(() => statusFilter === 'all' ? evaluations : evaluations.filter(e => e.status === statusFilter), [evaluations, statusFilter])
-  const selectedClass = useMemo(() => classes.find((item) => item.id === draft.classId) ?? null, [classes, draft.classId])
-  const selectedClassGrade = normalizeClassGradeValue(selectedClass?.grade)
   const gradeLevels = useMemo(() => getUniqueValues(questionBank.map(q => q.gradeLevel)), [questionBank])
   const sourceTypes = useMemo(() => getUniqueValues(visibleBankQuestionPool.map(q => q.sourceType)), [visibleBankQuestionPool])
   const bankSchoolIds = useMemo(() => getUniqueValues(visibleBankQuestionPool.map(q => q.schoolId)), [visibleBankQuestionPool])
   const bankCreatorIds = useMemo(() => getUniqueValues(visibleBankQuestionPool.map(q => q.createdById)), [visibleBankQuestionPool])
   const activeSkills = useMemo(() => curriculumSkills.filter(s => s.active), [curriculumSkills])
+  const activeDescriptors = useMemo(() => assessmentDescriptors.filter(d => d.active), [assessmentDescriptors])
 
   const classOptions = useMemo<Array<CompactSelectOption<string>>>(() => [{ value: '', label: 'Selecionar turma...' }, ...classes.map(c => ({ value: c.id, label: c.name, description: `${formatClassGrade(c.grade)} · ${c.shift}` }))], [classes])
-  const subjectOptions = useMemo<Array<CompactSelectOption<string>>>(() => getUniqueValues([...defaultQuestionSubjects, ...questionBank.map(q => q.subject)])
-    .filter(subject => !/\bartes?\b/.test(normalizeAcademicText(subject)))
-    .map(subject => ({ value: subject, label: subject })), [questionBank])
-  const gradeLevelOptions = useMemo<Array<CompactSelectOption<string>>>(() => {
-    const baseOptions = getClassGradeOptions().map(option => ({ value: option.value, label: option.label, description: option.description }))
-    const legacyOptions = gradeLevels
-      .filter(value => !baseOptions.some(option => normalizeGradeComparable(option.value) === normalizeGradeComparable(value)))
-      .map(value => ({ value, label: value, description: 'Banco de questões' }))
-    return [{ value: 'all', label: selectedClassGrade ? 'Todos da etapa' : 'Todos' }, ...baseOptions, ...legacyOptions]
-  }, [gradeLevels, selectedClassGrade])
+  const subjectOptions = useMemo<Array<CompactSelectOption<string>>>(() => getUniqueValues(['Matematica', 'Lingua Portuguesa', 'Ciencias da Natureza', 'Ciencias Humanas', 'Linguagens', ...questionBank.map(q => q.subject)]).map(subject => ({ value: subject, label: subject })), [questionBank])
+  const gradeLevelOptions = useMemo<Array<CompactSelectOption<string>>>(() => [{ value: 'all', label: 'Todos' }, ...gradeLevels.map(value => ({ value, label: value }))], [gradeLevels])
   const difficultyOptions = useMemo<Array<CompactSelectOption<string>>>(() => [{ value: 'all', label: 'Todos' }, ...(['EASY', 'MEDIUM', 'HARD'] as const).map(value => ({ value, label: formatDifficulty(value) }))], [])
   const questionStatusOptions = useMemo<Array<CompactSelectOption<string>>>(() => [{ value: 'all', label: 'Todos' }, ...(['APPROVED', 'PENDING_REVIEW', 'DRAFT', 'REJECTED', 'ARCHIVED'] as const).map(value => ({ value, label: formatQStatus(value) }))], [])
   const sourceTypeOptions = useMemo<Array<CompactSelectOption<string>>>(() => [{ value: 'all', label: 'Todos' }, ...sourceTypes.map(value => ({ value, label: formatSourceType(value as QuestionSourceType) }))], [sourceTypes])
   const schoolFilterOptions = useMemo<Array<CompactSelectOption<string>>>(() => [{ value: 'all', label: 'Todas' }, ...bankSchoolIds.map(id => ({ value: id, label: id === currentUser.schoolId ? 'Minha escola' : `Escola ${shortId(id)}`, description: id }))], [bankSchoolIds, currentUser.schoolId])
   const creatorFilterOptions = useMemo<Array<CompactSelectOption<string>>>(() => [{ value: 'all', label: 'Todos' }, ...bankCreatorIds.map(id => ({ value: id, label: id === currentUser.id ? 'Minhas questões' : `Professor ${shortId(id)}`, description: id }))], [bankCreatorIds, currentUser.id])
-  const autoSkillPool = useMemo(() => activeSkills.filter(skill => skillMatchesSubject(skill, draft.subject) && skillMatchesGrade(skill, autoFilters.gradeLevel)), [activeSkills, draft.subject, autoFilters.gradeLevel])
-  const teacherSkillPool = useMemo(() => activeSkills.filter(skill => skillMatchesSubject(skill, teacherQuestionDraft.subject) && skillMatchesGrade(skill, teacherQuestionDraft.gradeLevel)), [activeSkills, teacherQuestionDraft.subject, teacherQuestionDraft.gradeLevel])
-  const skillCodeOptions = useMemo<Array<CompactSelectOption<string>>>(() => [{ value: 'all', label: autoSkillPool.length ? 'Todos' : 'Sem habilidades para a disciplina' }, ...autoSkillPool.map(skill => ({ value: skill.code, label: getSkillOptionLabel(skill), description: getSkillOptionDescription(skill) }))], [autoSkillPool])
-  const teacherGradeLevelOptions = useMemo<Array<CompactSelectOption<string>>>(() => getClassGradeOptions().map(option => ({ value: option.value, label: option.label, description: option.description })), [])
+  const skillCodeOptions = useMemo<Array<CompactSelectOption<string>>>(() => [{ value: 'all', label: 'Todos' }, ...activeSkills.map(skill => ({ value: skill.code, label: getSkillOptionLabel(skill), description: getSkillOptionDescription(skill) }))], [activeSkills])
+  const descriptorCodeOptions = useMemo<Array<CompactSelectOption<string>>>(() => [{ value: 'all', label: 'Todos' }, ...activeDescriptors.map(descriptor => ({ value: descriptor.code, label: descriptor.code, description: descriptor.description }))], [activeDescriptors])
   const teacherDifficultyOptions = useMemo<Array<CompactSelectOption<Difficulty>>>(() => (['EASY', 'MEDIUM', 'HARD'] as const).map(value => ({ value, label: formatDifficulty(value) })), [])
   const teacherVisibilityOptions = useMemo<Array<CompactSelectOption<QuestionVisibility>>>(() => [{ value: 'PRIVATE', label: 'Privada' }, { value: 'SCHOOL', label: 'Escola' }, { value: 'NETWORK', label: 'Rede' }, { value: 'GLOBAL', label: 'Global' }], [])
   const teacherStatusOptions = useMemo<Array<CompactSelectOption<QuestionStatus>>>(() => [{ value: 'DRAFT', label: 'Rascunho' }, { value: 'PENDING_REVIEW', label: 'Em revisão' }, { value: 'APPROVED', label: 'Aprovada' }], [])
-  const teacherSkillOptions = useMemo<Array<CompactSelectOption<string>>>(() => teacherSkillPool.map(skill => ({ value: skill.id, label: getSkillOptionLabel(skill), description: getSkillOptionDescription(skill) })), [teacherSkillPool])
-
-  useEffect(() => {
-    if (autoFilters.skillCode === 'all') return
-    if (autoSkillPool.some(skill => skill.code === autoFilters.skillCode)) return
-    setAutoFilters(current => ({ ...current, skillCode: 'all' }))
-  }, [autoFilters.skillCode, autoSkillPool])
-
-  useEffect(() => {
-    if (!teacherSkillOptions.length) return
-    if (teacherQuestionDraft.skillId && teacherSkillOptions.some(option => option.value === teacherQuestionDraft.skillId)) return
-    setTeacherQuestionDraft(current => ({ ...current, skillId: teacherSkillOptions[0]?.value ?? '' }))
-  }, [teacherQuestionDraft.skillId, teacherSkillOptions])
+  const teacherSkillOptions = useMemo<Array<CompactSelectOption<string>>>(() => activeSkills.map(skill => ({ value: skill.id, label: getSkillOptionLabel(skill), description: getSkillOptionDescription(skill) })), [activeSkills])
+  const teacherDescriptorOptions = useMemo<Array<CompactSelectOption<string>>>(() => activeDescriptors.map(descriptor => ({ value: descriptor.id, label: descriptor.code, description: descriptor.description })), [activeDescriptors])
 
   const filteredQuestions = useMemo(() => {
     const s = normalizeSearch(bankFilters.search)
     return visibleBankQuestionPool.filter(q => {
-      if (!questionMatchesGrade(q, bankFilters.gradeLevel)) return false
+      if (bankFilters.gradeLevel !== 'all' && q.gradeLevel !== bankFilters.gradeLevel) return false
       if (bankFilters.difficulty !== 'all' && q.difficulty !== bankFilters.difficulty) return false
       if (bankFilters.status !== 'all' && q.status !== bankFilters.status) return false
       if (bankFilters.sourceType !== 'all' && q.sourceType !== bankFilters.sourceType) return false
@@ -1302,9 +1096,19 @@ export default function EvaluationsView({
         : visibleBankQuestionPool
   ), [autoFilters.sourceMode, inepQuestions, visibleBankQuestionPool])
 
-  const autoEligible = useMemo<Question[]>(() => [], [])
+  const autoEligible = useMemo(() => {
+    return autoSourcePool.filter(q => {
+      if (q.status !== 'APPROVED') return false
+      if (autoFilters.gradeLevel !== 'all' && q.gradeLevel !== autoFilters.gradeLevel) return false
+      if (autoFilters.difficulty !== 'all' && q.difficulty !== autoFilters.difficulty) return false
+      if (!questionMatchesSkill(q, autoFilters.skillCode, activeSkills)) return false
+      if (autoFilters.descriptorCode !== 'all' && !getDescriptorCodes(q).includes(autoFilters.descriptorCode)) return false
+      if (draft.subject && !questionMatchesSubject(q, draft.subject)) return false
+      return true
+    })
+  }, [autoFilters, autoSourcePool, draft.subject, activeSkills])
 
-  const selectedQuestions = useMemo(() => selectedQuestionIds.map(id => generatedQuestionCache[id] ?? questionBank.find(q => q.id === id)).filter((q): q is Question => Boolean(q)), [generatedQuestionCache, questionBank, selectedQuestionIds])
+  const selectedQuestions = useMemo(() => selectedQuestionIds.map(id => questionBank.find(q => q.id === id)).filter((q): q is Question => Boolean(q)), [questionBank, selectedQuestionIds])
   const safeBankPage = clampPage(bankPage, filteredQuestions.length)
   const paginatedQuestions = filteredQuestions.slice((safeBankPage - 1) * QUESTIONS_PER_PAGE, safeBankPage * QUESTIONS_PER_PAGE)
   const safeInepPage = clampPage(inepPage, inepQuestions.length)
@@ -1314,38 +1118,15 @@ export default function EvaluationsView({
   const estimatedMinutes = useMemo(() => Math.max(0, Math.ceil(selectedQuestions.reduce((t, q) => t + Number(q.metadata.estimatedTimeSeconds ?? 0), 0) / 60)), [selectedQuestions])
 
   const teacherSkillId = teacherQuestionDraft.skillId || firstSkillId
+  const teacherDescriptorId = teacherQuestionDraft.descriptorId || firstDescriptorId
 
   function getClassName(id: string) { return classes.find(c => c.id === id)?.name ?? 'Turma não encontrada' }
-  function getEvaluationCreatorName(ev: Evaluation) {
-    const directName = sanitizeText(ev.createdByName ?? ev.creatorName ?? ev.teacherName ?? ev.createdBy?.name ?? '')
-    if (directName) return directName
+  function getEvaluationQuestions(ev: Evaluation) { return (ev.questionIds ?? []).map(id => questionBank.find(q => q.id === id)).filter((q): q is Question => Boolean(q)) }
 
-    const creatorId = ev.createdById ?? ev.createdBy?.id
-    if (creatorId) {
-      if (creatorId === currentUser.id) return currentUser.name
-      const teacher = teachers.find((item) => item.userId === creatorId || item.id === creatorId)
-      if (teacher) return teacher.name
-      return `Usuario ${shortId(creatorId)}`
-    }
-
-    const classRoom = classes.find((item) => item.id === ev.classId)
-    const classTeacher = teachers.find((item) => item.id === classRoom?.teacherId || (classRoom?.teacherIds ?? []).includes(item.id))
-    return classTeacher ? `${classTeacher.name} (turma)` : 'Nao informado'
-  }
-
-  async function handleExportEvaluation(ev: Evaluation) {
-    if (!onDownload) {
-      setFormNotice('Download de provas indisponivel neste perfil.')
-      return
-    }
-
-    setDownloadingEvaluationId(ev.id)
-    try {
-      await onDownload(ev.id)
-      setFormNotice(null)
-    } finally {
-      setDownloadingEvaluationId(null)
-    }
+  function handleExportEvaluation(ev: Evaluation) {
+    const qs = getEvaluationQuestions(ev)
+    if (!qs.length) { setFormNotice('Esta prova não possui questões carregadas para exportação A4.'); return }
+    exportEvaluationToA4(ev, qs, getClassName(ev.classId))
   }
 
   function handleDeleteEvaluation(ev: Evaluation) {
@@ -1357,7 +1138,7 @@ export default function EvaluationsView({
   }
 
   async function confirmDeleteEvaluation() {
-    if (!deleteTarget || !onDelete) return
+    if (!deleteTarget) return
     setDeletingEvaluationId(deleteTarget.id)
     try {
       await onDelete(deleteTarget.id)
@@ -1391,20 +1172,6 @@ export default function EvaluationsView({
 
   function clearEvaluationError(field: EvaluationFormField) {
     setEvaluationFieldErrors((current) => ({ ...current, [field]: undefined }))
-  }
-
-  function handleClassChange(classId: string) {
-    clearEvaluationError('classId')
-    const classRoom = classes.find((item) => item.id === classId)
-    const gradeLevel = normalizeClassGradeValue(classRoom?.grade)
-    setDraft({ ...draft, classId })
-    if (gradeLevel) setAutoFilters((current) => ({ ...current, gradeLevel, skillCode: 'all' }))
-  }
-
-  function handleSubjectChange(subject: string) {
-    clearEvaluationError('subject')
-    setDraft({ ...draft, subject })
-    setAutoFilters((current) => ({ ...current, skillCode: 'all' }))
   }
 
   function scrollToEvaluationError(errors: FieldErrors<EvaluationFormField>) {
@@ -1449,53 +1216,8 @@ export default function EvaluationsView({
     return true
   }
 
-  async function handleAutoSelect() {
+  function handleAutoSelect() {
     const target = Math.max(1, Number(draft.questions ?? 1))
-    const subject = sanitizeText(draft.subject ?? '')
-    if (!subject) {
-      const errors: FieldErrors<EvaluationFormField> = { subject: 'Selecione a disciplina para gerar as questões.' }
-      setEvaluationFieldErrors((current) => ({ ...current, ...errors }))
-      setFormNotice(errors.subject ?? 'Selecione a disciplina para gerar as questões.')
-      scrollToEvaluationError(errors)
-      return
-    }
-
-    setIsGeneratingQuestions(true)
-    setFormNotice(null)
-    try {
-      const response = await onGenerateQuestions({
-        quantity: target,
-        subject,
-        gradeLevel: autoFilters.gradeLevel === 'all' ? null : autoFilters.gradeLevel,
-        difficulty: autoFilters.difficulty === 'all' ? null : autoFilters.difficulty as Difficulty,
-        sourceMode: autoFilters.sourceMode,
-        skillCode: autoFilters.skillCode === 'all' ? null : autoFilters.skillCode,
-      })
-      const next = response.questions?.length
-        ? response.questions
-        : response.questionIds.map(id => questionBank.find(q => q.id === id)).filter((q): q is Question => Boolean(q))
-
-      if (!next.length) {
-        setSelectedQuestionIds([])
-        setFormNotice('Nenhuma questão encontrada no banco para os filtros selecionados.')
-        return
-      }
-
-      setGeneratedQuestionCache((current) => next.reduce((acc, question) => ({ ...acc, [question.id]: question }), current))
-      setSelectedQuestionIds(next.map(q => q.id))
-      setEvaluationFieldErrors((current) => ({ ...current, questionIds: undefined }))
-      setBuildMode(autoFilters.sourceMode === 'mixed' ? 'mixed' : 'automatic_bank')
-      setDraft(c => ({ ...c, questions: next.length, subject: c.subject || next[0]?.subject || subject }))
-      setFormNotice(`${next.length} questoes selecionadas${response.totalEligible !== undefined ? ` de ${response.totalEligible} elegiveis` : ''}. Nada foi salvo no banco nesta etapa.`)
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Não foi possível gerar questões no backend.'
-      setFormNotice(message.includes('404')
-        ? 'Endpoint de geração ainda não encontrado no backend: POST /questions/generate-selection.'
-        : message)
-    } finally {
-      setIsGeneratingQuestions(false)
-    }
-    return
     const shuffledEligible = shuffleQuestions(autoEligible)
     const next = autoFilters.sourceMode === 'mixed' ? buildMixedQuestionSelection(shuffledEligible, target) : shuffledEligible.slice(0, target)
     if (!next.length) {
@@ -1504,7 +1226,7 @@ export default function EvaluationsView({
       else if (!autoSourcePool.length) {
         if (autoFilters.sourceMode === 'enem') setFormNotice('Não há questões INEP/ENEM disponíveis para gerar.')
         else if (autoFilters.sourceMode === 'mixed') setFormNotice('Não há questões disponíveis para mesclar nesta seleção.')
-        else setFormNotice('Não há questões disponíveis no banco interno.')
+        else setFormNotice(canSeeAllBankQuestions ? 'Não há questões disponíveis no banco interno.' : 'Você ainda não possui questões cadastradas no banco.')
       }
       else if (!approvedCount) setFormNotice('Nenhuma questão aprovada no banco.')
       else setFormNotice('Os filtros atuais não retornam questões compatíveis.')
@@ -1552,25 +1274,7 @@ export default function EvaluationsView({
     const zScheduledAt = sanitizeText(validation.data.scheduledAt)
     const zQuestionCount = selectedQuestions.length || Math.max(1, Number(validation.data.questions))
     const zResolvedMode = selectedQuestions.some(q => q.sourceType === 'TEACHER_CREATED') && buildMode !== 'teacher_created' ? 'mixed' : buildMode
-    const transientQuestions = selectedQuestions.filter(question => !questionBank.some(bankQuestion => bankQuestion.id === question.id))
-    await onCreate({
-      title: zTitle,
-      classId: zClassId,
-      subject: zSubject,
-      questions: zQuestionCount,
-      scheduledAt: zScheduledAt,
-      status: 'planejado',
-      corrected: 0,
-      participants: 0,
-      averageScore: 0,
-      triLevel: selectedQuestions.length > 0 ? `Banco: ${zQuestionCount} itens` : 'Criação do professor',
-      buildMode: zResolvedMode,
-      questionIds: selectedQuestionIds,
-      questionSnapshots: transientQuestions.length ? transientQuestions : undefined,
-      skillCodes: selectedSkillCodes,
-      descriptorCodes: selectedDescriptorCodes,
-      sourceSummary: sourceSummary(selectedQuestions),
-    })
+    await onCreate({ title: zTitle, classId: zClassId, subject: zSubject, questions: zQuestionCount, scheduledAt: zScheduledAt, status: 'planejado', corrected: 0, participants: 0, averageScore: 0, triLevel: selectedQuestions.length > 0 ? `Banco: ${zQuestionCount} itens` : 'Criação do professor', buildMode: zResolvedMode, questionIds: selectedQuestionIds, skillCodes: selectedSkillCodes, descriptorCodes: selectedDescriptorCodes, sourceSummary: sourceSummary(selectedQuestions) })
     setDraft({ ...emptyEvaluation }); setSelectedQuestionIds([]); setEvaluationFieldErrors({}); setBuildMode('manual_bank'); setFormNotice('Prova criada com sucesso!')
     return
     const title = sanitizeText(draft.title ?? '')
@@ -1598,7 +1302,7 @@ export default function EvaluationsView({
       const errors = zodFieldErrors<TeacherQuestionFormField>(validation.error)
       setQuestionFieldErrors(errors)
       setQuestionFormError(Object.values(errors)[0] ?? 'Revise os campos da questão.')
-      if (errors.title || errors.gradeLevel || errors.subject || errors.skillId || errors.estimatedTimeSeconds || errors.sourceName) setCreateStep(1)
+      if (errors.title || errors.gradeLevel || errors.skillId || errors.descriptorId || errors.estimatedTimeSeconds || errors.sourceName) setCreateStep(1)
       else if (errors.statement || errors.context || errors.explanation || errors.keywords) setCreateStep(2)
       else setCreateStep(3)
       return
@@ -1610,16 +1314,15 @@ export default function EvaluationsView({
     if (cleanTitle.length < 4 || cleanStatement.length < 8) { setQuestionFormError('Informe um título e enunciado válidos.'); return }
     if (cleanOptions.some(o => o.text.length < 1)) { setQuestionFormError('Preencha todas as alternativas.'); return }
     const skill = activeSkills.find(s => s.id === teacherSkillId) ?? activeSkills[0]
-    if (!skill) { setQuestionFormError('Cadastre ao menos uma habilidade.'); return }
+    const descriptor = activeDescriptors.find(d => d.id === teacherDescriptorId) ?? activeDescriptors[0]
+    if (!skill || !descriptor) { setQuestionFormError('Cadastre ao menos uma habilidade e um descritor.'); return }
     const keywords = teacherQuestionDraft.keywords.split(',').map(sanitizeText).filter(Boolean)
-    const normalizedGradeLevel = normalizeClassGradeValue(teacherQuestionDraft.gradeLevel)
-    const cleanSubject = sanitizeText(teacherQuestionDraft.subject) || skill.component
-    const payload: CreateQuestionRequest = { title: cleanTitle, context: sanitizeText(teacherQuestionDraft.context), statement: cleanStatement, explanation: sanitizeText(teacherQuestionDraft.explanation), type: 'MULTIPLE_CHOICE', stage: normalizedGradeLevel.startsWith('EM') ? 'MEDIO' : 'FUNDAMENTAL', gradeLevel: normalizedGradeLevel || skill.gradeLevel, area: skill.area, component: cleanSubject, subject: cleanSubject, difficulty: teacherQuestionDraft.difficulty, sourceType: 'TEACHER_CREATED', sourceName: sanitizeText(teacherQuestionDraft.sourceName) || 'Questão criada pelo professor', sourceYear: new Date().getFullYear(), sourceExternalId: null, sourceUrl: null, licenseNotes: null, visibility: teacherQuestionDraft.visibility, options: cleanOptions, skillIds: [skill.id], descriptorIds: [], attachments: [], metadata: { estimatedTimeSeconds: Number(teacherQuestionDraft.estimatedTimeSeconds) || 90, hasImage: false, hasTable: false, hasFormula: false, keywords } }
+    const payload: CreateQuestionRequest = { title: cleanTitle, context: sanitizeText(teacherQuestionDraft.context), statement: cleanStatement, explanation: sanitizeText(teacherQuestionDraft.explanation), type: 'MULTIPLE_CHOICE', stage: 'FUNDAMENTAL', gradeLevel: sanitizeText(teacherQuestionDraft.gradeLevel) || skill.gradeLevel, area: skill.area, component: skill.component, subject: skill.component, difficulty: teacherQuestionDraft.difficulty, sourceType: 'TEACHER_CREATED', sourceName: sanitizeText(teacherQuestionDraft.sourceName) || 'Questão criada pelo professor', sourceYear: new Date().getFullYear(), sourceExternalId: null, sourceUrl: null, licenseNotes: null, visibility: teacherQuestionDraft.visibility, options: cleanOptions, skillIds: [skill.id], descriptorIds: [descriptor.id], attachments: [], metadata: { estimatedTimeSeconds: Number(teacherQuestionDraft.estimatedTimeSeconds) || 90, hasImage: false, hasTable: false, hasFormula: false, keywords } }
     const created = await onCreateQuestion({ ...payload, metadata: { ...payload.metadata, requestedStatus: teacherQuestionDraft.status } })
     setSelectedQuestionIds(c => [created.id, ...c])
     setBuildMode(c => c === 'manual_bank' ? 'teacher_created' : 'mixed')
     setDraft(c => ({ ...c, subject: c.subject || created.subject, questions: Math.max(Number(c.questions ?? 0), selectedQuestionIds.length + 1) }))
-    setTeacherQuestionDraft(createEmptyQuestionDraft(firstSkillId))
+    setTeacherQuestionDraft(createEmptyQuestionDraft(firstSkillId, firstDescriptorId))
     setQuestionFieldErrors({}); setQuestionFormError(null); setWorkspace('builder'); setFormNotice('Questão criada e adicionada à prova.'); setCreateStep(1)
   }
 
@@ -1666,13 +1369,11 @@ export default function EvaluationsView({
               <button
                 type="button"
                 onClick={() => setEvaluationsModalOpen(true)}
-                className="group inline-flex items-center gap-3 rounded-sm border-2 border-indigo-400 bg-gradient-to-r from-indigo-500 to-violet-500 px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-indigo-200 transition-colors hover:from-indigo-600 hover:to-violet-600 hover:shadow-xl"
+                className="group inline-flex items-center gap-2 rounded-sm hover:bg-indigo-100 border border-slate-500 px-4 py-2.5 text-sm font-bold text-slate-700 hover:text-indigo-700 transition-colors hover:border-indigo-400 hover:shadow-lg"
               >
-                <span className="grid h-7 w-7 place-items-center rounded-lg bg-white/20">
-                  <ClipboardList className="h-4 w-4" />
-                </span>
-                <span>Provas cadastradas</span>
-                <span className="rounded-full bg-white px-2 py-0.5 text-xs font-black text-indigo-600">{evaluations.length}</span>
+                <ClipboardList className="h-4 w-4" />
+                Provas cadastradas
+                <span className="rounded-full bg-indigo-500 px-2 py-0.5 text-xs font-black text-white">{evaluations.length}</span>
               </button>
               <div className="flex items-center gap-2 rounded-full border-2 border-emerald-300 bg-gradient-to-r from-emerald-50 to-white px-4 py-2 text-xs font-bold text-emerald-700">
                 <ScanLine className="h-4 w-4" />
@@ -1728,7 +1429,7 @@ export default function EvaluationsView({
                   </label>
 
                   {/* Linha 2: Turma · Disciplina · Nº Questões · Data — tudo na mesma linha */}
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
                     <label className="flex scroll-mt-24 flex-col gap-1.5" data-evaluation-field="classId">
                       <span className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500">
                         <Users className="h-3 w-3 text-cyan-500" />
@@ -1737,12 +1438,48 @@ export default function EvaluationsView({
                       <CompactSelect
                         className={`${inp} ${fieldStateClass(evaluationFieldErrors.classId)}`}
                         value={draft.classId ?? ''}
-                        onChange={handleClassChange}
+                        onChange={classId => { clearEvaluationError('classId'); setDraft({ ...draft, classId }) }}
                         options={classOptions}
                         hint="Selecione a turma que fará a avaliação."
                         error={evaluationFieldErrors.classId}
                         dropdownMinWidth={240}
                       />
+                    </label>
+
+                    <label className="flex scroll-mt-24 flex-col gap-1.5" data-evaluation-field="subject">
+                      <span className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500">
+                        <BookOpen className="h-3 w-3 text-amber-500" />
+                        Disciplina
+                      </span>
+                      <CompactSelect
+                        className={`${inp} ${fieldStateClass(evaluationFieldErrors.subject)}`}
+                        value={draft.subject ?? ''}
+                        onChange={subject => { clearEvaluationError('subject'); setDraft({ ...draft, subject }) }}
+                        options={subjectOptions}
+                        hint="Selecione a disciplina principal da prova."
+                        error={evaluationFieldErrors.subject}
+                        dropdownMinWidth={240}
+                      />
+                    </label>
+
+                    <label className="flex scroll-mt-24 flex-col gap-1.5" data-evaluation-field="questions">
+                      <span className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500">
+                        <Hash className="h-3 w-3 text-violet-500" />
+                        Nº de Questões
+                      </span>
+                      <div className="relative">
+                        <Hash className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+                        <input
+                          className={`${inp} pl-9 ${fieldStateClass(evaluationFieldErrors.questions)}`}
+                          type="number"
+                          min={1}
+                          value={draft.questions ?? 10}
+                          onChange={e => { clearEvaluationError('questions'); setDraft({ ...draft, questions: Number(e.target.value) }) }}
+                          required
+                          aria-invalid={Boolean(evaluationFieldErrors.questions) || undefined}
+                        />
+                      </div>
+                      <FieldMessage hint="Informe quantas questões a prova deve ter." error={evaluationFieldErrors.questions} />
                     </label>
 
                     <label className="flex scroll-mt-24 flex-col gap-1.5" data-evaluation-field="scheduledAt">
@@ -1827,27 +1564,26 @@ export default function EvaluationsView({
                             <Sparkles className="h-3.5 w-3.5" />
                           </div>
                           <div>
-                            <h3 className="text-xs font-black uppercase tracking-wide text-violet-700">Selecao automatica</h3>
+                            <h3 className="text-xs font-black uppercase tracking-wide text-violet-700">Geração Automática</h3>
                             <p className="text-[10px] text-slate-400 mt-0.5">
-                              Seleciona questoes existentes sem salvar no banco
+                              <span className="font-bold text-violet-600">{autoEligible.length}</span> questões elegíveis com os filtros atuais
                             </p>
                           </div>
                         </div>
                         <button
                           type="button"
                           onClick={handleAutoSelect}
-                          disabled={isGeneratingQuestions}
-                          className="inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-sm bg-violet-500 px-5 py-2.5 text-sm font-bold text-white shadow-lg shadow-violet-200 transition-all hover:bg-violet-600 hover:shadow-xl disabled:cursor-wait disabled:opacity-70 sm:w-auto"
+                          className="inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-sm bg-violet-500 px-5 py-2.5 text-sm font-bold text-white shadow-lg shadow-violet-200 transition-all hover:bg-violet-600 hover:shadow-xl sm:w-auto"
                         >
                           <Sparkles className="h-4 w-4" />
-                          {isGeneratingQuestions ? 'Selecionando...' : `Selecionar ${draft.questions ?? 10} questoes`}
+                          Gerar {draft.questions ?? 10} questões
                         </button>
                       </div>
 
                       {/* Origem das questões */}
                       <div className="mb-3 grid gap-2 sm:grid-cols-3">
                         {[
-                          { id: 'system' as const, label: 'Banco', desc: 'Banco interno', icon: UserRound },
+                          { id: 'system' as const, label: 'Professor', desc: canSeeAllBankQuestions ? 'Banco interno' : 'Minhas questões', icon: UserRound },
                           { id: 'enem' as const, label: 'ENEM', desc: `${inepQuestions.length} questões`, icon: Award },
                           { id: 'mixed' as const, label: 'Mesclar', desc: 'ENEM + banco', icon: Layers },
                         ].map(origin => (
@@ -1869,58 +1605,25 @@ export default function EvaluationsView({
                       </div>
 
                       {/* Filtros em linha única */}
-                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
-                        <label className="flex scroll-mt-24 flex-col gap-1.5" data-evaluation-field="subject">
-                          <span className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500">
-                            <BookOpen className="h-3 w-3 text-amber-500" />
-                            Disciplina
-                          </span>
-                          <CompactSelect
-                            className={`${inp} ${fieldStateClass(evaluationFieldErrors.subject)}`}
-                            value={draft.subject ?? ''}
-                            onChange={handleSubjectChange}
-                            options={subjectOptions}
-                            hint="Selecione a disciplina para filtrar as questões."
-                            error={evaluationFieldErrors.subject}
-                            dropdownMinWidth={240}
-                          />
-                        </label>
-                        <label className="flex scroll-mt-24 flex-col gap-1.5" data-evaluation-field="questions">
-                          <span className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500">
-                            <Hash className="h-3 w-3 text-violet-500" />
-                            Nº de Questões
-                          </span>
-                          <div className="relative">
-                            <Hash className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
-                            <input
-                              className={`${inp} pl-9 ${fieldStateClass(evaluationFieldErrors.questions)}`}
-                              type="number"
-                              min={1}
-                              value={draft.questions ?? 10}
-                              onChange={event => { clearEvaluationError('questions'); setDraft({ ...draft, questions: Number(event.target.value) }) }}
-                              required
-                              aria-invalid={Boolean(evaluationFieldErrors.questions) || undefined}
-                            />
-                          </div>
-                          <FieldMessage hint="Informe quantas questões selecionar." error={evaluationFieldErrors.questions} />
-                        </label>
+                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
                         {[
                           { label: 'Ano', value: autoFilters.gradeLevel, key: 'gradeLevel', options: gradeLevelOptions, icon: GraduationCap },
                           { label: 'Dificuldade', value: autoFilters.difficulty, key: 'difficulty', options: difficultyOptions, icon: Zap },
                           { label: 'Habilidade', value: autoFilters.skillCode, key: 'skillCode', options: skillCodeOptions, icon: Target },
+                          { label: 'Descritor', value: autoFilters.descriptorCode, key: 'descriptorCode', options: descriptorCodeOptions, icon: Layers },
                         ].map(f => (
-                          <label key={f.key} className="flex flex-col gap-1.5">
-                            <span className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500">
-                              <f.icon className="h-3 w-3 text-violet-500" />
+                          <label key={f.key} className="flex flex-col gap-1">
+                            <span className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                              <f.icon className="h-2.5 w-2.5" />
                               {f.label}
                             </span>
                             <CompactSelect
                               className={inp}
                               value={f.value}
-                              onChange={value => setAutoFilters({ ...autoFilters, [f.key]: value, ...(f.key === 'gradeLevel' ? { skillCode: 'all' } : {}) })}
+                              onChange={value => setAutoFilters({ ...autoFilters, [f.key]: value })}
                               options={f.options}
                               dropdownMinWidth={180}
-                              dropdownWidth={f.key === 'skillCode' ? 'trigger' : 'content'}
+                              dropdownWidth={f.key === 'skillCode' || f.key === 'descriptorCode' ? 'trigger' : 'content'}
                             />
                           </label>
                         ))}
@@ -1939,7 +1642,7 @@ export default function EvaluationsView({
                             <BookOpen className="h-3.5 w-3.5" />
                           </div>
                           <h3 className="text-xs font-black uppercase tracking-wide text-slate-600">
-                            Banco de questões
+                            {canSeeAllBankQuestions ? 'Questões de professores' : 'Minhas questões'}
                           </h3>
                         </div>
                         <button
@@ -2031,35 +1734,35 @@ export default function EvaluationsView({
             )}
 
             {workspace === 'bank' && (
-              <div className="space-y-5 p-4 sm:p-6">
-                <div className="flex flex-col gap-4 rounded-xl border-2 border-cyan-300 bg-gradient-to-r from-cyan-50 to-white px-4 py-4 shadow-md sm:flex-row sm:items-center sm:justify-between sm:px-5">
+              <div className="p-6 space-y-5">
+                <div className="flex items-center justify-between gap-4 rounded-xl border-2 border-cyan-300 bg-gradient-to-r from-cyan-50 to-white px-5 py-4 shadow-md">
                   <div className="flex items-center gap-4">
                     <div className="grid h-12 w-12 place-items-center rounded-xl bg-gradient-to-br from-cyan-500 to-cyan-600 text-white shadow-lg shadow-cyan-200">
                       <BookOpen className="h-6 w-6" />
                     </div>
-                    <div>
+                    <div className="sm:flex sm:flex-col">
                       <h2 className="font-['Sora',system-ui,sans-serif] text-lg font-black text-slate-900">Banco de Questões</h2>
                       <p className="text-sm text-slate-500">
                         <span className="font-bold text-cyan-600">{filteredQuestions.length}</span> de {visibleBankQuestionPool.length} questões
                       </p>
                     </div>
                   </div>
-                  <button type="button" onClick={() => setWorkspace('builder')} className="group inline-flex w-full items-center justify-center gap-2 rounded-sm bg-gradient-to-r from-cyan-500 to-cyan-600 px-5 py-3 text-sm font-bold text-white shadow-lg shadow-cyan-200 transition-colors hover:shadow-xl sm:w-auto">
+                  <button type="button" onClick={() => setWorkspace('builder')} className="group inline-flex items-center gap-2 rounded-sm bg-gradient-to-r from-cyan-500 to-cyan-600 px-5 py-3 text-sm font-bold text-white shadow-lg shadow-cyan-200 transition-colors hover:shadow-xl">
                     <CheckCircle2 className="h-5 w-5" />
                     Usar seleção
                     <span className="rounded-full bg-white/20 px-2 py-0.5 text-xs font-black">{selectedQuestionIds.length}</span>
                   </button>
                 </div>
 
-                <div className="rounded-xl border-2 border-slate-300 bg-gradient-to-br from-slate-50 to-white p-4 shadow-sm sm:p-5">
+                <div className="rounded-xl border-2 border-slate-300 bg-gradient-to-br from-slate-50 to-white p-5 shadow-sm">
                   <div className="mb-4 flex items-center gap-3">
                     <div className="grid h-8 w-8 place-items-center rounded-lg bg-slate-200 text-slate-600">
                       <Filter className="h-4 w-4" />
                     </div>
                     <span className="text-xs font-black uppercase tracking-wider text-slate-500">Filtros</span>
                   </div>
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
-                    <label className="flex flex-col gap-2 sm:col-span-2 xl:col-span-2">
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-8">
+                    <label className="col-span-2 sm:col-span-3 lg:col-span-2 flex flex-col gap-2">
                       <span className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500">
                         <Search className="h-3 w-3" />
                         Busca
@@ -2088,7 +1791,7 @@ export default function EvaluationsView({
                   </div>
                 </div>
 
-                <div className="grid gap-4 lg:grid-cols-2">
+                <div className="grid gap-4 sm:grid-cols-2">
                   {isLoading
                     ? [...Array(4)].map((_, i) => <Skeleton key={i} className="h-56 rounded-xl" />)
                     : paginatedQuestions.map((q, i) => (
@@ -2105,7 +1808,7 @@ export default function EvaluationsView({
                     ))
                   }
                   {!isLoading && filteredQuestions.length === 0 && (
-                    <div className="lg:col-span-2"><EmptyState icon={<BookOpen className="h-7 w-7" />} title="Nenhuma questão encontrada" sub="Tente outros filtros ou crie uma questão" /></div>
+                    <div className="col-span-2"><EmptyState icon={<BookOpen className="h-7 w-7" />} title="Nenhuma questão encontrada" sub="Tente outros filtros ou crie uma questão" /></div>
                   )}
                 </div>
                 {!isLoading && filteredQuestions.length > QUESTIONS_PER_PAGE && (
@@ -2115,8 +1818,8 @@ export default function EvaluationsView({
             )}
 
             {workspace === 'inep' && (
-              <div className="space-y-5 p-4 sm:p-6">
-                <div className="flex flex-col gap-4 rounded-xl border-2 border-amber-300 bg-gradient-to-r from-amber-50 to-white px-4 py-4 shadow-md sm:flex-row sm:items-center sm:justify-between sm:px-5">
+              <div className="p-6 space-y-5">
+                <div className="flex items-center justify-between gap-4 rounded-xl border-2 border-amber-300 bg-gradient-to-r from-amber-50 to-white px-5 py-4 shadow-md">
                   <div className="flex items-center gap-4">
                     <div className="grid h-12 w-12 place-items-center rounded-xl bg-gradient-to-br from-amber-500 to-amber-600 text-white shadow-lg shadow-amber-200">
                       <Award className="h-6 w-6" />
@@ -2126,7 +1829,7 @@ export default function EvaluationsView({
                       <p className="text-sm text-slate-500"><span className="font-bold text-amber-600">{inepQuestions.length}</span> questões oficiais disponíveis</p>
                     </div>
                   </div>
-                  <button type="button" onClick={() => { setAutoFilters({ ...autoFilters, sourceMode: 'enem' }); setWorkspace('builder') }} className="group inline-flex w-full items-center justify-center gap-2 rounded-sm bg-gradient-to-r from-amber-500 to-amber-600 px-5 py-3 text-sm font-bold text-white shadow-lg shadow-amber-200 transition-colors hover:shadow-xl sm:w-auto">
+                  <button type="button" onClick={() => { setAutoFilters({ ...autoFilters, sourceMode: 'enem' }); setWorkspace('builder') }} className="group inline-flex items-center gap-2 rounded-sm bg-gradient-to-r from-amber-500 to-amber-600 px-5 py-3 text-sm font-bold text-white shadow-lg shadow-amber-200 transition-colors hover:shadow-xl">
                     <Sparkles className="h-5 w-5" />
                     Usar no builder
                   </button>
@@ -2138,7 +1841,7 @@ export default function EvaluationsView({
                         <Award className="h-5 w-5 text-amber-500" />
                         Questões INEP no banco ({inepQuestions.length})
                       </h3>
-                      <div className="grid gap-4 lg:grid-cols-2">
+                      <div className="grid gap-4 sm:grid-cols-2">
                         {paginatedInepQuestions.map((q, i) => (
                           <QuestionCard
                             key={q.id}
@@ -2166,21 +1869,21 @@ export default function EvaluationsView({
             {workspace === 'create' && (
               <form onSubmit={handleTeacherQuestionSubmit} noValidate>
                 {/* Step Progress */}
-                <div className="border-b-2 border-slate-300 bg-gradient-to-r from-violet-50 to-white px-4 py-5 sm:px-6">
-                  <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                    <h2 className="flex items-center gap-3 text-base font-black text-slate-900 sm:text-lg">
+                <div className="border-b-2 border-slate-300 bg-gradient-to-r from-violet-50 to-white px-6 py-5">
+                  <div className="flex items-center justify-between gap-4">
+                    <h2 className="flex items-center gap-3 text-lg font-black text-slate-900">
                       <div className="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-violet-500 to-violet-600 text-white shadow-lg shadow-violet-200">
                         <PenTool className="h-5 w-5" />
                       </div>
                       Criar Nova Questão
                     </h2>
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                    <div className="flex items-center gap-2">
                       {[1, 2, 3].map(step => (
                         <button
                           key={step}
                           type="button"
                           onClick={() => setCreateStep(step as 1 | 2 | 3)}
-                          className={`flex items-center justify-center gap-2 rounded-sm px-4 py-2 text-sm font-bold ${createStep === step ? 'bg-violet-500 text-white shadow-lg shadow-violet-200' : createStep > step ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-400'}`}
+                          className={`flex items-center gap-2 rounded-sm px-4 py-2 text-sm font-bold ${createStep === step ? 'bg-violet-500 text-white shadow-lg shadow-violet-200' : createStep > step ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-400'}`}
                         >
                           {createStep > step ? <Check className="h-4 w-4" /> : <span className="grid h-5 w-5 place-items-center rounded-full bg-white/20 text-xs font-black">{step}</span>}
                           {step === 1 ? 'Configuração' : step === 2 ? 'Conteúdo' : 'Alternativas'}
@@ -2192,7 +1895,7 @@ export default function EvaluationsView({
 
                 {/* Step 1: Configuration */}
                 {createStep === 1 && (
-                  <div className="p-4 sm:p-6">
+                  <div className="p-6">
                     <div className="mb-6 flex items-center gap-3">
                       <div className="grid h-10 w-10 place-items-center rounded-xl bg-violet-100 text-violet-600">
                         <Settings2 className="h-5 w-5" />
@@ -2213,20 +1916,14 @@ export default function EvaluationsView({
                         <FieldMessage hint="Digite um título curto para localizar a questão depois." error={questionFieldErrors.title} className="mt-1.5" />
                       </label>
 
-                      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+                      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                         <label className="block">
                           <span className="mb-2 flex items-center gap-2 text-sm font-bold text-slate-700">
                             <GraduationCap className="h-4 w-4 text-cyan-500" />
                             Ano escolar
                           </span>
-                          <CompactSelect className={`${inp} ${fieldStateClass(questionFieldErrors.gradeLevel)}`} value={teacherQuestionDraft.gradeLevel} onChange={gradeLevel => setTeacherQuestionField('gradeLevel', gradeLevel)} options={teacherGradeLevelOptions} placeholder="Selecione o ano" hint="Selecione a etapa da turma: Fundamental ou Ensino Médio." error={questionFieldErrors.gradeLevel} dropdownMinWidth={240} />
-                        </label>
-                        <label className="block">
-                          <span className="mb-2 flex items-center gap-2 text-sm font-bold text-slate-700">
-                            <BookOpen className="h-4 w-4 text-sky-500" />
-                            Disciplina
-                          </span>
-                          <CompactSelect className={`${inp} ${fieldStateClass(questionFieldErrors.subject)}`} value={teacherQuestionDraft.subject} onChange={subject => setTeacherQuestionField('subject', subject)} options={subjectOptions} placeholder="Selecione a disciplina" hint="Selecione a disciplina da questão." error={questionFieldErrors.subject} dropdownMinWidth={240} />
+                          <input className={`${inp} ${fieldStateClass(questionFieldErrors.gradeLevel)}`} value={teacherQuestionDraft.gradeLevel} onChange={e => setTeacherQuestionField('gradeLevel', e.target.value)} required aria-invalid={Boolean(questionFieldErrors.gradeLevel) || undefined} />
+                          <FieldMessage hint="Informe o ano escolar, por exemplo 8o ano." error={questionFieldErrors.gradeLevel} className="mt-1.5" />
                         </label>
                         <label className="block">
                           <span className="mb-2 flex items-center gap-2 text-sm font-bold text-slate-700">
@@ -2251,13 +1948,20 @@ export default function EvaluationsView({
                         </label>
                       </div>
 
-                      <div className="grid gap-4">
+                      <div className="grid gap-4 sm:grid-cols-2">
                         <label className="block">
                           <span className="mb-2 flex items-center gap-2 text-sm font-bold text-slate-700">
                             <Target className="h-4 w-4 text-indigo-500" />
                             Habilidade BNCC
                           </span>
                           <CompactSelect className={`${inp} ${fieldStateClass(questionFieldErrors.skillId)}`} value={teacherSkillId} onChange={skillId => setTeacherQuestionField('skillId', skillId)} options={teacherSkillOptions} placeholder="Selecione a habilidade" hint="Selecione a habilidade BNCC relacionada." error={questionFieldErrors.skillId} dropdownWidth="trigger" />
+                        </label>
+                        <label className="block">
+                          <span className="mb-2 flex items-center gap-2 text-sm font-bold text-slate-700">
+                            <Layers className="h-4 w-4 text-amber-500" />
+                            Descritor
+                          </span>
+                          <CompactSelect className={`${inp} ${fieldStateClass(questionFieldErrors.descriptorId)}`} value={teacherDescriptorId} onChange={descriptorId => setTeacherQuestionField('descriptorId', descriptorId)} options={teacherDescriptorOptions} placeholder="Selecione o descritor" hint="Selecione o descritor da avaliação." error={questionFieldErrors.descriptorId} dropdownWidth="trigger" />
                         </label>
                       </div>
 
@@ -2282,7 +1986,7 @@ export default function EvaluationsView({
                     </div>
 
                     <div className="mt-8 flex justify-end">
-                      <button type="button" onClick={() => { if (validateQuestionStep(1)) setCreateStep(2) }} className="group inline-flex w-full items-center justify-center gap-2 rounded-sm bg-gradient-to-r from-violet-500 to-violet-600 px-6 py-3 text-sm font-bold text-white shadow-lg shadow-violet-200 transition-colors hover:shadow-xl sm:w-auto">
+                      <button type="button" onClick={() => { if (validateQuestionStep(1)) setCreateStep(2) }} className="group inline-flex items-center gap-2 rounded-sm bg-gradient-to-r from-violet-500 to-violet-600 px-6 py-3 text-sm font-bold text-white shadow-lg shadow-violet-200 transition-colors hover:shadow-xl">
                         Próximo: Conteúdo
                         <ArrowRight className="h-4 w-4" />
                       </button>
@@ -2292,7 +1996,7 @@ export default function EvaluationsView({
 
                 {/* Step 2: Content */}
                 {createStep === 2 && (
-                  <div className="p-4 sm:p-6">
+                  <div className="p-6">
                     <div className="mb-6 flex items-center gap-3">
                       <div className="grid h-10 w-10 place-items-center rounded-xl bg-indigo-100 text-indigo-600">
                         <FileText className="h-5 w-5" />
@@ -2345,12 +2049,12 @@ export default function EvaluationsView({
                       </label>
                     </div>
 
-                    <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:justify-between">
-                      <button type="button" onClick={() => setCreateStep(1)} className="inline-flex items-center justify-center gap-2 rounded-sm border-2 border-slate-300 bg-white px-5 py-3 text-sm font-bold text-slate-600 transition-colors hover:border-slate-400">
+                    <div className="mt-8 flex justify-between">
+                      <button type="button" onClick={() => setCreateStep(1)} className="inline-flex items-center gap-2 rounded-sm border-2 border-slate-300 bg-white px-5 py-3 text-sm font-bold text-slate-600 transition-colors hover:border-slate-400">
                         <MoveLeft className="h-4 w-4" />
                         Voltar
                       </button>
-                      <button type="button" onClick={() => { if (validateQuestionStep(2)) setCreateStep(3) }} className="group inline-flex items-center justify-center gap-2 rounded-sm bg-gradient-to-r from-violet-500 to-violet-600 px-6 py-3 text-sm font-bold text-white shadow-lg shadow-violet-200 transition-colors hover:shadow-xl">
+                      <button type="button" onClick={() => { if (validateQuestionStep(2)) setCreateStep(3) }} className="group inline-flex items-center gap-2 rounded-sm bg-gradient-to-r from-violet-500 to-violet-600 px-6 py-3 text-sm font-bold text-white shadow-lg shadow-violet-200 transition-colors hover:shadow-xl">
                         Próximo: Alternativas
                         <ArrowRight className="h-4 w-4" />
                       </button>
@@ -2360,7 +2064,7 @@ export default function EvaluationsView({
 
                 {/* Step 3: Alternatives */}
                 {createStep === 3 && (
-                  <div className="p-4 sm:p-6">
+                  <div className="p-6">
                     <div className="mb-6 flex items-center gap-3">
                       <div className="grid h-10 w-10 place-items-center rounded-xl bg-emerald-100 text-emerald-600">
                         <ListChecks className="h-5 w-5" />
@@ -2378,12 +2082,12 @@ export default function EvaluationsView({
                         return (
                           <div
                             key={label}
-                            className={`group flex flex-col gap-3 rounded-xl border-2 p-4 sm:flex-row sm:items-center sm:gap-4 ${isCorrect ? 'border-emerald-400 bg-gradient-to-r from-emerald-50 to-emerald-100/30 shadow-lg' : 'border-slate-300 bg-white hover:border-slate-400'}`}
+                            className={`group flex items-center gap-4 rounded-xl border-2 p-4 ${isCorrect ? 'border-emerald-400 bg-gradient-to-r from-emerald-50 to-emerald-100/30 shadow-lg' : 'border-slate-300 bg-white hover:border-slate-400'}`}
                           >
                             <button
                               type="button"
                               onClick={() => { setQuestionFieldErrors((current) => ({ ...current, correctOption: undefined })); setTeacherQuestionDraft({ ...teacherQuestionDraft, correctOption: label }) }}
-                              className={`grid h-12 w-full shrink-0 place-items-center rounded-lg text-lg font-black sm:w-12 ${isCorrect ? 'bg-gradient-to-br from-emerald-500 to-emerald-600 text-white shadow-lg shadow-emerald-200' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}
+                              className={`grid h-12 w-12 shrink-0 place-items-center rounded-lg text-lg font-black ${isCorrect ? 'bg-gradient-to-br from-emerald-500 to-emerald-600 text-white shadow-lg shadow-emerald-200' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}
                             >
                               {label}
                             </button>
@@ -2395,9 +2099,9 @@ export default function EvaluationsView({
                               aria-invalid={Boolean(questionFieldErrors[optionField]) || undefined}
                               required
                             />
-                            <FieldMessage hint={`Preencha o texto da alternativa ${label}.`} error={questionFieldErrors[optionField]} className="w-full sm:max-w-[180px] sm:shrink-0" />
+                            <FieldMessage hint={`Preencha o texto da alternativa ${label}.`} error={questionFieldErrors[optionField]} className="max-w-[180px] shrink-0" />
                             {isCorrect && (
-                              <div className="flex w-full items-center justify-center gap-2 rounded-full bg-emerald-500 px-4 py-2 text-xs font-bold text-white shadow-lg sm:w-auto">
+                              <div className="flex items-center gap-2 rounded-full bg-emerald-500 px-4 py-2 text-xs font-bold text-white shadow-lg">
                                 <CheckCircle2 className="h-4 w-4" />
                                 Correta
                               </div>
@@ -2420,16 +2124,16 @@ export default function EvaluationsView({
                           <AlertCircle className="h-5 w-5 shrink-0" />{questionFormError}
                         </div>
                       )}
-                      <div className="flex flex-col gap-3 sm:flex-row sm:justify-between">
-                        <button type="button" onClick={() => setCreateStep(2)} className="inline-flex items-center justify-center gap-2 rounded-sm border-2 border-slate-300 bg-white px-5 py-3 text-sm font-bold text-slate-600 transition-colors hover:border-slate-400">
+                      <div className="flex justify-between">
+                        <button type="button" onClick={() => setCreateStep(2)} className="inline-flex items-center gap-2 rounded-sm border-2 border-slate-300 bg-white px-5 py-3 text-sm font-bold text-slate-600 transition-colors hover:border-slate-400">
                           <MoveLeft className="h-4 w-4" />
                           Voltar
                         </button>
-                        <div className="flex flex-col gap-3 sm:flex-row">
-                          <button type="button" onClick={() => setWorkspace('builder')} className="inline-flex items-center justify-center gap-2 rounded-sm border-2 border-slate-400 bg-white px-5 py-3 text-sm font-bold text-slate-600 transition-colors hover:border-slate-500">
+                        <div className="flex gap-3">
+                          <button type="button" onClick={() => setWorkspace('builder')} className="inline-flex items-center gap-2 rounded-sm border-2 border-slate-400 bg-white px-5 py-3 text-sm font-bold text-slate-600 transition-colors hover:border-slate-500">
                             Cancelar
                           </button>
-                          <button type="submit" className="group inline-flex items-center justify-center gap-2 rounded-sm bg-gradient-to-r from-emerald-500 to-emerald-600 px-6 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-200 transition-colors hover:shadow-xl">
+                          <button type="submit" className="group inline-flex items-center gap-2 rounded-sm bg-gradient-to-r from-emerald-500 to-emerald-600 px-6 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-200 transition-colors hover:shadow-xl">
                             <Save className="h-5 w-5" />
                             Adicionar ao banco
                           </button>
@@ -2448,15 +2152,15 @@ export default function EvaluationsView({
         )}
 
         {evaluationsModalOpen && (
-          <div role="presentation" onMouseDown={() => setEvaluationsModalOpen(false)} className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-slate-950/60 px-3 py-5 backdrop-blur-sm sm:px-4 sm:py-8">
+          <div role="presentation" onMouseDown={() => setEvaluationsModalOpen(false)} className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-slate-950/60 px-4 py-8 backdrop-blur-sm">
             <div
               role="dialog"
               aria-modal="true"
               aria-labelledby="evaluations-modal-title"
               onMouseDown={(event) => event.stopPropagation()}
-              className="relative my-auto max-h-[calc(100svh-2.5rem)] w-full max-w-6xl overflow-hidden rounded-2xl border-2 border-slate-300 bg-white shadow-2xl sm:max-h-[calc(100svh-4rem)]"
+              className="relative my-auto max-h-[calc(100svh-4rem)] w-full max-w-6xl overflow-hidden rounded-2xl border-2 border-slate-300 bg-white shadow-2xl"
             >
-              <div className="flex flex-col gap-4 border-b-2 border-slate-300 bg-gradient-to-r from-slate-50 to-white px-4 py-4 sm:px-6 sm:py-5 lg:flex-row lg:items-center lg:justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-4 border-b-2 border-slate-300 bg-gradient-to-r from-slate-50 to-white px-6 py-5">
                 <div className="flex items-center gap-4">
                   <div className="grid h-11 w-11 place-items-center rounded-xl bg-slate-800 text-white shadow-lg">
                     <ClipboardList className="h-5 w-5" />
@@ -2466,7 +2170,7 @@ export default function EvaluationsView({
                     <p className="text-sm text-slate-400">{filteredEvaluations.length} resultado{filteredEvaluations.length !== 1 ? 's' : ''}</p>
                   </div>
                 </div>
-                <div className="flex w-full flex-wrap items-center gap-2 lg:w-auto">
+                <div className="flex flex-wrap items-center gap-2">
                   {[
                     { id: 'all', label: 'Todos', icon: LayoutGrid, color: 'slate' },
                     { id: 'planejado', label: 'Planejado', icon: Calendar, color: 'slate' },
@@ -2478,7 +2182,7 @@ export default function EvaluationsView({
                       key={s.id}
                       type="button"
                       onClick={() => setStatusFilter(s.id)}
-                      className={`inline-flex flex-1 items-center justify-center gap-2 rounded-sm border-2 px-3 py-2 text-xs font-bold sm:flex-none sm:px-4 ${
+                      className={`inline-flex items-center gap-2 rounded-sm border-2 px-4 py-2 text-xs font-bold ${
                         statusFilter === s.id
                           ? s.color === 'emerald' ? 'border-emerald-400 bg-gradient-to-r from-emerald-500 to-emerald-600 text-white shadow-lg shadow-emerald-200'
                             : s.color === 'amber' ? 'border-amber-400 bg-gradient-to-r from-amber-500 to-amber-600 text-white shadow-lg shadow-amber-200'
@@ -2491,7 +2195,7 @@ export default function EvaluationsView({
                       {s.label}
                     </button>
                   ))}
-                  <button type="button" onClick={() => setEvaluationsModalOpen(false)} className="grid h-10 w-10 place-items-center rounded-xl border-2 border-slate-300 bg-white text-slate-500 hover:border-rose-400 hover:bg-rose-50 hover:text-rose-600 sm:ml-2">
+                  <button type="button" onClick={() => setEvaluationsModalOpen(false)} className="ml-2 grid h-10 w-10 place-items-center rounded-xl border-2 border-slate-300 bg-white text-slate-500 hover:border-rose-400 hover:bg-rose-50 hover:text-rose-600">
                     <X className="h-5 w-5" />
                   </button>
                 </div>
@@ -2519,9 +2223,9 @@ export default function EvaluationsView({
                           <EmptyState icon={<ClipboardList className="h-7 w-7" />} title="Nenhuma prova encontrada" sub="Crie sua primeira prova no montador" />
                         </td>
                       </tr>
-                    ) : filteredEvaluations.map((ev) => {
+                    ) : filteredEvaluations.map((ev, idx) => {
+                      const pqs = getEvaluationQuestions(ev)
                       const corrPct = ev.participants > 0 ? (ev.corrected / ev.participants) * 100 : 0
-                      const creatorName = getEvaluationCreatorName(ev)
                       return (
                         <tr key={ev.id} className="ev-table-row border-b border-slate-300">
                           <td className="px-5 py-4">
@@ -2529,10 +2233,6 @@ export default function EvaluationsView({
                             <p className="flex items-center gap-1 text-[10px] text-slate-400">
                               <Calendar className="h-3 w-3" />
                               {formatPrintDate(ev.scheduledAt)}
-                            </p>
-                            <p className="mt-1 flex items-center gap-1 text-[10px] font-semibold text-slate-500">
-                              <UserRound className="h-3 w-3" />
-                              Gerada por: <span className="truncate" title={creatorName}>{creatorName}</span>
                             </p>
                           </td>
                           <td className="px-5 py-4">
@@ -2568,16 +2268,14 @@ export default function EvaluationsView({
                           </td>
                           <td className="px-5 py-4">
                             <div className="flex flex-wrap items-center gap-2">
-                              <button type="button" disabled={downloadingEvaluationId === ev.id} onClick={() => handleExportEvaluation(ev)} className="group inline-flex items-center gap-1.5 rounded-sm border-2 border-slate-300 bg-white px-3 py-2 text-[11px] font-bold text-slate-600 transition-colors hover:border-indigo-400 hover:text-indigo-700 disabled:cursor-not-allowed disabled:opacity-60">
+                              <button type="button" disabled={pqs.length === 0} onClick={() => handleExportEvaluation(ev)} className="group inline-flex items-center gap-1.5 rounded-sm border-2 border-slate-300 bg-white px-3 py-2 text-[11px] font-bold text-slate-600 transition-colors hover:border-indigo-400 hover:text-indigo-700 disabled:cursor-not-allowed disabled:opacity-40">
                                 <FileDown className="h-4 w-4" />
-                                {downloadingEvaluationId === ev.id ? 'Baixando' : 'Baixar'}
+                                Exportar
                               </button>
-                              {onDelete && (
-                                <button type="button" disabled={deletingEvaluationId === ev.id} onClick={() => handleDeleteEvaluation(ev)} className="group inline-flex items-center gap-1.5 rounded-sm border-2 border-rose-300 bg-rose-50 px-3 py-2 text-[11px] font-bold text-rose-600 transition-colors hover:border-rose-400 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60">
-                                  <Trash2 className="h-4 w-4" />
-                                  {deletingEvaluationId === ev.id ? 'Excluindo' : 'Excluir'}
-                                </button>
-                              )}
+                              <button type="button" disabled={deletingEvaluationId === ev.id} onClick={() => handleDeleteEvaluation(ev)} className="group inline-flex items-center gap-1.5 rounded-sm border-2 border-rose-300 bg-rose-50 px-3 py-2 text-[11px] font-bold text-rose-600 transition-colors hover:border-rose-400 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60">
+                                <Trash2 className="h-4 w-4" />
+                                {deletingEvaluationId === ev.id ? 'Excluindo' : 'Excluir'}
+                              </button>
                             </div>
                           </td>
                         </tr>
@@ -2619,5 +2317,3 @@ export default function EvaluationsView({
     </>
   )
 }
-
-
