@@ -5,6 +5,8 @@ node_modules/
 dist/
 coverage/
 .vite/
+.turbo/
+.cache/
 *.tsbuildinfo
 
 # Logs
@@ -18,6 +20,37 @@ pnpm-debug.log*
 .env
 .env.*
 !.env.example
+*.pem
+*.key
+*.crt
+*.p12
+*secret*
+*credentials*
+*credenciais*
+
+# Dados sensiveis gerados localmente
+.codex-*
+*.sqlite
+*.sqlite3
+*.db
+*.dump
+*.backup
+*.backup-*
+*.bak
+*.sql
+*.zip
+*.tar
+*.tgz
+*.gz
+*.rar
+*.7z
+uploads/
+reports/
+exports/
+dumps/
+backups/
+tmp/
+temp/
 
 # Sistema/editor
 .DS_Store

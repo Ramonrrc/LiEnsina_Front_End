@@ -79,7 +79,7 @@ interface MealsViewProps {
   onLoadSchoolPage: (page: number, limit: number) => Promise<MealManagementsPagePayload>
   onSearchFoods: (query: string, limit?: number) => Promise<MealFood[]>
   onCreateFoodRequest: (draft: CreateMealFoodRequestPayload) => Promise<void>
-  onCreateManagement: (draft: CreateMealManagementPayload) => Promise<void>
+  onCreateManagement: (draft: CreateMealManagementPayload) => Promise<MealManagement>
   onAddFoodRequestToStock: (id: string, draft: AddMealFoodRequestToStockPayload) => Promise<void>
   onCreateItem: (managementId: string, draft: CreateMealItemPayload) => Promise<void>
   onUpdateBudget: (managementId: string, draft: UpdateMealBudgetPayload) => Promise<void>
@@ -2933,9 +2933,9 @@ export default function MealsView({
   const [foodRequestModal, setFoodRequestModal] = useState<MealFoodRequest | 'new' | null>(null)
   const [stockRequestModal, setStockRequestModal] = useState<MealFoodRequest | null>(null)
 
-  const canManagePurchases = currentRole?.code === 'ADMIN' || currentRole?.name === 'ADMIN'
+  const canManagePurchases = currentRole?.code === 'SUPERADMIN' || currentRole?.code === 'ADMIN' || currentRole?.name === 'SUPERADMIN' || currentRole?.name === 'ADMIN'
   const isDirector = currentRole?.code === 'DIRETOR' || currentRole?.name === 'DIRETOR'
-  const isAdmin = currentRole?.code === 'ADMIN' || currentRole?.name === 'ADMIN'
+  const isAdmin = currentRole?.code === 'SUPERADMIN' || currentRole?.code === 'ADMIN' || currentRole?.name === 'SUPERADMIN' || currentRole?.name === 'ADMIN'
 
   useEffect(() => {
     if (!mealManagements.length) return

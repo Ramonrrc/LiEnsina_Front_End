@@ -55,6 +55,7 @@ import {
   SectionShell,
   StudentCardSkeleton,
   classOptions,
+  getAcademicSubjectLabel,
   getSubjectIcon,
   getSubjectIconBg,
   normalizeAcademicText,
@@ -324,7 +325,7 @@ return (
                   <div className="flex items-center justify-between gap-2">
                     <strong className="flex items-center gap-1.5 text-sm font-black text-slate-900">
                       <BookMarked size={13} className="text-indigo-500" />
-                      {record.subject} – {getClassName(record.classId)}
+                      {getAcademicSubjectLabel(record.subject, evaluationsData?.curriculumSkills ?? [])} – {getClassName(record.classId)}
                     </strong>
                     <span className="flex items-center gap-1 text-xs font-semibold text-slate-400">
                       <Clock size={11} />

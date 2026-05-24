@@ -1,859 +1,731 @@
 import { createPortal } from 'react-dom'
 import { useState, useEffect } from 'react'
 import {
-  Activity,
   ArrowRight,
   AlertCircle,
-  Award,
-  BarChart2,
-  BarChart3,
-  BadgeCheck,
-  BookMarked,
-  BookOpen,
   Calendar,
   CalendarDays,
-  CheckCircle,
   CheckCircle2,
-  ChevronLeft,
-  ChevronRight,
-  ClipboardList,
   Clock,
   DoorOpen,
-  FileText,
-  Flame,
   GraduationCap,
-  Layers,
-  LayoutGrid,
-  ListChecks,
   MapPin,
-  PenLine,
   Save,
   School,
   Sparkles,
-  Star,
   Target,
-  UserRound,
-  UserCheck,
   Users,
   X,
-  Zap,
+  Building2,
 } from 'lucide-react'
 
 import { CompactSelect } from '../../components/ui/compact-select'
 import DateInput from '../../components/ui/date-input'
 import { FieldMessage, fieldStateClass } from '../../components/ui/form-field'
-import { PedagogicalDashboard } from './PedagogicalDashboard'
-import { formatClassGrade } from '../../class-grade-options'
-import {
-  ActionButton,
-  AlertBanner,
-  CompactProgressMetric,
-  EmptyState,
-  InfoCard,
-  InfoCardSkeleton,
-  LockedSchoolField,
-  MetricProgress,
-  PanelCard,
-  SectionHeader,
-  SectionShell,
-  StudentCardSkeleton,
-  classOptions,
-  getSubjectIcon,
-  getSubjectIconBg,
-  normalizeAcademicText,
-  getClassStudents,
-  getSubjectAccent,
-} from '../../components/role-portal/portal-components'
 import type { RolePortalScreenModel } from './screen-model'
 import type { RoomReservation } from '../../types'
+import { classOptions } from '../../components/role-portal/portal-components'
 
-// Skeleton para card de reserva com ícones
+/* ─────────────────────────────────────────────
+   Eyebrow
+───────────────────────────────────────────── */
+function Eyebrow({ children, className = '' }: { children: React.ReactNode; className?: string }) {
+  return (
+    <p className={`text-[10px] font-semibold tracking-[.16em] uppercase text-stone-400 font-['DM_Sans'] ${className}`}>
+      {children}
+    </p>
+  )
+}
+
+/* ─────────────────────────────────────────────
+   Bone (shimmer skeleton)
+───────────────────────────────────────────── */
+function Bone({ className }: { className: string }) {
+  return (
+    <div className={`relative overflow-hidden rounded-lg bg-stone-200 ${className}`}>
+      <div className="absolute inset-0 -translate-x-full animate-[shimmer_1.5s_infinite] bg-gradient-to-r from-transparent via-white/60 to-transparent" />
+    </div>
+  )
+}
+
+/* ─────────────────────────────────────────────
+   Section card
+───────────────────────────────────────────── */
+function SectionCard({
+  label, title, icon: Icon, iconBg, children, delay = 0, headerRight,
+}: {
+  label: string
+  title: string
+  icon: React.ElementType
+  iconBg: string
+  children: React.ReactNode
+  delay?: number
+  headerRight?: React.ReactNode
+}) {
+  return (
+    <section
+      style={{ animationDelay: `${delay}ms` }}
+      className="animate-in fade-in slide-in-from-bottom-2 duration-500 fill-mode-both overflow-hidden rounded-2xl border border-stone-300 bg-white shadow-sm"
+    >
+      <div className="h-0.5 w-full bg-gradient-to-r from-indigo-500 via-violet-500 to-purple-500" />
+      <div className="flex items-center justify-between gap-3 border-b border-stone-200 bg-stone-50 px-5 py-4">
+        <div className="flex items-center gap-3">
+          <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl shadow-sm ${iconBg}`}>
+            <Icon size={16} className="text-white" />
+          </div>
+          <div>
+            <Eyebrow className="text-indigo-500">{label}</Eyebrow>
+            <p className="font-['Lora'] text-sm font-semibold text-stone-900 leading-snug mt-0.5">{title}</p>
+          </div>
+        </div>
+        {headerRight && <div>{headerRight}</div>}
+      </div>
+      <div className="p-5">{children}</div>
+    </section>
+  )
+}
+
+/* ─────────────────────────────────────────────
+   Field wrapper com ícone colorido na label
+───────────────────────────────────────────── */
+function Field({
+  label, icon: Icon, iconColor = 'text-stone-400', error, children, hint, required,
+}: {
+  label: string
+  icon?: React.ElementType
+  iconColor?: string
+  error?: string
+  children: React.ReactNode
+  hint?: string
+  required?: boolean
+}) {
+  return (
+    <label className="flex min-w-0 flex-col gap-1.5">
+      <span className="flex items-center gap-1.5">
+        {Icon && <Icon size={11} className={`shrink-0 ${iconColor}`} />}
+        <Eyebrow className="text-stone-500">{label}</Eyebrow>
+        {required && <span className="text-rose-400 text-[10px] font-bold ml-0.5">*</span>}
+      </span>
+      {children}
+      <FieldMessage hint={hint} error={error} />
+    </label>
+  )
+}
+
+/* ─────────────────────────────────────────────
+   Input classes
+───────────────────────────────────────────── */
+const inputIconCls =
+  "min-h-11 w-full min-w-0 rounded-xl border border-stone-300 bg-white pl-9 pr-3.5 text-sm font-medium text-stone-900 outline-none transition-all placeholder:text-stone-400 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 hover:border-stone-400 font-['DM_Sans']"
+
+const inputCls =
+  "min-h-11 w-full min-w-0 rounded-xl border border-stone-300 bg-white px-3.5 text-sm font-medium text-stone-900 outline-none transition-all placeholder:text-stone-400 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 hover:border-stone-400 font-['DM_Sans']"
+
+const textareaCls =
+  "min-h-24 w-full min-w-0 resize-none rounded-xl border border-stone-300 bg-white px-3.5 py-2.5 text-sm font-medium text-stone-900 outline-none transition-all placeholder:text-stone-400 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 hover:border-stone-400 font-['DM_Sans']"
+
+/* ─────────────────────────────────────────────
+   Skeleton field
+───────────────────────────────────────────── */
+function SkeletonField() {
+  return (
+    <div className="flex flex-col gap-2">
+      <Bone className="h-2.5 w-24 rounded" />
+      <Bone className="h-11 w-full rounded-xl" />
+    </div>
+  )
+}
+
+/* ─────────────────────────────────────────────
+   Skeleton formulário
+───────────────────────────────────────────── */
+function FormSkeleton() {
+  return (
+    <div className="animate-in fade-in duration-300 fill-mode-both overflow-hidden rounded-2xl border border-stone-300 bg-white shadow-sm">
+      <Bone className="h-0.5 w-full rounded-none" />
+      <div className="flex items-center gap-3 border-b border-stone-200 bg-stone-50 px-5 py-4">
+        <Bone className="h-9 w-9 rounded-xl shrink-0" />
+        <div className="flex flex-col gap-1.5">
+          <Bone className="h-2.5 w-20 rounded" />
+          <Bone className="h-3.5 w-40 rounded" />
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-4 p-5 max-[580px]:grid-cols-1">
+        {[1, 2, 3, 4, 5].map((i) => <SkeletonField key={i} />)}
+        <div className="col-span-2 flex flex-col gap-2 max-[580px]:col-span-1">
+          <Bone className="h-2.5 w-24 rounded" />
+          <Bone className="h-24 w-full rounded-xl" />
+        </div>
+      </div>
+      <div className="flex justify-end border-t border-stone-200 px-5 py-4">
+        <Bone className="h-10 w-40 rounded-xl" />
+      </div>
+    </div>
+  )
+}
+
+/* ─────────────────────────────────────────────
+   Skeleton card de reserva
+───────────────────────────────────────────── */
 function ReservationCardSkeleton({ index }: { index: number }) {
   return (
     <div
-      className="animate-pulse rounded-xl border border-slate-300 bg-white p-4 shadow-sm"
-      style={{ animationDelay: `${index * 60}ms` }}
+      style={{ animationDelay: `${index * 80}ms` }}
+      className="animate-in fade-in duration-300 fill-mode-both flex flex-col gap-3 rounded-2xl border border-stone-300 bg-white p-4 shadow-sm"
     >
       <div className="flex items-start justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <div className="grid h-9 w-9 place-items-center rounded-lg bg-indigo-100">
-            <DoorOpen size={16} className="text-indigo-300" />
-          </div>
-          <div className="space-y-1.5">
-            <div className="h-4 w-28 rounded-full bg-slate-200" />
-            <div className="h-3 w-20 rounded-full bg-slate-100" />
+        <div className="flex items-center gap-2.5">
+          <Bone className="h-9 w-9 rounded-xl shrink-0" />
+          <div className="flex flex-col gap-1.5">
+            <Bone className="h-2.5 w-14 rounded" />
+            <Bone className="h-4 w-28 rounded-lg" />
           </div>
         </div>
-        <div className="flex items-center gap-1.5 rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-1.5">
-          <Clock size={12} className="text-indigo-300" />
-          <div className="h-3 w-16 rounded-full bg-indigo-200" />
-        </div>
+        <Bone className="h-6 w-24 rounded-full" />
       </div>
-      <div className="mt-3 flex items-center gap-2">
-        <div className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1">
-          <GraduationCap size={11} className="text-slate-300" />
-          <div className="h-3 w-16 rounded-full bg-slate-200" />
-        </div>
-        <div className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1">
-          <Calendar size={11} className="text-slate-300" />
-          <div className="h-3 w-20 rounded-full bg-slate-200" />
-        </div>
+      <div className="flex gap-2">
+        <Bone className="h-6 w-24 rounded-full" />
+        <Bone className="h-6 w-28 rounded-full" />
       </div>
-      <div className="mt-3 space-y-1.5">
-        <div className="h-3 w-full rounded-full bg-slate-100" />
-        <div className="h-3 w-2/3 rounded-full bg-slate-100" />
-      </div>
+      <Bone className="h-10 w-full rounded-xl" />
     </div>
   )
 }
 
-// Skeleton para o formulário
-function FormSkeleton() {
+/* ─────────────────────────────────────────────
+   Skeleton lista
+───────────────────────────────────────────── */
+function ListSkeleton() {
   return (
-    <div className="animate-pulse rounded-2xl border border-slate-300 bg-white p-5 shadow-sm">
-      <div className="flex items-center gap-3">
-        <div className="grid h-10 w-10 place-items-center rounded-xl bg-indigo-100">
-          <Calendar size={18} className="text-indigo-300" />
-        </div>
-        <div className="space-y-1.5">
-          <div className="h-4 w-32 rounded-full bg-slate-200" />
-          <div className="h-3 w-48 rounded-full bg-slate-100" />
-        </div>
-      </div>
-      <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-        {[1, 2, 3, 4, 5].map((i) => (
-          <div key={i} className="space-y-2">
-            <div className="h-3 w-20 rounded-full bg-slate-200" />
-            <div className="h-11 w-full rounded-xl bg-slate-100" />
-          </div>
-        ))}
-        <div className="space-y-2 sm:col-span-2 lg:col-span-5">
-          <div className="h-3 w-20 rounded-full bg-slate-200" />
-          <div className="h-20 w-full rounded-xl bg-slate-100" />
+    <div className="animate-in fade-in duration-300 fill-mode-both overflow-hidden rounded-2xl border border-stone-300 bg-white shadow-sm">
+      <Bone className="h-0.5 w-full rounded-none" />
+      <div className="flex items-center gap-3 border-b border-stone-200 bg-stone-50 px-5 py-4">
+        <Bone className="h-9 w-9 rounded-xl shrink-0" />
+        <div className="flex flex-col gap-1.5">
+          <Bone className="h-2.5 w-20 rounded" />
+          <Bone className="h-3.5 w-32 rounded" />
         </div>
       </div>
-      <div className="mt-4 flex justify-end">
-        <div className="h-11 w-40 rounded-xl bg-indigo-100" />
+      <div className="grid gap-4 p-5 sm:grid-cols-2 xl:grid-cols-3">
+        {[0, 1, 2].map((i) => <ReservationCardSkeleton key={i} index={i} />)}
       </div>
     </div>
   )
 }
 
+/* ══════════════════════════════════════
+   Main Component
+══════════════════════════════════════ */
 export function RoomReservationsView({ model }: { model: RolePortalScreenModel }) {
   const [isLoading, setIsLoading] = useState(true)
-  const [mounted, setMounted] = useState(false)
 
   useEffect(() => {
-    setMounted(true)
-    const timer = setTimeout(() => setIsLoading(false), 600)
-    return () => clearTimeout(timer)
+    const t = setTimeout(() => setIsLoading(false), 800)
+    return () => clearTimeout(t)
   }, [])
 
   const {
-    section,
-    profile,
-    currentUser,
-    currentRole,
-    schoolsData,
-    evaluationsData,
-    onCreateRoomReservation,
-    onCreateLessonRecord,
-    schools,
-    classes,
-    students,
-    teachers,
-    guardians,
-    selectedClassId,
-    setSelectedClassId,
-    selectedStudentId,
-    setSelectedStudentId,
-    activeSubject,
-    setActiveSubject,
-    subjectModal,
-    setSubjectModal,
-    createdLessonRecords,
-    setCreatedLessonRecords,
-    lessonHistoryPage,
-    setLessonHistoryPage,
-    subjectHistoryPage,
-    setSubjectHistoryPage,
     reservations,
-    setReservations,
     selectedReservation,
     setSelectedReservation,
-    lessonRecordStep,
-    setLessonRecordStep,
-    lessonError,
-    setLessonError,
-    lessonFieldErrors,
-    setLessonFieldErrors,
-    isSavingLesson,
-    setIsSavingLesson,
     isSavingReservation,
-    setIsSavingReservation,
     reservationError,
-    setReservationError,
     reservationFieldErrors,
-    setReservationFieldErrors,
-    attendance,
-    setAttendance,
-    savedAttendance,
-    setSavedAttendance,
-    attendanceDirtyKeys,
-    setAttendanceDirtyKeys,
-    lessonDraft,
-    setLessonDraft,
     reservationDraft,
-    setReservationDraft,
-    linkedTeacher,
-    teacherClasses,
-    visibleTeacherClasses,
-    activeSubjectClasses,
-    lessonRecords,
-    classScope,
-    selectedClass,
-    selectedStudent,
-    selectedClassStudents,
-    averageScore,
-    averageAttendance,
-    lowAttendanceStudents,
-    lowScoreStudents,
-    subjectCards,
-    modalCard,
-    sortedSubjectHistoryRecords,
-    subjectHistoryTotalPages,
-    safeSubjectHistoryPage,
-    subjectHistoryStartIndex,
-    subjectHistoryEndIndex,
-    visibleSubjectHistoryRecords,
-    modalClasses,
-    modalSelectedClass,
-    modalSelectedStudents,
-    lessonClass,
-    lessonTimeOptions,
-    lessonAttendanceStudents,
-    lessonAttendanceKeys,
-    lessonAttendanceHasChanges,
-    modalAttendanceKeys,
-    modalAttendanceHasChanges,
-    lessonPresentCount,
-    lessonDetailsReady,
-    sortedLessonRecords,
-    lessonHistoryTotalPages,
-    safeLessonHistoryPage,
-    lessonHistoryStartIndex,
-    lessonHistoryEndIndex,
-    visibleLessonHistoryRecords,
-    reservationEndTimeOptions,
-    getSchoolName,
-    getClassName,
-    getClassRoom,
-    getReservationSchoolName,
-    clearLessonFieldError,
-    clearReservationFieldError,
-    updateLessonDraftField,
-    updateReservationDraftField,
-    updateAttendance,
-    commitAttendanceChanges,
-    openLessonRecord,
-    openAttendanceList,
-    getLessonValidationMessage,
-    handleGoToLessonAttendance,
-    handleSaveLesson,
+    classes,
+    schools,
     handleSaveReservation,
     handleReservationStartTimeChange,
-    lessonHistoryPageSize,
     reservationStartTimeOptions,
-    today,
+    reservationEndTimeOptions,
+    updateReservationDraftField,
+    clearReservationFieldError,
+    getClassName,
+    getReservationSchoolName,
     formatReservationDate,
     formatReservationTime,
-    getLessonAttendanceKey,
-    getFirstLessonTimeForClass,
-    compareLessonRecordsByNewest,
-    reservationFieldClass,
-    reservationLabelClass,
-    reservationInputClass,
-    reservationSelectClass,
   } = model
 
   return (
-    <SectionShell
-      label="Professor"
-      title="Reservar Sala"
-      description="Reserve laboratório, sala multimídia ou outro ambiente escolar para uma turma."
-      icon={<DoorOpen size={20} />}
-    >
-      {/* Stats Banner com animação de entrada */}
-      <div
-        className={`flex flex-wrap items-center gap-4 rounded-2xl border border-slate-400 bg-gradient-to-r from-white via-slate-50/50 to-white px-6 py-4 shadow-sm transition-all duration-700 ${mounted ? 'translate-y-0 opacity-100' : 'translate-y-4 opacity-0'}`}
-      >
-        <div className="flex items-center gap-3">
-          <span className="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-indigo-500 to-indigo-600 text-white shadow-lg shadow-indigo-200">
-            <DoorOpen size={18} />
-          </span>
-          <div>
-            <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Total de reservas</p>
-            <strong className="font-['Sora',system-ui,sans-serif] text-xl font-black text-slate-900">{reservations.length}</strong>
+    <>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Lora:wght@400;500;600;700&family=DM+Sans:wght@400;500;600;700&display=swap');
+
+        @keyframes shimmer { to { transform: translateX(200%) } }
+        .fill-mode-both { animation-fill-mode: both; }
+
+        @keyframes rrv-spin { to { transform: rotate(360deg); } }
+        @keyframes rrv-modal-in {
+          from { opacity: 0; transform: scale(0.96) translateY(8px); }
+          to   { opacity: 1; transform: scale(1) translateY(0); }
+        }
+        @keyframes rrv-overlay-in {
+          from { opacity: 0; }
+          to   { opacity: 1; }
+        }
+        @keyframes rrv-row-in {
+          from { opacity: 0; transform: translateX(-6px); }
+          to   { opacity: 1; transform: translateX(0); }
+        }
+
+        .rrv-spinner {
+          display: inline-block; width: 15px; height: 15px;
+          border-radius: 50%; border: 2px solid rgba(255,255,255,0.3);
+          border-top-color: white; animation: rrv-spin 0.7s linear infinite; flex-shrink: 0;
+        }
+
+        /* ícone dentro do input */
+        .rrv-wrap { position: relative; }
+        .rrv-icon {
+          position: absolute; left: 11px; top: 50%; transform: translateY(-50%);
+          pointer-events: none; transition: opacity 0.15s;
+        }
+        .rrv-wrap:focus-within .rrv-icon { opacity: 1 !important; }
+
+        /* botão salvar */
+        .rrv-save-btn {
+          box-shadow: 0 1px 2px rgba(79,70,229,0.25);
+          transition: all 0.18s cubic-bezier(0.22,1,0.36,1);
+        }
+        .rrv-save-btn:hover:not(:disabled) {
+          box-shadow: 0 4px 16px rgba(79,70,229,0.35);
+          transform: translateY(-1px);
+        }
+        .rrv-save-btn:active:not(:disabled) { transform: translateY(0); }
+
+        /* cards de reserva */
+        .rrv-card {
+          transition: box-shadow 0.2s, transform 0.2s, border-color 0.2s;
+        }
+        .rrv-card:hover {
+          box-shadow: 0 6px 24px rgba(79,70,229,0.13);
+          transform: translateY(-2px);
+          border-color: #a5b4fc !important;
+        }
+        .rrv-card:hover .rrv-hint { opacity: 1 !important; }
+        .rrv-card:focus-visible { outline: 2px solid #6366f1; outline-offset: 2px; }
+
+        /* modal */
+        .rrv-overlay { animation: rrv-overlay-in 0.2s ease-out both; }
+        .rrv-modal   { animation: rrv-modal-in 0.3s cubic-bezier(0.22,1,0.36,1) both; }
+        .rrv-row     { animation: rrv-row-in 0.3s cubic-bezier(0.22,1,0.36,1) both; }
+      `}</style>
+
+      <div className="font-['DM_Sans',system-ui,sans-serif] grid min-h-screen gap-4 bg-stone-100 px-[clamp(12px,2.5vw,40px)] py-6 pb-12 text-stone-900">
+
+        {/* ═══ HEADER BAR ═══ */}
+        <div className="animate-in fade-in slide-in-from-top-3 duration-500 fill-mode-both overflow-hidden rounded-2xl border border-stone-300 bg-white shadow-sm">
+          <div className="h-0.5 w-full bg-gradient-to-r from-indigo-500 via-violet-500 to-purple-500" />
+          <div className="flex flex-wrap items-center justify-between gap-4 px-5 py-4">
+
+            {/* Título */}
+            <div className="flex items-center gap-3">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-indigo-600 shadow-sm">
+                <DoorOpen size={16} className="text-white" />
+              </div>
+              <div>
+                <Eyebrow className="text-indigo-500">Professor</Eyebrow>
+                <p className="font-['Lora'] text-sm font-semibold text-stone-900 leading-snug mt-0.5">Reservas de Sala</p>
+              </div>
+            </div>
+
+            {/* Stats */}
+            <div className="flex flex-wrap items-center gap-5 divide-x divide-stone-200">
+              <div className="flex items-center gap-2">
+                <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-100">
+                  <DoorOpen size={13} className="text-indigo-600" />
+                </div>
+                <div>
+                  <Eyebrow>Reservas</Eyebrow>
+                  <p className="font-['Lora'] text-base font-bold text-stone-900 leading-none">{isLoading ? '—' : reservations.length}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 pl-5">
+                <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-100">
+                  <Users size={13} className="text-emerald-600" />
+                </div>
+                <div>
+                  <Eyebrow>Turmas</Eyebrow>
+                  <p className="font-['Lora'] text-base font-bold text-stone-900 leading-none">{isLoading ? '—' : classes.length}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 pl-5">
+                <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-violet-100">
+                  <Building2 size={13} className="text-violet-600" />
+                </div>
+                <div>
+                  <Eyebrow>Escolas</Eyebrow>
+                  <p className="font-['Lora'] text-base font-bold text-stone-900 leading-none">{isLoading ? '—' : schools.length}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-1.5 pl-5">
+                <span className="relative flex h-2 w-2">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+                </span>
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-emerald-700 font-['DM_Sans']">Sistema ativo</span>
+              </div>
+            </div>
           </div>
         </div>
-        <div className="mx-2 hidden h-10 w-px bg-slate-300 sm:block" />
-        <div className="flex items-center gap-3">
-          <span className="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-emerald-500 to-emerald-600 text-white shadow-lg shadow-emerald-200">
-            <Users size={18} />
-          </span>
-          <div>
-            <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Turmas disponíveis</p>
-            <strong className="font-['Sora',system-ui,sans-serif] text-xl font-black text-slate-900">{classes.length}</strong>
+
+        {isLoading ? (
+          <div className="grid gap-4">
+            <FormSkeleton />
+            <ListSkeleton />
           </div>
-        </div>
-        <div className="mx-2 hidden h-10 w-px bg-slate-300 sm:block" />
-        <div className="flex items-center gap-3">
-          <span className="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-violet-500 to-violet-600 text-white shadow-lg shadow-violet-200">
-            <School size={18} />
-          </span>
-          <div>
-            <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Escolas</p>
-            <strong className="font-['Sora',system-ui,sans-serif] text-xl font-black text-slate-900">{schools.length}</strong>
-          </div>
-        </div>
-        <div className="ml-auto flex items-center gap-2 rounded-full border border-emerald-500 bg-gradient-to-r from-emerald-50 to-emerald-100 px-4 py-2 shadow-sm">
-          <span className="relative flex h-2 w-2">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-            <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
-          </span>
-          <span className="text-[11px] font-black uppercase tracking-wider text-emerald-700">Sistema ativo</span>
-        </div>
+        ) : (
+          <>
+            {/* ═══ FORMULÁRIO ═══ */}
+            <SectionCard
+              label="Nova reserva"
+              title="Reservar ambiente escolar"
+              icon={Calendar}
+              iconBg="bg-indigo-600"
+              delay={75}
+            >
+              <form onSubmit={handleSaveReservation} noValidate>
+
+                {reservationError && (
+                  <div className="mb-4 flex items-center gap-2.5 rounded-xl border border-rose-300 bg-rose-50 px-4 py-3">
+                    <AlertCircle size={15} className="shrink-0 text-rose-500" />
+                    <p className="text-sm font-medium text-rose-700 font-['DM_Sans']">{reservationError}</p>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-2 gap-4 max-[580px]:grid-cols-1">
+
+                  {/* Sala */}
+                  <Field label="Sala, Laboratório" icon={MapPin} iconColor="text-indigo-500" error={reservationFieldErrors.room} hint="Nome do ambiente como a escola identifica." required>
+                    <div className="rrv-wrap">
+                      <input
+                        className={`${inputIconCls} ${fieldStateClass(reservationFieldErrors.room)}`}
+                        value={reservationDraft.room}
+                        onChange={(e) => updateReservationDraftField('room', e.target.value)}
+                        placeholder="Ex: Laboratório de Informática"
+                        aria-invalid={Boolean(reservationFieldErrors.room) || undefined}
+                        required
+                      />
+                      <MapPin size={13} className="rrv-icon text-indigo-500 opacity-70" />
+                    </div>
+                  </Field>
+
+                  {/* Turma */}
+                  <Field label="Turma" icon={GraduationCap} iconColor="text-violet-500" error={reservationFieldErrors.classId} hint="Selecione a turma que usará o ambiente." required>
+                    <CompactSelect
+                      value={reservationDraft.classId}
+                      options={classOptions(classes)}
+                      onChange={(classId) => updateReservationDraftField('classId', classId)}
+                      ariaLabel="Turma"
+                      error={reservationFieldErrors.classId}
+                      className={`${inputCls} ${fieldStateClass(reservationFieldErrors.classId)}`}
+                      dropdownWidth="trigger"
+                    />
+                  </Field>
+
+                  {/* Data */}
+                  <Field label="Data da reserva" icon={CalendarDays} iconColor="text-sky-500" error={reservationFieldErrors.date} hint="Informe o dia da reserva." required>
+                    <div className="rrv-wrap">
+                      <DateInput
+                        value={reservationDraft.date}
+                        onChange={(e) => updateReservationDraftField('date', e.target.value)}
+                        error={reservationFieldErrors.date}
+                        icon={<CalendarDays size={13} className="text-sky-500 opacity-70" />}
+                        className={`${inputCls} ${fieldStateClass(reservationFieldErrors.date)}`}
+                      />
+                    </div>
+                  </Field>
+
+                  {/* Horário início */}
+                  <Field label="Horário de início" icon={Clock} iconColor="text-emerald-500" error={reservationFieldErrors.startTime} hint="Escolha quando a reserva começa." required>
+                    <div className="rrv-wrap">
+                      <CompactSelect
+                        value={reservationDraft.startTime}
+                        options={reservationStartTimeOptions}
+                        onChange={(startTime) => {
+                          clearReservationFieldError('startTime')
+                          clearReservationFieldError('endTime')
+                          handleReservationStartTimeChange(startTime)
+                        }}
+                        ariaLabel="Horário de início"
+                        error={reservationFieldErrors.startTime}
+                        className={`${inputIconCls} ${fieldStateClass(reservationFieldErrors.startTime)}`}
+                        dropdownWidth="trigger"
+                      />
+                      <Clock size={13} className="rrv-icon text-emerald-500 opacity-70" />
+                    </div>
+                  </Field>
+
+                  {/* Horário fim */}
+                  <Field label="Horário de término" icon={Clock} iconColor="text-amber-500" error={reservationFieldErrors.endTime} hint="Escolha um horário posterior ao início." required>
+                    <div className="rrv-wrap">
+                      <CompactSelect
+                        value={reservationDraft.endTime}
+                        options={reservationEndTimeOptions}
+                        onChange={(endTime) => updateReservationDraftField('endTime', endTime)}
+                        ariaLabel="Horário de fim"
+                        error={reservationFieldErrors.endTime}
+                        className={`${inputIconCls} ${fieldStateClass(reservationFieldErrors.endTime)}`}
+                        dropdownWidth="trigger"
+                      />
+                      <Clock size={13} className="rrv-icon text-amber-500 opacity-70" />
+                    </div>
+                  </Field>
+
+                  {/* Finalidade — full width */}
+                  <div className="col-span-2 max-[580px]:col-span-1">
+                    <Field label="Finalidade" icon={Target} iconColor="text-orange-500" error={reservationFieldErrors.purpose} hint="Descreva rapidamente o objetivo da reserva." required>
+                      <textarea
+                        className={`${textareaCls} ${fieldStateClass(reservationFieldErrors.purpose)}`}
+                        value={reservationDraft.purpose}
+                        onChange={(e) => updateReservationDraftField('purpose', e.target.value)}
+                        placeholder="Descreva o objetivo da reserva, atividades planejadas, recursos necessários…"
+                        aria-invalid={Boolean(reservationFieldErrors.purpose) || undefined}
+                        required
+                      />
+                    </Field>
+                  </div>
+                </div>
+
+                {/* Footer */}
+                <div className="mt-5 flex items-center justify-end border-t border-stone-200 pt-5">
+                  <button
+                    type="submit"
+                    disabled={isSavingReservation || classes.length === 0}
+                    className="rrv-save-btn inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-indigo-600 px-6 text-[13px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40 font-['DM_Sans']"
+                  >
+                    {isSavingReservation
+                      ? <><span className="rrv-spinner" />Salvando…</>
+                      : <><Save size={15} />Salvar reserva</>}
+                  </button>
+                </div>
+              </form>
+            </SectionCard>
+
+            {/* ═══ LISTA DE RESERVAS ═══ */}
+            <SectionCard
+              label="Histórico"
+              title="Reservas recentes"
+              icon={Clock}
+              iconBg="bg-violet-600"
+              delay={150}
+              headerRight={
+                reservations.length > 0 ? (
+                  <span className="inline-flex items-center gap-1 rounded-full border border-indigo-300 bg-indigo-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-indigo-700 font-['DM_Sans']">
+                    <Sparkles size={9} />
+                    {reservations.length} reserva{reservations.length !== 1 ? 's' : ''}
+                  </span>
+                ) : undefined
+              }
+            >
+              {reservations.length === 0 ? (
+                <div className="flex flex-col items-center gap-3 py-10 text-center">
+                  <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-stone-200 bg-stone-50">
+                    <DoorOpen size={28} className="text-stone-300" />
+                  </div>
+                  <div>
+                    <p className="font-['Lora'] text-sm font-semibold text-stone-600">Nenhuma reserva cadastrada</p>
+                    <p className="mt-1 text-xs text-stone-400 font-['DM_Sans']">Preencha o formulário acima para criar sua primeira reserva.</p>
+                  </div>
+                </div>
+              ) : (
+                <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                  {reservations.map((r: RoomReservation, i: number) => (
+                    <article
+                      key={r.id}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => setSelectedReservation(r)}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelectedReservation(r) } }}
+                      style={{ animationDelay: `${i * 60}ms` }}
+                      className="rrv-card animate-in fade-in slide-in-from-bottom-2 duration-500 fill-mode-both relative cursor-pointer overflow-hidden rounded-2xl border border-stone-300 bg-white p-4 shadow-sm focus:outline-none"
+                      aria-label={`Ver dados da reserva de ${r.room}`}
+                    >
+                      {/* barra lateral */}
+                      <div className="absolute left-0 top-4 bottom-4 w-0.5 rounded-full bg-gradient-to-b from-indigo-400 to-violet-500" />
+
+                      <div className="pl-3">
+                        {/* Topo */}
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div className="flex items-center gap-2.5">
+                            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-indigo-100">
+                              <DoorOpen size={15} className="text-indigo-600" />
+                            </div>
+                            <div className="min-w-0">
+                              <Eyebrow>Ambiente</Eyebrow>
+                              <p className="font-['Lora'] text-sm font-semibold text-stone-900 truncate leading-snug">{r.room}</p>
+                            </div>
+                          </div>
+                          <span className="inline-flex items-center gap-1 rounded-full border border-emerald-300 bg-emerald-50 px-2.5 py-1 text-[10px] font-semibold text-emerald-700 font-['DM_Sans']">
+                            <Clock size={10} className="text-emerald-500" />
+                            {formatReservationTime(r.startTime)}–{formatReservationTime(r.endTime)}
+                          </span>
+                        </div>
+
+                        {/* Badges */}
+                        <div className="mt-3 flex flex-wrap items-center gap-2">
+                          <span className="inline-flex items-center gap-1.5 rounded-full border border-stone-300 bg-stone-50 px-2.5 py-1 text-[10px] font-medium text-stone-600 font-['DM_Sans']">
+                            <GraduationCap size={10} className="text-violet-500" />
+                            {getClassName(r.classId)}
+                          </span>
+                          <span className="inline-flex items-center gap-1.5 rounded-full border border-stone-300 bg-stone-50 px-2.5 py-1 text-[10px] font-medium text-stone-600 font-['DM_Sans']">
+                            <CalendarDays size={10} className="text-sky-500" />
+                            {formatReservationDate(r.date)}
+                          </span>
+                        </div>
+
+                        {/* Finalidade */}
+                        {r.purpose && (
+                          <div className="mt-3 rounded-xl border border-stone-200 bg-stone-50 px-3 py-2">
+                            <p className="line-clamp-2 text-[12px] font-medium text-stone-500 font-['DM_Sans']">{r.purpose}</p>
+                          </div>
+                        )}
+
+                        {/* "Ver detalhes" aparece no hover */}
+                        <div className="rrv-hint mt-3 flex items-center justify-end gap-1 text-[10px] font-semibold uppercase tracking-wide text-indigo-400 font-['DM_Sans'] opacity-0 transition-opacity duration-200">
+                          Ver detalhes <ArrowRight size={10} />
+                        </div>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </SectionCard>
+          </>
+        )}
       </div>
 
-      <section className="grid items-start gap-5">
-        {/* Formulário de Nova Reserva */}
-        {isLoading ? (
-          <FormSkeleton />
-        ) : (
-          <form
-            onSubmit={handleSaveReservation}
-            className="overflow-hidden rounded-2xl border border-slate-400 bg-white shadow-sm transition-all duration-500"
-            style={{
-              animation: 'fadeSlideUp 0.5s ease-out forwards',
-              opacity: 0,
-              transform: 'translateY(20px)',
-            }}
-            noValidate
-          >
-            {/* Header do formulário */}
-            <div className="relative border-b border-slate-300 bg-gradient-to-r from-slate-50 via-white to-slate-50 px-5 py-4">
-              <div className="absolute left-0 top-0 h-1 w-full bg-gradient-to-r from-indigo-500 via-violet-500 to-indigo-500" />
-              <div className="flex items-center gap-4">
-                <span className="grid h-12 w-12 place-items-center rounded-xl bg-gradient-to-br from-indigo-500 to-indigo-600 text-white shadow-lg shadow-indigo-200">
-                  <Calendar size={20} />
-                </span>
-                <div>
-                  <h3 className="font-['Sora',system-ui,sans-serif] text-base font-black text-slate-900">Nova Reserva</h3>
-                  <p className="text-xs font-semibold text-slate-500">Preencha os dados do ambiente e período desejado</p>
-                </div>
-              </div>
-            </div>
-
-            <div className="p-5">
-              {reservationError && (
-                <div className="mb-5">
-                  <AlertBanner tone="rose" message={reservationError} />
-                </div>
-              )}
-
-              <div className="grid items-start gap-4 sm:grid-cols-2 lg:grid-cols-[minmax(180px,1.2fr)_minmax(180px,1fr)_150px_120px_120px]">
-                {/* Campo Sala */}
-                <label className="grid gap-2">
-                  <span className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.15em] text-slate-500">
-                    <MapPin size={12} className="text-indigo-500" />
-                    Sala, Laboratório
-                    <span className="text-rose-500">*</span>
-                  </span>
-                  <input
-                    className={`min-h-11 rounded-sm border border-slate-400 px-4 text-sm font-semibold shadow-sm outline-none transition-all focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 placeholder:text-slate-400 ${fieldStateClass(reservationFieldErrors.room)}`}
-                    value={reservationDraft.room}
-                    onChange={(e) => updateReservationDraftField('room', e.target.value)}
-                    placeholder="Ex: Laboratório de Informática"
-                    aria-invalid={Boolean(reservationFieldErrors.room) || undefined}
-                    required
-                  />
-                  <FieldMessage hint="Digite o nome do ambiente exatamente como a escola identifica." error={reservationFieldErrors.room} />
-                </label>
-
-                {/* Campo Turma */}
-                <div className="grid gap-2">
-                  <span className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.15em] text-slate-500">
-                    <GraduationCap size={12} className="text-violet-500" />
-                    Turma
-                    <span className="text-rose-500">*</span>
-                  </span>
-                  <CompactSelect
-                    value={reservationDraft.classId}
-                    options={classOptions(classes)}
-                    onChange={(classId) => updateReservationDraftField('classId', classId)}
-                    ariaLabel="Turma"
-                    hint="Selecione a turma que usará o ambiente."
-                    error={reservationFieldErrors.classId}
-                    className="min-h-11 rounded-sm border border-slate-400 bg-white px-4 text-sm font-bold shadow-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
-                    dropdownWidth="trigger"
-                  />
-                </div>
-
-                {/* Campo Data */}
-                <label className="grid gap-2">
-                  <span className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.15em] text-slate-500">
-                    <CalendarDays size={12} className="text-sky-500" />
-                    Data
-                    <span className="text-rose-500">*</span>
-                  </span>
-                  <DateInput
-                    value={reservationDraft.date}
-                    onChange={(e) => updateReservationDraftField('date', e.target.value)}
-                    hint="Informe o dia da reserva."
-                    error={reservationFieldErrors.date}
-                    className="min-h-11 rounded-sm border border-slate-400 px-4 text-sm font-semibold shadow-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
-                  />
-                </label>
-
-                {/* Campo Início */}
-                <div className="grid gap-2">
-                  <span className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.15em] text-slate-500">
-                    <Clock size={12} className="text-emerald-500" />
-                    Início
-                    <span className="text-rose-500">*</span>
-                  </span>
-                  <CompactSelect
-                    value={reservationDraft.startTime}
-                    options={reservationStartTimeOptions}
-                    onChange={(startTime) => {
-                      clearReservationFieldError('startTime')
-                      clearReservationFieldError('endTime')
-                      handleReservationStartTimeChange(startTime)
-                    }}
-                    ariaLabel="Horário de início"
-                    hint="Escolha quando a reserva começa."
-                    error={reservationFieldErrors.startTime}
-                    className="min-h-11 rounded-sm border border-slate-400 bg-white px-4 text-sm font-bold shadow-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
-                    dropdownWidth="trigger"
-                  />
-                </div>
-
-                {/* Campo Fim */}
-                <div className="grid gap-2">
-                  <span className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.15em] text-slate-500">
-                    <Clock size={12} className="text-amber-500" />
-                    Fim
-                    <span className="text-rose-500">*</span>
-                  </span>
-                  <CompactSelect
-                    value={reservationDraft.endTime}
-                    options={reservationEndTimeOptions}
-                    onChange={(endTime) => updateReservationDraftField('endTime', endTime)}
-                    ariaLabel="Horário de fim"
-                    hint="Escolha um horário posterior ao início."
-                    error={reservationFieldErrors.endTime}
-                    className="min-h-11 rounded-sm border border-slate-400 bg-white px-4 text-sm font-bold shadow-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
-                    dropdownWidth="trigger"
-                  />
-                </div>
-
-                {/* Campo Finalidade */}
-                <label className="grid gap-2 sm:col-span-2 lg:col-span-5">
-                  <span className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.15em] text-slate-500">
-                    <Target size={12} className="text-orange-500" />
-                    Finalidade
-                    <span className="text-rose-500">*</span>
-                  </span>
-                  <textarea
-                    className={`min-h-24 rounded-xl border border-slate-400 px-4 py-3 text-sm font-semibold shadow-sm outline-none transition-all focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 placeholder:text-slate-400 ${fieldStateClass(reservationFieldErrors.purpose)}`}
-                    value={reservationDraft.purpose}
-                    onChange={(e) => updateReservationDraftField('purpose', e.target.value)}
-                    placeholder="Descreva o objetivo da reserva, atividades planejadas, etc."
-                    aria-invalid={Boolean(reservationFieldErrors.purpose) || undefined}
-                    required
-                  />
-                  <FieldMessage hint="Explique rapidamente o objetivo da reserva." error={reservationFieldErrors.purpose} />
-                </label>
-              </div>
-
-              <div className="mt-5 flex justify-end">
-                <button
-                  type="submit"
-                  disabled={isSavingReservation || classes.length === 0}
-                  className="inline-flex min-h-12 w-full items-center justify-center gap-2.5 rounded-sm border border-indigo-500 bg-gradient-to-r from-indigo-500 to-indigo-600 px-6 text-sm font-black text-white shadow-lg shadow-indigo-200 transition-all hover:from-indigo-600 hover:to-indigo-700 hover:shadow-xl hover:shadow-indigo-300 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto active:scale-[0.98]"
-                >
-                  <Save size={16} />
-                  {isSavingReservation ? 'Salvando...' : 'Salvar reserva'}
-                  <ArrowRight size={14} className="ml-1 opacity-80" />
-                </button>
-              </div>
-            </div>
-          </form>
-        )}
-
-        {/* Lista de Reservas Recentes */}
-        <div
-          className="overflow-hidden rounded-2xl border border-slate-400 bg-white shadow-sm"
-          style={{
-            animation: 'fadeSlideUp 0.5s ease-out forwards',
-            animationDelay: '100ms',
-            opacity: 0,
-            transform: 'translateY(20px)',
-          }}
-        >
-          {/* Header da lista */}
-          <div className="relative border-b border-slate-300 bg-gradient-to-r from-slate-50 via-white to-slate-50 px-5 py-4">
-            <div className="absolute left-0 top-0 h-1 w-full bg-gradient-to-r from-violet-500 via-indigo-500 to-violet-500" />
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-4">
-                <span className="grid h-12 w-12 place-items-center rounded-xl bg-gradient-to-br from-violet-500 to-violet-600 text-white shadow-lg shadow-violet-200">
-                  <Clock size={20} />
-                </span>
-                <div>
-                  <h3 className="font-['Sora',system-ui,sans-serif] text-base font-black text-slate-900">Reservas Recentes</h3>
-                  <p className="text-xs font-semibold text-slate-500">Histórico de ambientes reservados</p>
-                </div>
-              </div>
-              {reservations.length > 0 && (
-                <span className="flex items-center gap-2 rounded-full border border-indigo-500 bg-gradient-to-r from-indigo-50 to-indigo-100 px-4 py-2 text-xs font-black text-indigo-700 shadow-sm">
-                  <Sparkles size={14} className="text-indigo-500" />
-                  {reservations.length} reserva(s)
-                </span>
-              )}
-            </div>
-          </div>
-
-          {/* Conteúdo da lista */}
-          <div className="p-5">
-            {isLoading ? (
-              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                {[0, 1, 2].map((i) => (
-                  <ReservationCardSkeleton key={i} index={i} />
-                ))}
-              </div>
-            ) : reservations.length > 0 ? (
-              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                {reservations.map((r: RoomReservation, i: number) => (
-                  <article
-                    key={r.id}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => setSelectedReservation(r)}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' || event.key === ' ') {
-                        event.preventDefault()
-                        setSelectedReservation(r)
-                      }
-                    }}
-                    className="group relative cursor-pointer overflow-hidden rounded-xl border border-slate-400 bg-white p-4 text-left shadow-sm transition-all duration-300 hover:border-indigo-400 hover:shadow-lg hover:shadow-indigo-100/50 hover:-translate-y-1 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                    style={{
-                      animation: 'fadeSlideIn 0.4s ease-out forwards',
-                      animationDelay: `${i * 60}ms`,
-                      opacity: 0,
-                    }}
-                    aria-label={`Ver dados da reserva de ${r.room}`}
-                  >
-                    {/* Barra lateral colorida */}
-                    <div className="absolute left-0 top-0 h-full w-1 bg-gradient-to-b from-indigo-400 to-violet-500 transition-all duration-300 group-hover:w-1.5" />
-
-                    {/* Efeito de brilho no hover */}
-                    <div className="absolute inset-0 bg-gradient-to-br from-white/0 via-white/0 to-indigo-50/0 transition-all duration-500 group-hover:from-indigo-50/30 group-hover:via-white/0 group-hover:to-violet-50/20" />
-
-                    <div className="relative pl-3">
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div className="flex items-center gap-3">
-                          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-indigo-500 to-indigo-600 text-white shadow-lg shadow-indigo-200 transition-transform duration-300 group-hover:scale-110">
-                            <DoorOpen size={18} />
-                          </span>
-                          <div className="min-w-0">
-                            <p className="text-[9px] font-black uppercase tracking-[0.2em] text-slate-400">Ambiente</p>
-                            <strong className="block truncate font-['Sora',system-ui,sans-serif] text-sm font-black text-slate-900">
-                              {r.room}
-                            </strong>
-                          </div>
-                        </div>
-                        <span className="flex shrink-0 items-center gap-1.5 rounded-lg border border-indigo-500 bg-gradient-to-r from-indigo-50 to-indigo-100 px-3 py-1.5 text-[10px] font-black text-indigo-700 shadow-sm">
-                          <Clock size={12} />
-                          {formatReservationTime(r.startTime)}–{formatReservationTime(r.endTime)}
-                        </span>
-                      </div>
-
-                      <div className="mt-3 flex flex-wrap items-center gap-2">
-                        <span className="inline-flex items-center gap-1.5 rounded-lg border border-slate-400 bg-white px-2.5 py-1.5 text-[10px] font-black text-slate-600 shadow-sm">
-                          <GraduationCap size={11} className="text-violet-500" />
-                          {getClassName(r.classId)}
-                        </span>
-                        <span className="inline-flex items-center gap-1.5 rounded-lg border border-slate-400 bg-white px-2.5 py-1.5 text-[10px] font-black text-slate-600 shadow-sm">
-                          <CalendarDays size={11} className="text-sky-500" />
-                          {formatReservationDate(r.date)}
-                        </span>
-                      </div>
-
-                      {r.purpose && (
-                        <div className="mt-3 rounded-lg border border-slate-300 bg-slate-50 px-3 py-2">
-                          <p className="line-clamp-2 text-xs font-semibold text-slate-600">{r.purpose}</p>
-                        </div>
-                      )}
-
-                      <div className="mt-3 flex items-center justify-end">
-                        <span className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wider text-indigo-500 opacity-0 transition-opacity group-hover:opacity-100">
-                          Ver detalhes
-                          <ArrowRight size={12} />
-                        </span>
-                      </div>
-                    </div>
-                  </article>
-                ))}
-              </div>
-            ) : (
-              <EmptyState
-                message="Nenhuma reserva cadastrada ainda. Preencha o formulário acima para criar sua primeira reserva."
-                icon={<DoorOpen size={40} />}
-              />
-            )}
-          </div>
-        </div>
-
-        {/* Modal de Detalhes da Reserva */}
-        {selectedReservation && typeof document !== 'undefined'
-          ? createPortal(
+      {/* ═══ MODAL ═══ */}
+      {selectedReservation && typeof document !== 'undefined'
+        ? createPortal(
+            <div
+              role="presentation"
+              onMouseDown={() => setSelectedReservation(null)}
+              className="rrv-overlay fixed inset-0 z-50 flex items-center justify-center overflow-hidden bg-stone-900/40 px-4 py-6 backdrop-blur-sm"
+            >
               <div
-                role="presentation"
-                onMouseDown={() => setSelectedReservation(null)}
-                className="fixed inset-0 z-50 flex items-center justify-center overflow-hidden bg-slate-900/40 px-4 py-6 backdrop-blur-sm"
-                style={{ animation: 'fadeIn 0.2s ease-out' }}
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="rrv-modal-title"
+                onMouseDown={(e) => e.stopPropagation()}
+                className="rrv-modal w-full max-w-lg overflow-hidden rounded-2xl border border-stone-300 bg-white shadow-xl"
               >
-                <div
-                  role="dialog"
-                  aria-modal="true"
-                  aria-labelledby="reservation-detail-title"
-                  onMouseDown={(event) => event.stopPropagation()}
-                  className="w-full max-w-lg overflow-hidden rounded-2xl border border-slate-400 bg-white shadow-2xl"
-                  style={{ animation: 'scaleIn 0.3s ease-out' }}
-                >
-                  {/* Header do modal em tema claro */}
-                  <div className="relative border-b border-slate-300 bg-gradient-to-r from-slate-50 via-white to-slate-50 px-5 py-5">
-                    {/* Barra de acento colorida no topo */}
-                    <div className="absolute left-0 top-0 h-1 w-full bg-gradient-to-r from-indigo-500 via-violet-500 to-indigo-500" />
+                {/* Faixa gradiente */}
+                <div className="h-0.5 w-full bg-gradient-to-r from-indigo-500 via-violet-500 to-purple-500" />
 
-                    <div className="flex items-center justify-between gap-4">
-                      <div className="flex min-w-0 items-center gap-4">
-                        <span className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-indigo-500 to-indigo-600 text-white shadow-lg shadow-indigo-200">
-                          <DoorOpen size={20} />
-                        </span>
-                        <div className="min-w-0">
-                          <p className="text-[10px] font-black uppercase tracking-[0.2em] text-indigo-600">
-                            Dados da reserva
-                          </p>
-                          <h2
-                            id="reservation-detail-title"
-                            className="truncate font-['Sora',system-ui,sans-serif] text-lg font-black text-slate-900"
-                          >
-                            {selectedReservation.room}
-                          </h2>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setSelectedReservation(null)}
-                        className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-slate-400 bg-white text-slate-500 shadow-sm transition-all hover:border-rose-400 hover:bg-rose-50 hover:text-rose-600"
-                        aria-label="Fechar modal"
-                      >
-                        <X size={16} />
-                      </button>
+                {/* Header */}
+                <div className="flex items-center justify-between gap-4 border-b border-stone-200 bg-stone-50 px-5 py-4">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-indigo-600 shadow-sm">
+                      <DoorOpen size={16} className="text-white" />
+                    </div>
+                    <div className="min-w-0">
+                      <Eyebrow className="text-indigo-500">Dados da reserva</Eyebrow>
+                      <h2 id="rrv-modal-title" className="font-['Lora'] text-sm font-semibold text-stone-900 leading-snug truncate mt-0.5">
+                        {selectedReservation.room}
+                      </h2>
                     </div>
                   </div>
-
-                  {/* Conteúdo do modal */}
-                  <div className="grid gap-4 bg-slate-50/50 p-5">
-                    {/* Ambiente */}
-                    <div
-                      className="overflow-hidden rounded-xl border border-slate-400 bg-white shadow-sm"
-                      style={{ animation: 'fadeSlideIn 0.3s ease-out forwards' }}
-                    >
-                      <div className="flex items-center gap-3 border-b border-slate-200 bg-gradient-to-r from-slate-50 to-white px-4 py-2.5">
-                        <div className="grid h-7 w-7 place-items-center rounded-lg bg-indigo-100">
-                          <MapPin size={14} className="text-indigo-600" />
-                        </div>
-                        <span className="text-[10px] font-black uppercase tracking-[0.15em] text-slate-500">
-                          Ambiente
-                        </span>
-                      </div>
-                      <div className="px-4 py-3">
-                        <strong className="font-['Sora',system-ui,sans-serif] text-base font-black text-slate-900">
-                          {selectedReservation.room}
-                        </strong>
-                      </div>
-                    </div>
-
-                    {/* Data e Horário */}
-                    <div className="grid gap-4 sm:grid-cols-2">
-                      <div
-                        className="overflow-hidden rounded-xl border border-slate-400 bg-white shadow-sm"
-                        style={{ animation: 'fadeSlideIn 0.3s ease-out forwards', animationDelay: '50ms' }}
-                      >
-                        <div className="flex items-center gap-3 border-b border-slate-200 bg-gradient-to-r from-slate-50 to-white px-4 py-2.5">
-                          <div className="grid h-7 w-7 place-items-center rounded-lg bg-sky-100">
-                            <CalendarDays size={14} className="text-sky-600" />
-                          </div>
-                          <span className="text-[10px] font-black uppercase tracking-[0.15em] text-slate-500">
-                            Data
-                          </span>
-                        </div>
-                        <div className="px-4 py-3">
-                          <strong className="text-sm font-black text-slate-900">
-                            {formatReservationDate(selectedReservation.date)}
-                          </strong>
-                        </div>
-                      </div>
-
-                      <div
-                        className="overflow-hidden rounded-xl border border-slate-400 bg-white shadow-sm"
-                        style={{ animation: 'fadeSlideIn 0.3s ease-out forwards', animationDelay: '100ms' }}
-                      >
-                        <div className="flex items-center gap-3 border-b border-slate-200 bg-gradient-to-r from-slate-50 to-white px-4 py-2.5">
-                          <div className="grid h-7 w-7 place-items-center rounded-lg bg-emerald-100">
-                            <Clock size={14} className="text-emerald-600" />
-                          </div>
-                          <span className="text-[10px] font-black uppercase tracking-[0.15em] text-slate-500">
-                            Horário
-                          </span>
-                        </div>
-                        <div className="px-4 py-3">
-                          <strong className="text-sm font-black text-slate-900">
-                            {formatReservationTime(selectedReservation.startTime)}–{formatReservationTime(selectedReservation.endTime)}
-                          </strong>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Turma e Escola */}
-                    <div className="grid gap-4 sm:grid-cols-2">
-                      <div
-                        className="overflow-hidden rounded-xl border border-slate-400 bg-white shadow-sm"
-                        style={{ animation: 'fadeSlideIn 0.3s ease-out forwards', animationDelay: '150ms' }}
-                      >
-                        <div className="flex items-center gap-3 border-b border-slate-200 bg-gradient-to-r from-slate-50 to-white px-4 py-2.5">
-                          <div className="grid h-7 w-7 place-items-center rounded-lg bg-violet-100">
-                            <GraduationCap size={14} className="text-violet-600" />
-                          </div>
-                          <span className="text-[10px] font-black uppercase tracking-[0.15em] text-slate-500">
-                            Turma
-                          </span>
-                        </div>
-                        <div className="px-4 py-3">
-                          <strong className="text-sm font-black text-slate-900">
-                            {getClassName(selectedReservation.classId)}
-                          </strong>
-                        </div>
-                      </div>
-
-                      <div
-                        className="overflow-hidden rounded-xl border border-slate-400 bg-white shadow-sm"
-                        style={{ animation: 'fadeSlideIn 0.3s ease-out forwards', animationDelay: '200ms' }}
-                      >
-                        <div className="flex items-center gap-3 border-b border-slate-200 bg-gradient-to-r from-slate-50 to-white px-4 py-2.5">
-                          <div className="grid h-7 w-7 place-items-center rounded-lg bg-amber-100">
-                            <School size={14} className="text-amber-600" />
-                          </div>
-                          <span className="text-[10px] font-black uppercase tracking-[0.15em] text-slate-500">
-                            Escola
-                          </span>
-                        </div>
-                        <div className="px-4 py-3">
-                          <strong className="text-sm font-black text-slate-900">
-                            {getReservationSchoolName(selectedReservation)}
-                          </strong>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Finalidade */}
-                    {selectedReservation.purpose && (
-                      <div
-                        className="overflow-hidden rounded-xl border border-slate-400 bg-white shadow-sm"
-                        style={{ animation: 'fadeSlideIn 0.3s ease-out forwards', animationDelay: '250ms' }}
-                      >
-                        <div className="flex items-center gap-3 border-b border-slate-200 bg-gradient-to-r from-slate-50 to-white px-4 py-2.5">
-                          <div className="grid h-7 w-7 place-items-center rounded-lg bg-orange-100">
-                            <Target size={14} className="text-orange-600" />
-                          </div>
-                          <span className="text-[10px] font-black uppercase tracking-[0.15em] text-slate-500">
-                            Finalidade
-                          </span>
-                        </div>
-                        <div className="px-4 py-3">
-                          <p className="text-sm font-semibold leading-relaxed text-slate-700">
-                            {selectedReservation.purpose}
-                          </p>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Badge de status */}
-                    <div
-                      className="flex items-center justify-center gap-3 rounded-xl border border-emerald-500 bg-gradient-to-r from-emerald-50 to-emerald-100 px-4 py-3 shadow-sm"
-                      style={{ animation: 'fadeSlideIn 0.3s ease-out forwards', animationDelay: '300ms' }}
-                    >
-                      <span className="relative flex h-2 w-2">
-                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-                        <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
-                      </span>
-                      <CheckCircle size={16} className="text-emerald-600" />
-                      <span className="text-sm font-black text-emerald-700">Reserva confirmada</span>
-                    </div>
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedReservation(null)}
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-stone-300 bg-white text-stone-400 transition-all hover:border-rose-300 hover:bg-rose-50 hover:text-rose-500"
+                    aria-label="Fechar modal"
+                  >
+                    <X size={14} />
+                  </button>
                 </div>
-              </div>,
-              document.body,
-            )
-          : null}
-      </section>
 
-      {/* Estilos de animação */}
-      <style>{`
-        @keyframes fadeSlideUp {
-          from {
-            opacity: 0;
-            transform: translateY(20px);
-          }
-          to {
-            opacity: 1;
-            transform: translateY(0);
-          }
-        }
+                {/* Conteúdo */}
+                <div className="grid gap-3 p-5">
 
-        @keyframes fadeSlideIn {
-          from {
-            opacity: 0;
-            transform: translateX(-10px);
-          }
-          to {
-            opacity: 1;
-            transform: translateX(0);
-          }
-        }
+                  {/* Ambiente */}
+                  <div style={{ animationDelay: '0ms' }} className="rrv-row flex items-center gap-3 rounded-xl border border-stone-300 bg-stone-50 px-4 py-3">
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-indigo-100">
+                      <MapPin size={14} className="text-indigo-600" />
+                    </div>
+                    <div className="min-w-0">
+                      <Eyebrow>Ambiente</Eyebrow>
+                      <p className="font-['Lora'] text-sm font-semibold text-stone-900">{selectedReservation.room}</p>
+                    </div>
+                  </div>
 
-        @keyframes fadeIn {
-          from {
-            opacity: 0;
-          }
-          to {
-            opacity: 1;
-          }
-        }
+                  {/* Data + Horário */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div style={{ animationDelay: '50ms' }} className="rrv-row flex items-center gap-3 rounded-xl border border-stone-300 bg-stone-50 px-4 py-3">
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-sky-100">
+                        <CalendarDays size={14} className="text-sky-600" />
+                      </div>
+                      <div className="min-w-0">
+                        <Eyebrow>Data</Eyebrow>
+                        <p className="text-sm font-semibold text-stone-900 font-['DM_Sans']">{formatReservationDate(selectedReservation.date)}</p>
+                      </div>
+                    </div>
+                    <div style={{ animationDelay: '100ms' }} className="rrv-row flex items-center gap-3 rounded-xl border border-stone-300 bg-stone-50 px-4 py-3">
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-100">
+                        <Clock size={14} className="text-emerald-600" />
+                      </div>
+                      <div className="min-w-0">
+                        <Eyebrow>Horário</Eyebrow>
+                        <p className="text-sm font-semibold text-stone-900 font-['DM_Sans']">
+                          {formatReservationTime(selectedReservation.startTime)}–{formatReservationTime(selectedReservation.endTime)}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
 
-        @keyframes scaleIn {
-          from {
-            opacity: 0;
-            transform: scale(0.95) translateY(10px);
-          }
-          to {
-            opacity: 1;
-            transform: scale(1) translateY(0);
-          }
-        }
-      `}</style>
-    </SectionShell>
+                  {/* Turma + Escola */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div style={{ animationDelay: '150ms' }} className="rrv-row flex items-center gap-3 rounded-xl border border-stone-300 bg-stone-50 px-4 py-3">
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-violet-100">
+                        <GraduationCap size={14} className="text-violet-600" />
+                      </div>
+                      <div className="min-w-0">
+                        <Eyebrow>Turma</Eyebrow>
+                        <p className="text-sm font-semibold text-stone-900 font-['DM_Sans'] truncate">{getClassName(selectedReservation.classId)}</p>
+                      </div>
+                    </div>
+                    <div style={{ animationDelay: '200ms' }} className="rrv-row flex items-center gap-3 rounded-xl border border-stone-300 bg-stone-50 px-4 py-3">
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-amber-100">
+                        <Building2 size={14} className="text-amber-600" />
+                      </div>
+                      <div className="min-w-0">
+                        <Eyebrow>Escola</Eyebrow>
+                        <p className="text-sm font-semibold text-stone-900 font-['DM_Sans'] truncate">{getReservationSchoolName(selectedReservation)}</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Finalidade */}
+                  {selectedReservation.purpose && (
+                    <div style={{ animationDelay: '250ms' }} className="rrv-row rounded-xl border border-stone-300 bg-stone-50 px-4 py-3">
+                      <div className="flex items-center gap-2 mb-2">
+                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-orange-100">
+                          <Target size={14} className="text-orange-600" />
+                        </div>
+                        <Eyebrow>Finalidade</Eyebrow>
+                      </div>
+                      <p className="text-sm font-medium leading-relaxed text-stone-600 font-['DM_Sans']">
+                        {selectedReservation.purpose}
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Status confirmado */}
+                  <div style={{ animationDelay: '300ms' }} className="rrv-row flex items-center justify-center gap-2.5 rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3">
+                    <span className="relative flex h-2 w-2">
+                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                      <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+                    </span>
+                    <span className="text-sm font-semibold text-emerald-700 font-['DM_Sans']">Reserva confirmada</span>
+                  </div>
+
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
+    </>
   )
 }

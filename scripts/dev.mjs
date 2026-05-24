@@ -163,7 +163,7 @@ function getDockerContainersOnDevPort() {
     })
     .filter((item) => item.id && item.names && item.ports)
     .filter((item) => item.ports.includes(`:${devPort}->`))
-    .filter((item) => normalize(item.names).includes('liensina'))
+    .filter((item) => normalize(item.names).includes('MeuEnsino'))
 }
 
 function stopProcessTree(pid) {

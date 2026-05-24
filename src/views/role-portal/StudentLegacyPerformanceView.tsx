@@ -55,12 +55,19 @@ import {
   SectionShell,
   StudentCardSkeleton,
   classOptions,
+  getAcademicSubjectLabel,
   getSubjectIcon,
   getSubjectIconBg,
   normalizeAcademicText,
+  splitAcademicList,
+  uniqueAcademicList,
   getClassStudents,
   getSubjectAccent,
 } from '../../components/role-portal/portal-components'
+import {
+  getAttendanceRateFromRows,
+  getStudentLessonAttendanceRows,
+} from '../../lib/lesson-attendance'
 import type { RolePortalScreenModel } from './screen-model'
 
 export function StudentLegacyPerformanceView({ model }: { model: RolePortalScreenModel }) {
@@ -210,9 +217,16 @@ const student = selectedStudent
     }
 
     const classRoom = getClassRoom(student.classId)
-    const disciplines = classRoom?.bnccFocus ?? []
+    const disciplines = uniqueAcademicList(
+      (classRoom?.bnccFocus ?? [])
+        .flatMap(splitAcademicList)
+        .map((discipline) => getAcademicSubjectLabel(discipline, evaluationsData?.curriculumSkills ?? [])),
+    )
     const score = student.averageScore ?? 0
-    const attendanceRate = student.attendanceRate ?? 0
+    const attendanceRows = getStudentLessonAttendanceRows(student, lessonRecords, attendance, getLessonAttendanceKey)
+    const presentCount = attendanceRows.filter((row) => row.present).length
+    const absenceCount = attendanceRows.length - presentCount
+    const attendanceRate = getAttendanceRateFromRows(attendanceRows) ?? student.attendanceRate ?? 0
     const hasAcademicAlert = score < 6
     const hasAttendanceAlert = attendanceRate < 75
     const statusLabel = hasAcademicAlert || hasAttendanceAlert ? 'Atenção' : 'Estável'
@@ -283,6 +297,75 @@ const student = selectedStudent
             soft
           />
         </section>
+
+        <PanelCard
+          soft
+          header={
+            <div className="flex items-center gap-3">
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-emerald-100 text-emerald-600">
+                <ClipboardList size={18} />
+              </span>
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-emerald-500">
+                  Histórico de aulas
+                </p>
+                <h2 className="font-['Sora',system-ui,sans-serif] text-sm font-black text-slate-800">
+                  Presenças e faltas vindas do diário
+                </h2>
+              </div>
+            </div>
+          }
+        >
+          <div className="grid gap-2 sm:grid-cols-3">
+            <div className="rounded-xl border border-slate-300 bg-slate-50 px-3 py-2.5">
+              <span className="block text-[10px] font-black uppercase tracking-wider text-slate-400">Aulas</span>
+              <strong className="mt-0.5 block text-lg font-black text-slate-900">{attendanceRows.length}</strong>
+            </div>
+            <div className="rounded-xl border border-emerald-400 bg-emerald-50 px-3 py-2.5">
+              <span className="block text-[10px] font-black uppercase tracking-wider text-emerald-600">Presenças</span>
+              <strong className="mt-0.5 block text-lg font-black text-emerald-700">{attendanceRows.length ? presentCount : '—'}</strong>
+            </div>
+            <div className="rounded-xl border border-rose-400 bg-rose-50 px-3 py-2.5">
+              <span className="block text-[10px] font-black uppercase tracking-wider text-rose-600">Faltas</span>
+              <strong className="mt-0.5 block text-lg font-black text-rose-700">{attendanceRows.length ? absenceCount : '—'}</strong>
+            </div>
+          </div>
+          <div className="grid gap-2">
+            {attendanceRows.slice(0, 8).map(({ record, present }, i) => (
+              <article
+                key={`${record.id}:${student.id}`}
+                className="animate-fade-slide-up flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-300 bg-white p-3"
+                style={{ animationDelay: `${i * 35}ms` }}
+              >
+                <div className="min-w-0">
+                  <strong className="block truncate text-sm font-black text-slate-900">
+                    {getAcademicSubjectLabel(record.subject, evaluationsData?.curriculumSkills ?? [])}
+                  </strong>
+                  <span className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs font-semibold text-slate-500">
+                    <Clock size={11} />
+                    {formatReservationDate(record.date)} {record.time}
+                  </span>
+                </div>
+                <span
+                  className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-[11px] font-black ${
+                    present
+                      ? 'border-emerald-400 bg-emerald-100 text-emerald-700'
+                      : 'border-rose-400 bg-rose-100 text-rose-700'
+                  }`}
+                >
+                  {present ? <CheckCircle size={12} /> : <X size={12} />}
+                  {present ? 'Presente' : 'Faltou'}
+                </span>
+              </article>
+            ))}
+            {attendanceRows.length === 0 && (
+              <EmptyState
+                message="Nenhum registro de aula encontrado para montar o histórico do aluno."
+                icon={<ClipboardList size={36} />}
+              />
+            )}
+          </div>
+        </PanelCard>
 
         <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
           <PanelCard

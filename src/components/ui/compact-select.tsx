@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useSta
 import type { CSSProperties, KeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { Check, ChevronDown } from 'lucide-react'
+import { motion, AnimatePresence } from 'motion/react'
 
 import { cn } from '../../lib/cn'
 import { FieldMessage, fieldStateClass } from './form-field'
@@ -10,11 +11,9 @@ let textMeasureCanvas: HTMLCanvasElement | null = null
 
 function measureTextWidth(text: string, font: string) {
   if (typeof document === 'undefined') return text.length * 8
-
   textMeasureCanvas ??= document.createElement('canvas')
   const context = textMeasureCanvas.getContext('2d')
   if (!context) return text.length * 8
-
   context.font = font
   return context.measureText(text).width
 }
@@ -82,6 +81,7 @@ export function CompactSelect<TValue extends string = string>({
   const [isOpen, setIsOpen] = useState(false)
   const [menuStyle, setMenuStyle] = useState<CSSProperties>()
   const [expandedWidth, setExpandedWidth] = useState<number>()
+  const [openAbove, setOpenAbove] = useState(false)
 
   const selectedIndex = options.findIndex((option) => option.value === value)
   const selectedOption = selectedIndex >= 0 ? options[selectedIndex] : undefined
@@ -91,6 +91,7 @@ export function CompactSelect<TValue extends string = string>({
   )
   const firstEnabledIndex = enabledIndexes[0] ?? -1
   const [activeIndex, setActiveIndex] = useState(selectedIndex >= 0 ? selectedIndex : firstEnabledIndex)
+  const hasSwatch = options.some((o) => o.swatch)
 
   function getAnchorElement() {
     return dropdownAnchor === 'parent'
@@ -102,7 +103,6 @@ export function CompactSelect<TValue extends string = string>({
     if (dropdownWidth === 'trigger') {
       return Math.min(anchorWidth, Math.max(120, window.innerWidth - 24))
     }
-
     const buttonStyle = buttonRef.current ? window.getComputedStyle(buttonRef.current) : undefined
     const optionFont = buttonStyle?.font || '500 13px "DM Sans", sans-serif'
     const widestOptionText = options.reduce((width, option) => {
@@ -110,10 +110,9 @@ export function CompactSelect<TValue extends string = string>({
       const descriptionWidth = option.description ? measureTextWidth(option.description, optionFont) : 0
       return Math.max(width, labelWidth, descriptionWidth)
     }, 0)
-    const optionChromeWidth = 58 + (options.some((option) => option.swatch) ? 18 : 0)
+    const optionChromeWidth = 58 + (hasSwatch ? 18 : 0)
     const contentWidth = Math.ceil(widestOptionText + optionChromeWidth)
     const desiredWidth = Math.max(anchorWidth, dropdownMinWidth ?? 0, contentWidth)
-
     return Math.min(desiredWidth, Math.max(180, window.innerWidth - 24))
   }
 
@@ -131,10 +130,8 @@ export function CompactSelect<TValue extends string = string>({
 
   const syncExpandedWidth = useCallback(() => {
     if (!growOnOpen) return
-
     const trigger = getAnchorElement()
     if (!trigger) return
-
     const rect = trigger.getBoundingClientRect()
     setExpandedWidthFromAnchor(getMenuWidth(rect.width), rect.width)
   }, [growOnOpen, dropdownAnchor, dropdownMinWidth, dropdownWidth, options])
@@ -142,7 +139,6 @@ export function CompactSelect<TValue extends string = string>({
   const updateMenuPosition = useCallback(() => {
     const trigger = getAnchorElement()
     if (!trigger) return
-
     const rect = trigger.getBoundingClientRect()
     const viewportPadding = 12
     const gap = dropdownOffset
@@ -153,27 +149,26 @@ export function CompactSelect<TValue extends string = string>({
     )
     const spaceBelow = window.innerHeight - rect.bottom - viewportPadding - gap
     const spaceAbove = rect.top - viewportPadding - gap
-    const openAbove = spaceBelow < 180 && spaceAbove > spaceBelow
-    const maxHeight = Math.max(120, Math.min(280, openAbove ? spaceAbove : spaceBelow))
+    const shouldOpenAbove = spaceBelow < 180 && spaceAbove > spaceBelow
+    const maxHeight = Math.max(120, Math.min(280, shouldOpenAbove ? spaceAbove : spaceBelow))
 
+    setOpenAbove(shouldOpenAbove)
     setExpandedWidthFromAnchor(width, rect.width)
     setMenuStyle({
       position: 'fixed',
       left,
-      top: openAbove ? rect.top - gap : rect.bottom + gap,
+      top: shouldOpenAbove ? rect.top - gap : rect.bottom + gap,
       width,
       maxHeight,
-      transform: openAbove ? 'translateY(-100%)' : undefined,
-      transformOrigin: openAbove ? 'bottom' : 'top',
+      transform: shouldOpenAbove ? 'translateY(-100%)' : undefined,
+      transformOrigin: shouldOpenAbove ? 'bottom' : 'top',
     })
   }, [dropdownAnchor, dropdownMinWidth, dropdownOffset, dropdownWidth, options])
 
   function getNextIndex(currentIndex: number, direction: 1 | -1) {
     if (enabledIndexes.length === 0) return -1
-
     const currentPosition = enabledIndexes.indexOf(currentIndex)
     if (currentPosition === -1) return direction === 1 ? enabledIndexes[0] : enabledIndexes[enabledIndexes.length - 1]
-
     return enabledIndexes[(currentPosition + direction + enabledIndexes.length) % enabledIndexes.length]
   }
 
@@ -181,12 +176,10 @@ export function CompactSelect<TValue extends string = string>({
     if (disabled || enabledIndexes.length === 0) return
     const trigger = getAnchorElement()
     if (!trigger) return
-
     cancelPendingOpen()
     const rect = trigger.getBoundingClientRect()
     setExpandedWidthFromAnchor(getMenuWidth(rect.width), rect.width)
     setActiveIndex(nextActiveIndex)
-
     openFrameRef.current = window.requestAnimationFrame(() => {
       openFrameRef.current = window.requestAnimationFrame(() => {
         openFrameRef.current = null
@@ -199,7 +192,6 @@ export function CompactSelect<TValue extends string = string>({
   function selectOption(index: number) {
     const option = options[index]
     if (!option || option.disabled) return
-
     onChange(option.value)
     cancelPendingOpen()
     setExpandedWidth(undefined)
@@ -209,40 +201,26 @@ export function CompactSelect<TValue extends string = string>({
 
   function handleKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
     if (disabled) return
-
     if (event.key === 'ArrowDown') {
       event.preventDefault()
       if (!isOpen) openMenu(getNextIndex(selectedIndex, 1))
       else setActiveIndex((current) => getNextIndex(current, 1))
       return
     }
-
     if (event.key === 'ArrowUp') {
       event.preventDefault()
       if (!isOpen) openMenu(getNextIndex(selectedIndex, -1))
       else setActiveIndex((current) => getNextIndex(current, -1))
       return
     }
-
-    if (event.key === 'Home' && isOpen) {
-      event.preventDefault()
-      setActiveIndex(firstEnabledIndex)
-      return
-    }
-
-    if (event.key === 'End' && isOpen) {
-      event.preventDefault()
-      setActiveIndex(enabledIndexes[enabledIndexes.length - 1] ?? -1)
-      return
-    }
-
+    if (event.key === 'Home' && isOpen) { event.preventDefault(); setActiveIndex(firstEnabledIndex); return }
+    if (event.key === 'End' && isOpen) { event.preventDefault(); setActiveIndex(enabledIndexes[enabledIndexes.length - 1] ?? -1); return }
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault()
       if (isOpen) selectOption(activeIndex)
       else openMenu()
       return
     }
-
     if (event.key === 'Escape') {
       event.preventDefault()
       cancelPendingOpen()
@@ -250,7 +228,6 @@ export function CompactSelect<TValue extends string = string>({
       setIsOpen(false)
       return
     }
-
     if (event.key === 'Tab') {
       cancelPendingOpen()
       setExpandedWidth(undefined)
@@ -265,24 +242,19 @@ export function CompactSelect<TValue extends string = string>({
     setActiveIndex(selectedIndex >= 0 ? selectedIndex : firstEnabledIndex)
   }, [firstEnabledIndex, isOpen, selectedIndex])
 
-  useLayoutEffect(() => {
-    syncExpandedWidth()
-  }, [syncExpandedWidth, value])
+  useLayoutEffect(() => { syncExpandedWidth() }, [syncExpandedWidth, value])
 
   useEffect(() => {
     if (!growOnOpen) return undefined
-
     window.addEventListener('resize', syncExpandedWidth)
     return () => window.removeEventListener('resize', syncExpandedWidth)
   }, [growOnOpen, syncExpandedWidth])
 
   useEffect(() => {
     if (!isOpen) return undefined
-
     updateMenuPosition()
     window.addEventListener('resize', updateMenuPosition)
     window.addEventListener('scroll', updateMenuPosition, true)
-
     return () => {
       window.removeEventListener('resize', updateMenuPosition)
       window.removeEventListener('scroll', updateMenuPosition, true)
@@ -291,7 +263,6 @@ export function CompactSelect<TValue extends string = string>({
 
   useEffect(() => {
     if (!isOpen) return undefined
-
     function handlePointerDown(event: PointerEvent) {
       const target = event.target as Node
       if (rootRef.current?.contains(target) || menuRef.current?.contains(target)) return
@@ -299,7 +270,6 @@ export function CompactSelect<TValue extends string = string>({
       setExpandedWidth(undefined)
       setIsOpen(false)
     }
-
     document.addEventListener('pointerdown', handlePointerDown)
     return () => document.removeEventListener('pointerdown', handlePointerDown)
   }, [isOpen])
@@ -309,68 +279,113 @@ export function CompactSelect<TValue extends string = string>({
     document.getElementById(`${listboxId}-option-${activeIndex}`)?.scrollIntoView({ block: 'nearest' })
   }, [activeIndex, isOpen, listboxId])
 
-  const menu = isOpen && menuStyle && typeof document !== 'undefined' ? createPortal(
-    <div
-      ref={menuRef}
-      style={menuStyle}
-      className={cn(
-        'z-[1200] rounded-sm border border-slate-300 bg-white p-1 shadow-[0_18px_40px_rgba(15,23,42,.14)] animate-[fadein_.12s_ease]',
-        dropdownClassName,
-      )}
-    >
-      <div
-        id={listboxId}
-        role="listbox"
-        className="overflow-x-hidden overflow-y-auto pr-0.5"
-        style={{ maxHeight: typeof menuStyle.maxHeight === 'number' ? menuStyle.maxHeight - 8 : menuStyle.maxHeight }}
-      >
-        {options.map((option, index) => {
-          const isSelected = option.value === value
-          const isActive = activeIndex === index
+  /* ── Dropdown menu via portal ── */
+  const menu = menuStyle && typeof document !== 'undefined' ? createPortal(
+    <AnimatePresence>
+      {isOpen && (
+        <motion.div
+          ref={menuRef}
+          style={menuStyle}
+          initial={{ opacity: 0, scaleY: 0.94, y: openAbove ? 6 : -6 }}
+          animate={{ opacity: 1, scaleY: 1, y: 0 }}
+          exit={{ opacity: 0, scaleY: 0.94, y: openAbove ? 6 : -6 }}
+          transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
+          className={cn(
+            'z-[1200] overflow-hidden rounded-2xl border border-slate-300/80 bg-white p-1.5',
+            'shadow-[0_20px_60px_rgba(15,23,42,0.14),0_4px_16px_rgba(15,23,42,0.08)]',
+            dropdownClassName,
+          )}
+        >
+          <div
+            id={listboxId}
+            role="listbox"
+            className="overflow-x-hidden overflow-y-auto"
+            style={{
+              maxHeight: typeof menuStyle.maxHeight === 'number'
+                ? menuStyle.maxHeight - 12
+                : menuStyle.maxHeight,
+            }}
+          >
+            {options.map((option, index) => {
+              const isSelected = option.value === value
+              const isActive = activeIndex === index
 
-          return (
-            <button
-              key={option.value}
-              id={`${listboxId}-option-${index}`}
-              type="button"
-              role="option"
-              aria-selected={isSelected}
-              disabled={option.disabled}
-              onMouseEnter={() => {
-                if (!option.disabled) setActiveIndex(index)
-              }}
-              onClick={() => selectOption(index)}
-              className={cn(
-                'flex w-full min-w-0 items-start gap-2 whitespace-normal rounded-md px-2.5 py-2 text-left text-[13px] font-medium leading-snug outline-none transition-colors',
-                isSelected
-                  ? 'bg-indigo-600 text-white'
-                  : isActive
-                    ? 'bg-indigo-50 text-indigo-900'
-                    : 'text-slate-600 hover:bg-indigo-50 hover:text-indigo-900',
-                option.disabled && 'cursor-not-allowed opacity-45',
-                optionClassName,
-              )}
-            >
-              {option.swatch ? (
-                <span
-                  className="mt-[5px] h-2 w-2 flex-shrink-0 rounded-full ring-1 ring-inset ring-black/10"
-                  style={{ background: option.swatch }}
-                />
-              ) : null}
-              <span className="min-w-0 flex-1 whitespace-normal">
-                <span className="block whitespace-normal break-words leading-snug [overflow-wrap:anywhere]">{option.label}</span>
-                {option.description ? (
-                  <span className={cn('mt-0.5 block whitespace-normal break-words text-[11px] leading-snug [overflow-wrap:anywhere]', isSelected ? 'text-white/70' : 'text-slate-400')}>
-                    {option.description}
+              return (
+                <motion.button
+                  key={option.value}
+                  id={`${listboxId}-option-${index}`}
+                  type="button"
+                  role="option"
+                  aria-selected={isSelected}
+                  disabled={option.disabled}
+                  onMouseEnter={() => { if (!option.disabled) setActiveIndex(index) }}
+                  onClick={() => selectOption(index)}
+                  initial={false}
+                  animate={{
+                    backgroundColor: isSelected
+                      ? 'rgba(79,70,229,1)'
+                      : isActive
+                        ? 'rgba(238,242,255,1)'
+                        : 'rgba(255,255,255,0)',
+                  }}
+                  transition={{ duration: 0.12 }}
+                  className={cn(
+                    'group flex w-full min-w-0 items-center gap-2.5 rounded-xl px-3 py-2.5 text-left outline-none transition-colors',
+                    option.disabled && 'cursor-not-allowed opacity-40',
+                    optionClassName,
+                  )}
+                >
+                  {/* Swatch */}
+                  {option.swatch ? (
+                    <span
+                      className="h-2.5 w-2.5 flex-shrink-0 rounded-full ring-1 ring-inset ring-black/10"
+                      style={{ background: option.swatch }}
+                    />
+                  ) : null}
+
+                  {/* Label + description */}
+                  <span className="min-w-0 flex-1">
+                    <span
+                      className={cn(
+                        'block truncate text-[13px] font-semibold leading-snug',
+                        isSelected ? 'text-white' : 'text-slate-800',
+                      )}
+                    >
+                      {option.label}
+                    </span>
+                    {option.description ? (
+                      <span
+                        className={cn(
+                          'mt-0.5 block truncate text-[11px] leading-snug',
+                          isSelected ? 'text-indigo-200' : 'text-slate-400',
+                        )}
+                      >
+                        {option.description}
+                      </span>
+                    ) : null}
                   </span>
-                ) : null}
-              </span>
-              {isSelected ? <Check size={14} className="mt-0.5 flex-shrink-0" /> : null}
-            </button>
-          )
-        })}
-      </div>
-    </div>,
+
+                  {/* Check icon */}
+                  <AnimatePresence>
+                    {isSelected && (
+                      <motion.span
+                        initial={{ scale: 0, opacity: 0 }}
+                        animate={{ scale: 1, opacity: 1 }}
+                        exit={{ scale: 0, opacity: 0 }}
+                        transition={{ duration: 0.18, ease: [0.34, 1.56, 0.64, 1] }}
+                        className="flex-shrink-0"
+                      >
+                        <Check size={13} className="text-white" />
+                      </motion.span>
+                    )}
+                  </AnimatePresence>
+                </motion.button>
+              )
+            })}
+          </div>
+        </motion.div>
+      )}
+    </AnimatePresence>,
     document.body,
   ) : null
 
@@ -380,6 +395,7 @@ export function CompactSelect<TValue extends string = string>({
       style={growOnOpen && expandedWidth ? { width: expandedWidth } : undefined}
       className={cn('relative min-w-0', wrapperClassName)}
     >
+      {/* ── Trigger button ── */}
       <button
         ref={buttonRef}
         id={selectId}
@@ -399,26 +415,73 @@ export function CompactSelect<TValue extends string = string>({
             setIsOpen(false)
             return
           }
-
           openMenu()
         }}
         onKeyDown={handleKeyDown}
         className={cn(
-          'inline-flex w-full min-w-0 items-center justify-between gap-2 text-left leading-none',
-          fieldStateClass(error),
+          'group relative inline-flex w-full min-w-0 items-center justify-between gap-2.5 rounded-xl border',
+          'min-h-11 px-3.5 text-left leading-none outline-none',
+          'border-slate-300 bg-white shadow-sm transition-all duration-200',
+          'hover:border-indigo-300 hover:shadow-md',
+          isOpen && 'border-indigo-500 shadow-[0_0_0_3px_rgba(99,102,241,0.12)]',
+          error && 'border-red-400 bg-red-50/50',
+          disabled && 'cursor-not-allowed opacity-55',
           className,
         )}
       >
-        <span className="block min-w-0 flex-1 truncate">{selectedOption?.label ?? placeholder}</span>
-        <ChevronDown
-          aria-hidden="true"
-          className={cn(
-            'h-4 w-4 shrink-0 text-slate-400 transition-transform duration-150',
-            isOpen && 'rotate-180 text-indigo-600',
-            disabled && 'opacity-45',
+        {/* Selected value / placeholder */}
+        <span className="flex min-w-0 flex-1 items-center gap-2">
+          {/* Swatch for selected */}
+          {selectedOption?.swatch && (
+            <span
+              className="h-2.5 w-2.5 flex-shrink-0 rounded-full ring-1 ring-inset ring-black/10"
+              style={{ background: selectedOption.swatch }}
+            />
           )}
+
+          <AnimatePresence mode="wait">
+            <motion.span
+              key={selectedOption?.value ?? '__placeholder__'}
+              initial={{ opacity: 0, y: 5 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -5 }}
+              transition={{ duration: 0.15, ease: 'easeOut' }}
+              className={cn(
+                'block min-w-0 flex-1 truncate text-[13px] font-semibold',
+                selectedOption ? 'text-slate-800' : 'text-slate-400',
+              )}
+            >
+              {selectedOption?.label ?? placeholder}
+            </motion.span>
+          </AnimatePresence>
+        </span>
+
+        {/* Chevron */}
+        <motion.span
+          animate={{ rotate: isOpen ? 180 : 0 }}
+          transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+          className="flex-shrink-0"
+        >
+          <ChevronDown
+            aria-hidden="true"
+            className={cn(
+              'h-4 w-4 transition-colors duration-200',
+              isOpen ? 'text-indigo-500' : 'text-slate-400 group-hover:text-slate-500',
+              disabled && 'opacity-45',
+            )}
+          />
+        </motion.span>
+
+        {/* Active underline */}
+        <motion.span
+          className="pointer-events-none absolute bottom-0 left-3 right-3 h-[2px] rounded-full bg-indigo-500"
+          initial={false}
+          animate={{ scaleX: isOpen ? 1 : 0, opacity: isOpen ? 1 : 0 }}
+          transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+          style={{ transformOrigin: 'left' }}
         />
       </button>
+
       {name ? <input type="hidden" name={name} value={value} /> : null}
       <FieldMessage id={messageId} hint={hint} error={error} />
       {menu}

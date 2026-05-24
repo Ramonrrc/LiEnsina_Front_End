@@ -1,7 +1,9 @@
-import { lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { motion, AnimatePresence, useTransform, useMotionValue, animate } from "motion/react"
 import {
   ApiError,
   addMealFoodRequestToStock,
+  confirmEvaluationCorrections,
   createClassRoom,
   createGuardian,
   createCalendarEvent,
@@ -9,6 +11,8 @@ import {
   createLessonRecord,
   createQuestion,
   generateQuestionSelection,
+  getEvaluationCorrection,
+  getEvaluationCorrectionCardFile,
   createMealItem,
   createMealManagement,
   createMealFoodRequest,
@@ -21,17 +25,27 @@ import {
   deleteQuestion,
   deleteMealFoodRequest,
   downloadEvaluationFile,
+  loadAcademicScopeScreen,
   loadAccessScreen,
   loadCalendarScreen,
+  loadClassesScreen,
   loadDashboardScreen,
+  loadEvaluationCorrectionsScreen,
   loadEvaluationsScreen,
   loadMealsScreen,
+  loadMePermissions,
   loadNotificationsScreen,
+  loadPeopleScreen,
+  loadRoomReservationsScreen,
   loadSchoolsScreen,
   loadSession,
   loadSettingsScreen,
-  listMealManagements,
-  listRoomReservations,
+  loadStudentGradesEvaluationsScreen,
+  loadTeacherSubjectEvaluationsScreen,
+  listLessonRecords,
+  listSchoolsPage,
+  listQuestionsPage,
+  listTeacherSubjectCardsPage,
   searchAccessUsers,
   listStudentsPage,
   listTeachersPage,
@@ -42,6 +56,7 @@ import {
   markNotificationRead,
   markNotificationUnread,
   processEvaluationOmr,
+  processEvaluationOmrBatch,
   removeProfileAvatar,
   removeProfileBanner,
   resolveApiAssetUrl,
@@ -52,6 +67,7 @@ import {
   updateCalendarEvent,
   updateClassRoom,
   updateGuardian,
+  updateLessonRecord,
   updateProfile,
   updateRole,
   updateSchool,
@@ -69,26 +85,28 @@ import { Header } from './components/layout/Header'
 import { Sidebar } from './components/layout/Sidebar'
 import LandingPage from './views/LandingPage'
 import LoginView from './views/LoginView'
+import { getAnswerCardEvaluationId, getBatchCorrections, getCreatedAnswerCards, getCreatedEvaluation } from './lib/evaluation-omr'
 import type {
   AppSection,
   CalendarScreenPayload,
+  EvaluationAnswerCard,
   DashboardAlertsPagePayload,
   EvaluationCorrection,
+  EvaluationOmrBatchResponse,
   EvaluationsScreenPayload,
-  GenerateQuestionSelectionRequest,
-  GenerateQuestionSelectionResponse,
   MealManagement,
   MealManagementsPagePayload,
+  MePermissionsPayload,
   MealsScreenPayload,
   NotificationsScreenPayload,
-  PedagogyScreenPayload,
   Question,
+  QuestionBankPageQuery,
   LessonRecord,
   Role,
   RoleCode,
   RoomReservation,
-  ClassRoom,
   School,
+  SchoolsPageQuery,
   SchoolsScreenPayload,
   ScreenPayloads,
   SessionPayload,
@@ -105,75 +123,6 @@ function refreshAccessTokenOnce() {
     refreshAccessTokenRequest = null
   })
   return refreshAccessTokenRequest
-}
-
-function normalizeQuestionSelectionText(value?: string | null) {
-  return String(value ?? '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-}
-
-function questionMatchesSelectionSubject(question: Question, subject: string) {
-  const target = normalizeQuestionSelectionText(subject)
-  if (!target) return true
-  const source = normalizeQuestionSelectionText([
-    question.subject,
-    question.component,
-    question.area,
-    question.title,
-    question.statement,
-    question.context,
-  ].join(' '))
-
-  return source.includes(target) || target.includes(normalizeQuestionSelectionText(question.subject))
-}
-
-function shuffleSelectionQuestions(questions: Question[]) {
-  const shuffled = [...questions]
-  for (let index = shuffled.length - 1; index > 0; index -= 1) {
-    const swapIndex = Math.floor(Math.random() * (index + 1))
-    ;[shuffled[index], shuffled[swapIndex]] = [shuffled[swapIndex], shuffled[index]]
-  }
-  return shuffled
-}
-
-function buildLocalQuestionSelection(
-  questionBank: Question[],
-  request: GenerateQuestionSelectionRequest,
-): GenerateQuestionSelectionResponse {
-  const eligible = questionBank.filter((question) => {
-    if (request.sourceMode === 'enem' && question.sourceType !== 'INEP_ENEM') return false
-    if (request.sourceMode === 'system' && question.sourceType === 'INEP_ENEM') return false
-    if (question.status !== 'APPROVED') return false
-    if (!questionMatchesSelectionSubject(question, request.subject)) return false
-    if (request.gradeLevel && question.gradeLevel !== request.gradeLevel) return false
-    if (request.difficulty && question.difficulty !== request.difficulty) return false
-    if (request.skillCode && !question.skills.some((skill) => skill.code === request.skillCode)) return false
-    if (request.descriptorCode && !question.descriptors.some((descriptor) => descriptor.code === request.descriptorCode)) return false
-    return true
-  })
-
-  const quantity = Math.max(1, Number(request.quantity || 1))
-  const questions = request.sourceMode === 'mixed'
-    ? [
-        ...shuffleSelectionQuestions(eligible.filter((question) => question.sourceType === 'INEP_ENEM')).slice(0, Math.ceil(quantity / 2)),
-        ...shuffleSelectionQuestions(eligible.filter((question) => question.sourceType !== 'INEP_ENEM')).slice(0, Math.floor(quantity / 2)),
-      ].slice(0, quantity)
-    : shuffleSelectionQuestions(eligible).slice(0, quantity)
-
-  const completedSelection = questions.length >= quantity
-    ? questions
-    : [
-        ...questions,
-        ...shuffleSelectionQuestions(eligible.filter((question) => !questions.some((selected) => selected.id === question.id))).slice(0, quantity - questions.length),
-      ]
-
-  return {
-    questions: completedSelection,
-    questionIds: completedSelection.map((question) => question.id),
-    totalEligible: eligible.length,
-  }
 }
 
 const DashboardView = lazy(() => import('./views/DashboardView'))
@@ -197,21 +146,19 @@ type AppToast = { tone: 'success' | 'error'; message: string }
 type RoleProfile = RoleCode
 type NavigationItem = (typeof navItems)[number]
 
+const superAdminSections: AppSection[] = ['dashboard', 'schools', 'people', 'evaluations', 'evaluation-corrections', 'meals', 'access', 'notifications', 'settings']
 const adminSections: AppSection[] = ['dashboard', 'schools', 'people', 'evaluations', 'evaluation-corrections', 'meals', 'access', 'notifications', 'settings']
-const directorSections: AppSection[] = ['dashboard', 'schools', 'people', 'evaluation-corrections', 'meals', 'notifications', 'settings']
+const schoolAdminSections: AppSection[] = ['dashboard', 'schools', 'people', 'evaluations', 'evaluation-corrections', 'meals', 'notifications', 'settings']
+const directorSections: AppSection[] = ['dashboard', 'schools', 'people', 'evaluations', 'evaluation-corrections', 'meals', 'notifications', 'settings']
 const coordinatorSections: AppSection[] = ['pedagogy', 'evaluations', 'evaluation-corrections', 'calendar', 'notifications', 'settings']
 const teacherSections: AppSection[] = ['teacher-subjects', 'room-reservations', 'evaluations', 'evaluation-corrections', 'calendar', 'notifications', 'settings']
-const studentSections: AppSection[] = ['student-performance', 'calendar', 'notifications', 'settings']
+const studentSections: AppSection[] = ['student-performance', 'student-grades', 'calendar', 'notifications', 'settings']
 const guardianSections: AppSection[] = ['child-performance', 'child-attendance', 'calendar', 'notifications', 'settings']
 const nutritionistSections: AppSection[] = ['food-requests', 'meals', 'notifications', 'settings']
 const hiddenSidebarSections: AppSection[] = ['notifications', 'child-attendance']
-const schoolsPayloadSections: AppSection[] = [
-  'schools',
-  'classes',
-  'people',
+const lessonRecordsPayloadSections: AppSection[] = [
   'pedagogy',
   'teacher-subjects',
-  'room-reservations',
   'lesson-records',
   'attendance-list',
   'student-performance',
@@ -221,16 +168,29 @@ const schoolsPayloadSections: AppSection[] = [
 ]
 
 const sectionLabels: Partial<Record<RoleProfile, Partial<Record<AppSection, Pick<NavigationItem, 'label' | 'description'>>>>> = {
+  SUPERADMIN: {
+    dashboard: { label: 'Dashboard Geral', description: 'Rede, escolas e resultados' },
+    meals: { label: 'Gestao Alimentar', description: 'Cardapios, estoque e orcamento da rede' },
+    notifications: { label: 'Notificacoes', description: 'Alertas e comunicados' },
+    settings: { label: 'Meu Perfil', description: 'Conta do superadmin' },
+  },
   ADMIN: {
     dashboard: { label: 'Dashboard Geral', description: 'Rede, escolas e resultados' },
     meals: { label: 'Gestao Alimentar', description: 'Cardapios, estoque e orcamento da rede' },
     notifications: { label: 'Notificações', description: 'Alertas e comunicados' },
     settings: { label: 'Meu Perfil', description: 'Conta do administrador' },
   },
+  ADMIN_ESCOLA: {
+    dashboard: { label: 'Dashboard da Escola', description: 'Indicadores da unidade' },
+    meals: { label: 'Gestao Alimentar', description: 'Cardapios, estoque e orcamento da escola' },
+    notifications: { label: 'Notificacoes', description: 'Alertas e comunicados' },
+    settings: { label: 'Meu Perfil', description: 'Conta do administrador escolar' },
+  },
   DIRETOR: {
     dashboard: { label: 'Dashboard da Escola', description: 'Indicadores da unidade' },
     schools: { label: 'Escolas', description: 'Minha unidade escolar' },
     people: { label: 'Professores e Alunos', description: 'Equipe e estudantes' },
+    evaluations: { label: 'Provas e Simulados', description: 'Acompanhamento pedagogico' },
     'evaluation-corrections': { label: 'Correcao de Provas', description: 'Revisao de cartoes resposta' },
     meals: { label: 'Gestao Alimentar', description: 'Solicitacoes, cardapios e estoque da unidade' },
     notifications: { label: 'Notificações', description: 'Alertas da unidade' },
@@ -255,6 +215,7 @@ const sectionLabels: Partial<Record<RoleProfile, Partial<Record<AppSection, Pick
   },
   ALUNO: {
     'student-performance': { label: 'Frequencia e Desempenho', description: 'Presencas, notas e alertas' },
+    'student-grades': { label: 'Notas', description: 'Provas e resultados confirmados' },
     calendar: { label: 'Calendario e Comunicados', description: 'Eventos e avisos' },
     notifications: { label: 'Notificações', description: 'Alertas academicos' },
     settings: { label: 'Meu Perfil', description: 'Dados do aluno' },
@@ -282,7 +243,9 @@ function normalizeRoleText(value?: string | null) {
 }
 
 const roleProfileTokens: Record<RoleProfile, string[]> = {
+  SUPERADMIN: ['SUPERADMIN', 'SUPER_ADMIN', 'SUPER', 'ROOT'],
   ADMIN: ['ADMIN', 'ADMINISTRADOR', 'ADMINISTRADORA'],
+  ADMIN_ESCOLA: ['ADMINESCOLA', 'ADMINISTRADORESCOLAR', 'ADMINISTRADORAESCOLAR'],
   DIRETOR: ['DIRETOR', 'DIRETORA', 'DIRECAO', 'DIRETORIA'],
   COORDENADOR: ['COORDENADOR', 'COORDENADORA', 'COORDENACAO', 'PEDAGOGO', 'PEDAGOGA', 'PEDAGOGICO', 'PEDAGOGICA'],
   PROFESSOR: ['PROFESSOR', 'PROFESSORA', 'DOCENTE', 'TEACHER'],
@@ -300,10 +263,14 @@ function normalizeRoleTokens(value?: string | null) {
 }
 
 function matchRoleProfileFromText(value?: string | null): RoleProfile | null {
+  const normalizedText = normalizeRoleText(value).replace(/[^A-Z0-9]+/g, ' ').trim()
+  if (/\b(SUPERADMIN|SUPER ADMIN|ROOT)\b/.test(normalizedText)) return 'SUPERADMIN'
+  if (/\bADMIN ESCOLA\b|\bADMINISTRADOR ESCOLAR\b|\bADMINISTRADORA ESCOLAR\b/.test(normalizedText)) return 'ADMIN_ESCOLA'
+
   const tokens = normalizeRoleTokens(value)
   if (!tokens.length) return null
 
-  for (const profile of ['ADMIN', 'DIRETOR', 'COORDENADOR', 'PROFESSOR', 'ALUNO', 'RESPONSAVEL', 'NUTRITIONIST'] as RoleProfile[]) {
+  for (const profile of ['SUPERADMIN', 'ADMIN_ESCOLA', 'ADMIN', 'DIRETOR', 'COORDENADOR', 'PROFESSOR', 'ALUNO', 'RESPONSAVEL', 'NUTRITIONIST'] as RoleProfile[]) {
     if (tokens.some((token) => roleProfileTokens[profile].includes(token))) return profile
   }
 
@@ -326,12 +293,12 @@ function getLinkedUserProfile(user?: UserAccount | null): RoleProfile | null {
   return matchRoleProfileFromText(user.roleId)
 }
 
-function getRoleProfile(role: Role | null): RoleProfile {
-  return getRoleProfileOrNull(role) ?? 'ADMIN'
+export function getRoleProfile(role: Role | null): RoleProfile | null {
+  return getRoleProfileOrNull(role)
 }
 
-function getSessionRoleProfile(session: SessionPayload | null): RoleProfile {
-  if (!session) return 'ADMIN'
+export function getSessionRoleProfile(session: SessionPayload | null): RoleProfile | null {
+  if (!session) return null
   const currentRoleMatchesUser = !session.currentRole?.id || !session.currentUser.roleId || session.currentRole.id === session.currentUser.roleId
   const currentRoleProfile = currentRoleMatchesUser ? getRoleProfileOrNull(session.currentRole) : null
 
@@ -339,7 +306,6 @@ function getSessionRoleProfile(session: SessionPayload | null): RoleProfile {
     ?? currentRoleProfile
     ?? getLinkedUserProfile(session.currentUser)
     ?? getRoleProfileOrNull(session.currentRole)
-    ?? 'ADMIN'
 }
 
 function getFallbackRole(profile: RoleProfile, role: Role | null): Role {
@@ -347,7 +313,9 @@ function getFallbackRole(profile: RoleProfile, role: Role | null): Role {
     id: role?.id ?? profile,
     code: profile,
     name: {
+      SUPERADMIN: 'Superadmin',
       ADMIN: 'Admin',
+      ADMIN_ESCOLA: 'Admin Escolar',
       DIRETOR: 'Diretor',
       COORDENADOR: 'Coordenador',
       PROFESSOR: 'Professor',
@@ -360,8 +328,9 @@ function getFallbackRole(profile: RoleProfile, role: Role | null): Role {
   }
 }
 
-function resolveSessionRole(session: SessionPayload | null, profile: RoleProfile): Role | null {
+function resolveSessionRole(session: SessionPayload | null, profile: RoleProfile | null): Role | null {
   if (!session) return null
+  if (!profile) return session.currentRole
   const currentRoleMatchesUser = !session.currentRole?.id || !session.currentUser.roleId || session.currentRole.id === session.currentUser.roleId
   const currentProfile = getRoleProfileOrNull(session.currentRole)
   if (session.currentRole && currentRoleMatchesUser && currentProfile === profile) return session.currentRole
@@ -369,7 +338,10 @@ function resolveSessionRole(session: SessionPayload | null, profile: RoleProfile
   return getFallbackRole(profile, session.currentRole)
 }
 
-function getSectionsForProfile(profile: RoleProfile) {
+function getSectionsForProfile(profile: RoleProfile | null) {
+  if (!profile) return []
+  if (profile === 'SUPERADMIN') return superAdminSections
+  if (profile === 'ADMIN_ESCOLA') return schoolAdminSections
   if (profile === 'DIRETOR') return directorSections
   if (profile === 'COORDENADOR') return coordinatorSections
   if (profile === 'PROFESSOR') return teacherSections
@@ -379,16 +351,24 @@ function getSectionsForProfile(profile: RoleProfile) {
   return adminSections
 }
 
-function getDefaultSectionForSession(session: SessionPayload | null) {
-  return getSectionsForProfile(getSessionRoleProfile(session))[0] ?? 'dashboard'
+export function getExplicitAllowedSections(profile: RoleProfile | null, permissions: MePermissionsPayload | null) {
+  if (!profile || !permissions || permissions.roleCode !== profile) return []
+  const backendSections = new Set(permissions.allowedSections)
+  return getSectionsForProfile(profile).filter((section) => backendSections.has(section))
 }
 
-function getSectionAliasForProfile(section: AppSection, profile: RoleProfile): AppSection {
+function getDefaultSectionForSession(session: SessionPayload | null, permissions: MePermissionsPayload | null = null) {
+  const profile = getSessionRoleProfile(session)
+  return getExplicitAllowedSections(profile, permissions)[0] ?? null
+}
+
+function getSectionAliasForProfile(section: AppSection, profile: RoleProfile | null): AppSection {
   if (profile === 'COORDENADOR' && section === 'dashboard') return 'pedagogy'
   return section
 }
 
-function getNavItemsForProfile(profile: RoleProfile) {
+export function getNavItemsForProfile(profile: RoleProfile | null) {
+  if (!profile) return []
   const labels = sectionLabels[profile] ?? {}
   return getSectionsForProfile(profile)
     .filter((section) => !hiddenSidebarSections.includes(section))
@@ -400,12 +380,20 @@ function getNavItemsForProfile(profile: RoleProfile) {
     .filter((item): item is NavigationItem => Boolean(item))
 }
 
-function isAdminProfile(profile: RoleProfile) {
-  return profile === 'ADMIN'
+function isAdminProfile(profile: RoleProfile | null) {
+  return profile === 'SUPERADMIN' || profile === 'ADMIN' || profile === 'ADMIN_ESCOLA'
 }
 
-function isSchoolLeadership(profile: RoleProfile) {
-  return profile === 'DIRETOR' || profile === 'COORDENADOR'
+function isSuperAdminProfile(profile: RoleProfile | null) {
+  return profile === 'SUPERADMIN'
+}
+
+function isNetworkAdminProfile(profile: RoleProfile | null) {
+  return profile === 'SUPERADMIN' || profile === 'ADMIN'
+}
+
+function isSchoolLeadership(profile: RoleProfile | null) {
+  return profile === 'ADMIN_ESCOLA' || profile === 'DIRETOR' || profile === 'COORDENADOR'
 }
 
 function userMatchesSchool(user: UserAccount, schoolId: string) {
@@ -439,7 +427,7 @@ function userRelatedSchoolIds(
 }
 
 function buildMealManagementsPagePayload(data: MealsScreenPayload, page: number, limit: number, search = ''): MealManagementsPagePayload {
-  const safeLimit = Math.max(1, limit)
+  const safeLimit = Math.min(100, Math.max(1, Number(limit) || 25))
   const normalizedSearch = normalizeRoleText(search)
   const managementBySchoolId = new Map(data.mealManagements.map((management) => [management.escolaId, management]))
   const schools = data.schools.filter((school) => {
@@ -467,7 +455,7 @@ function buildMealManagementsPagePayload(data: MealsScreenPayload, page: number,
 }
 
 function buildDashboardAlertsPagePayload(alerts: DashboardAlertsPagePayload['alerts'], page: number, limit: number): DashboardAlertsPagePayload {
-  const safeLimit = [10, 25, 50, 100].includes(limit) ? limit : 10
+  const safeLimit = [25, 50, 100].includes(limit) ? limit : 25
   const total = alerts.length
   const totalPages = Math.max(1, Math.ceil(total / safeLimit))
   const safePage = Math.min(Math.max(1, page), totalPages)
@@ -486,21 +474,76 @@ function buildDashboardAlertsPagePayload(alerts: DashboardAlertsPagePayload['ale
 
 function splitAcademicTokens(value?: string | null) {
   return normalizeRoleText(value)
-    .split(/[,;|/]+|\s+-\s+/)
+    .split(/[,;|/]+|\s+-\s+|\s+(?:E|OU)\s+/)
     .map((item) => item.trim())
     .filter(Boolean)
 }
 
-function teacherMatchesClassByDiscipline(teacher: Teacher, classRoom: ClassRoom) {
-  const teacherTokens = splitAcademicTokens(teacher.specialty)
-  const classTokens = (classRoom.bnccFocus ?? []).flatMap(splitAcademicTokens)
-  if (!teacherTokens.length || !classTokens.length) return false
+function academicSubjectCodes(value?: string | null): string[] {
+  const text = normalizeRoleText(value).replace(/[^A-Z0-9]+/g, ' ').trim()
+  if (!text) return []
 
-  return teacherTokens.some((teacherToken) => classTokens.some((classToken) => (
-    teacherToken === classToken
-    || teacherToken.includes(classToken)
-    || classToken.includes(teacherToken)
+  const codes: string[] = []
+  const withoutPhysicalEducation = text.replace(/EDUCACAO FISICA|ED FISICA/g, ' ')
+  if (/(EDUCACAO FISICA|ED FISICA)/.test(text)) codes.push('EDUCACAO_FISICA')
+  if (/(LINGUA PORTUGUESA|PORTUGUES|PORTUGUESA|PORTUGUES BRASIL)/.test(text)) codes.push('LINGUA_PORTUGUESA')
+  if (/(LINGUA INGLESA|INGLES|INGLESA|ENGLISH)/.test(text)) codes.push('LINGUA_INGLESA')
+  if (/(LINGUA ESPANHOLA|ESPANHOL|ESPANHOLA|ESPANOL|SPANISH)/.test(text)) codes.push('LINGUA_ESPANHOLA')
+  if (/(ENSINO RELIGIOSO|RELIGIAO|RELIGIOSO)/.test(text)) codes.push('ENSINO_RELIGIOSO')
+  if (/(PROJETO DE VIDA|PROJETO VIDA)/.test(text)) codes.push('PROJETO_DE_VIDA')
+  if (/LITERATURA/.test(text)) codes.push('LITERATURA')
+  if (/REDACAO/.test(text)) codes.push('REDACAO')
+  if (/MATEMATICA/.test(text)) codes.push('MATEMATICA')
+  if (/BIOLOGIA/.test(text)) codes.push('BIOLOGIA')
+  if (/(^|\s)FISICA(\s|$)/.test(withoutPhysicalEducation)) codes.push('FISICA')
+  if (/QUIMICA/.test(text)) codes.push('QUIMICA')
+  if (/HISTORIA/.test(text)) codes.push('HISTORIA')
+  if (/GEOGRAFIA/.test(text)) codes.push('GEOGRAFIA')
+  if (/FILOSOFIA/.test(text)) codes.push('FILOSOFIA')
+  if (/SOCIOLOGIA/.test(text)) codes.push('SOCIOLOGIA')
+  if (/CIENCIAS/.test(text) && !/(CIENCIAS DA NATUREZA|NATUREZA)/.test(text)) codes.push('CIENCIAS')
+  if (/(^|\s)ARTES?(\s|$)/.test(text)) codes.push('ARTE')
+  return Array.from(new Set(codes))
+}
+
+function academicSubjectCode(value?: string | null): string | null {
+  return academicSubjectCodes(value)[0] ?? null
+}
+
+function teacherSubjectCodes(teacher: Teacher) {
+  return new Set([
+    ...academicSubjectCodes(teacher.specialty),
+    ...splitAcademicTokens(teacher.specialty).flatMap(academicSubjectCodes),
+  ].filter((code): code is string => Boolean(code)))
+}
+
+function academicSubjectMatches(first?: string | null, second?: string | null) {
+  const firstSubjectCodes = academicSubjectCodes(first)
+  const secondSubjectCodes = academicSubjectCodes(second)
+  if (firstSubjectCodes.length || secondSubjectCodes.length) {
+    return firstSubjectCodes.some((code) => secondSubjectCodes.includes(code))
+  }
+
+  const normalize = (value?: string | null) => normalizeRoleText(value).replace(/[^A-Z0-9]+/g, ' ').trim()
+  const firstKey = normalize(first)
+  const secondKey = normalize(second)
+  if (!firstKey || !secondKey) return false
+  if (firstKey === secondKey || firstKey.includes(secondKey) || secondKey.includes(firstKey)) return true
+
+  const stopWords = new Set(['DE', 'DA', 'DO', 'DAS', 'DOS', 'E', 'EM', 'ENSINO', 'ANOS', 'AREA', 'LINGUA'])
+  const firstWords = firstKey.split(/\s+/).filter((word) => word.length > 3 && !stopWords.has(word))
+  const secondWords = secondKey.split(/\s+/).filter((word) => word.length > 3 && !stopWords.has(word))
+  return firstWords.some((firstWord) => secondWords.some((secondWord) => (
+    firstWord === secondWord
+    || firstWord.includes(secondWord)
+    || secondWord.includes(firstWord)
   )))
+}
+
+function teacherCanTeachSubject(teacher: Teacher, subject?: string | null) {
+  const subjectCode = academicSubjectCode(subject)
+  if (subjectCode) return teacherSubjectCodes(teacher).has(subjectCode)
+  return splitAcademicTokens(teacher.specialty).some((token) => academicSubjectMatches(token, subject))
 }
 
 function getSectionFromPath(pathname: string): AppSection | null {
@@ -614,64 +657,97 @@ function getStrictSchoolScopeIds(
   return schoolIds
 }
 
-async function loadSectionPayload(section: AppSection, token: string, profile: RoleProfile) {
+async function loadSectionPayload(section: AppSection, token: string, profile: RoleProfile | null) {
+  const networkScope = isNetworkAdminProfile(profile)
+  const scopedOptions = { networkScope }
+  const loadAcademicScopeWithLessonRecords = async (options: { includeTeachers?: boolean } = {}) => {
+    const [scopePayload, lessonRecords] = await Promise.all([
+      loadAcademicScopeScreen(token, { ...options, ...scopedOptions }),
+      listLessonRecords(token, scopedOptions),
+    ])
+    return { ...scopePayload, lessonRecords }
+  }
+
   switch (section) {
     case 'dashboard':
       return loadDashboardScreen(token)
     case 'notifications':
       return loadNotificationsScreen(token)
     case 'pedagogy':
-      return Promise.all([loadSchoolsScreen(token), loadEvaluationsScreen(token)]).then(([schoolsPayload, evaluationsPayload]) => ({
-        ...schoolsPayload,
-        evaluations: evaluationsPayload.evaluations,
-        curriculumSkills: evaluationsPayload.curriculumSkills,
-        assessmentDescriptors: evaluationsPayload.assessmentDescriptors,
-        questionBank: evaluationsPayload.questionBank,
+      return loadAcademicScopeWithLessonRecords().then((scopePayload) => ({
+        ...scopePayload,
+        evaluations: [],
       }))
     case 'schools':
-    case 'classes':
+      return loadSchoolsScreen(token, scopedOptions)
     case 'people':
-    case 'teacher-subjects':
+      return loadPeopleScreen(token, scopedOptions)
+    case 'classes':
+      return loadClassesScreen(token, scopedOptions)
     case 'lesson-records':
     case 'attendance-list':
+      return loadAcademicScopeWithLessonRecords()
     case 'student-performance':
     case 'student-attendance':
     case 'child-attendance':
     case 'child-performance':
-      return loadSchoolsScreen(token)
-    case 'room-reservations':
-      return Promise.all([loadSchoolsScreen(token), listRoomReservations(token)]).then(([schoolsPayload, roomReservations]) => ({
-        ...schoolsPayload,
-        roomReservations,
+      return loadAcademicScopeWithLessonRecords({ includeTeachers: false })
+    case 'student-grades':
+      return Promise.all([
+        loadAcademicScopeScreen(token, {
+          ...scopedOptions,
+          includeTeachers: false,
+          schoolsView: 'identity',
+          studentsView: 'identity',
+          classesView: 'summary',
+        }),
+        loadStudentGradesEvaluationsScreen(token),
+      ]).then(([scopePayload, evaluationsPayload]) => ({
+        ...scopePayload,
+        evaluations: evaluationsPayload.evaluations,
+        evaluationCorrections: evaluationsPayload.evaluationCorrections,
+        curriculumSkills: evaluationsPayload.curriculumSkills,
+        questionBank: evaluationsPayload.questionBank,
       }))
+    case 'teacher-subjects':
+      return loadAcademicScopeWithLessonRecords()
+    case 'room-reservations':
+      return loadRoomReservationsScreen(token, scopedOptions)
     case 'evaluations':
-      return Promise.all([loadEvaluationsScreen(token), loadSchoolsScreen(token)]).then(([evaluationsPayload, schoolsPayload]) => ({
+      return Promise.all([loadEvaluationsScreen(token, { ...scopedOptions, includeClasses: false }), loadAcademicScopeScreen(token, scopedOptions)]).then(([evaluationsPayload, scopePayload]) => ({
         ...evaluationsPayload,
-        schools: schoolsPayload.schools,
-        teachers: schoolsPayload.teachers,
-        students: schoolsPayload.students,
+        classes: scopePayload.classes,
+        schools: scopePayload.schools,
+        teachers: scopePayload.teachers,
+        students: scopePayload.students,
       }))
     case 'evaluation-corrections':
-      return Promise.all([loadEvaluationsScreen(token), loadSchoolsScreen(token)]).then(([evaluationsPayload, schoolsPayload]) => ({
+      return Promise.all([loadEvaluationCorrectionsScreen(token, scopedOptions), loadAcademicScopeScreen(token, scopedOptions)]).then(([evaluationsPayload, scopePayload]) => ({
         ...evaluationsPayload,
-        schools: schoolsPayload.schools,
-        teachers: schoolsPayload.teachers,
-        students: schoolsPayload.students,
+        classes: scopePayload.classes,
+        schools: scopePayload.schools,
+        teachers: scopePayload.teachers,
+        students: scopePayload.students,
       }))
     case 'calendar':
-      return Promise.all([loadCalendarScreen(token), loadSchoolsScreen(token)]).then(([calendarPayload, schoolsPayload]) => ({
+      return loadCalendarScreen(token, scopedOptions).then((calendarPayload) => ({
         ...calendarPayload,
-        scope: schoolsPayload,
+        scope: {
+          schools: calendarPayload.schools,
+          classes: calendarPayload.classes,
+          teachers: [],
+          guardians: [],
+          students: [],
+        },
       }))
     case 'meals':
     case 'food-requests': {
-      const shouldLoadNetworkMeals = profile === 'ADMIN' || profile === 'NUTRITIONIST'
-      const [mealsPayload, schoolsPayload, mealManagementsPayload] = await Promise.all([
-        loadMealsScreen(token),
-        loadSchoolsScreen(token),
-        shouldLoadNetworkMeals ? listMealManagements(token).catch(() => null) : Promise.resolve(null),
+      const mealOptions = { networkScope: networkScope || profile === 'NUTRITIONIST' }
+      const [mealsPayload, schoolsPayload] = await Promise.all([
+        loadMealsScreen(token, mealOptions),
+        loadAcademicScopeScreen(token, scopedOptions),
       ])
-      const mergedMeals = mergeMealsPayloads(mealsPayload, mealManagementsPayload)
+      const mergedMeals = normalizeMealsPayload(mealsPayload)
 
       return {
         ...mergedMeals,
@@ -689,6 +765,7 @@ export default function App() {
   const [token, setToken] = useState<string | null>(null)
   const [route, setRoute] = useState(getCurrentPath)
   const [session, setSession] = useState<SessionPayload | null>(null)
+  const [mePermissions, setMePermissions] = useState<MePermissionsPayload | null>(null)
   const [screenData, setScreenData] = useState<ScreenCache>({})
   const [screenLoading, setScreenLoading] = useState<ScreenFlags>({})
   const [screenErrors, setScreenErrors] = useState<ScreenErrors>({})
@@ -704,9 +781,11 @@ export default function App() {
 
   const roleProfile = getSessionRoleProfile(session)
   const userRole = useMemo(() => resolveSessionRole(session, roleProfile), [roleProfile, session])
-  const allowedSections = useMemo(() => getSectionsForProfile(roleProfile), [roleProfile])
-  const visibleNavItems = useMemo(() => getNavItemsForProfile(roleProfile), [roleProfile])
-  const fallbackSection = visibleNavItems[0]?.id ?? 'dashboard'
+  const allowedSections = useMemo(() => getExplicitAllowedSections(roleProfile, mePermissions), [mePermissions, roleProfile])
+  const visibleNavItems = useMemo(() => (
+    getNavItemsForProfile(roleProfile).filter((item) => allowedSections.includes(item.id))
+  ), [allowedSections, roleProfile])
+  const fallbackSection = visibleNavItems[0]?.id ?? allowedSections[0] ?? 'dashboard'
   const routeSection = getSectionFromPath(route)
   const requestedSection = routeSection ?? fallbackSection
   const requestedSectionAlias = getSectionAliasForProfile(requestedSection, roleProfile)
@@ -714,6 +793,10 @@ export default function App() {
   const activeLabel = visibleNavItems.find((item) => item.id === activeSection)?.label
     ?? navItems.find((item) => item.id === activeSection)?.label
     ?? appName
+  const loadQuestionsPageForEvaluations = useCallback((params: QuestionBankPageQuery) => {
+    if (!token) return Promise.reject(new Error('Sessao expirada.'))
+    return listQuestionsPage(token, params)
+  }, [token])
 
   useEffect(() => {
     if (window.location.hash.startsWith('#/')) {
@@ -741,6 +824,7 @@ export default function App() {
         if (cancelled) return
         setToken(null)
         setSession(null)
+        setMePermissions(null)
         setScreenData({})
         setScreenErrors({})
         setIsSessionLoading(false)
@@ -759,6 +843,7 @@ export default function App() {
   useEffect(() => {
     if (!token) {
       setSession(null)
+      setMePermissions(null)
       setScreenData({})
       setScreenLoading({})
       setScreenErrors({})
@@ -781,6 +866,7 @@ export default function App() {
 
   useEffect(() => {
     if (!token || !session) return
+    if (!allowedSections.includes(activeSection)) return
     if (!getSectionFromPath(route) || isLoginPath(route)) return
     if (routeSection && requestedSection !== activeSection) {
       navigateToSection(fallbackSection, 'replace')
@@ -789,7 +875,7 @@ export default function App() {
     if (screenData[activeSection] || screenLoading[activeSection] || screenErrors[activeSection]) return
 
     void loadScreen(activeSection, token)
-  }, [activeSection, fallbackSection, requestedSection, route, routeSection, screenData, screenErrors, screenLoading, session, token])
+  }, [activeSection, allowedSections, fallbackSection, requestedSection, route, routeSection, screenData, screenErrors, screenLoading, session, token])
 
   function navigateToPath(path: string, mode: 'push' | 'replace' = 'push') {
     if (mode === 'replace') {
@@ -807,6 +893,7 @@ export default function App() {
   function clearAuthState() {
     setToken(null)
     setSession(null)
+    setMePermissions(null)
     setScreenData({})
     setScreenErrors({})
     setScreenLoading({})
@@ -830,10 +917,15 @@ export default function App() {
     setAppError(null)
 
     try {
-      const nextSession = await loadSession(currentToken)
+      const [nextSession, nextPermissions] = await Promise.all([
+        loadSession(currentToken),
+        loadMePermissions(currentToken),
+      ])
       setSession(nextSession)
+      setMePermissions(nextPermissions)
       if ((!getSectionFromPath(window.location.pathname) || isLoginPath(window.location.pathname)) && !isLandingPath(window.location.pathname)) {
-        navigateToSection(getDefaultSectionForSession(nextSession), 'replace')
+        const defaultSection = getDefaultSectionForSession(nextSession, nextPermissions)
+        if (defaultSection) navigateToSection(defaultSection, 'replace')
       }
     } catch (error) {
       if (error instanceof ApiError && error.statusCode === 401) {
@@ -841,7 +933,7 @@ export default function App() {
         if (refreshedToken) return
       }
 
-      setAppError(error instanceof Error ? error.message : 'Falha ao carregar sessao do LiEnsina.')
+      setAppError(error instanceof Error ? error.message : 'Falha ao carregar sessao do MeuEnsino.')
       clearAuthState()
     } finally {
       setIsSessionLoading(false)
@@ -850,6 +942,10 @@ export default function App() {
 
   async function loadScreen(section: AppSection, currentToken = token) {
     if (!currentToken) return
+    if (!allowedSections.includes(section)) {
+      setScreenErrors((current) => ({ ...current, [section]: 'Acesso nao permitido para esta area.' }))
+      return
+    }
     setScreenLoading((current) => ({ ...current, [section]: true }))
     setScreenErrors((current) => ({ ...current, [section]: undefined }))
     setAppError(null)
@@ -859,9 +955,7 @@ export default function App() {
       setScreenData((current) => {
         if (section === 'calendar') {
           const calendarData = nextData as CalendarScreenPayload
-          return calendarData.scope
-            ? { ...current, schools: calendarData.scope, calendar: calendarData }
-            : { ...current, calendar: calendarData }
+          return { ...current, calendar: calendarData }
         }
 
         const next: ScreenCache = { ...current }
@@ -911,7 +1005,7 @@ export default function App() {
       const nextSchoolsPayloads = next as Partial<Record<AppSection, SchoolsScreenPayload>>
       let changed = false
 
-      for (const section of schoolsPayloadSections) {
+      for (const section of lessonRecordsPayloadSections) {
         const payload = current[section] as SchoolsScreenPayload | undefined
         if (!payload) continue
 
@@ -976,7 +1070,7 @@ export default function App() {
   }
 
   function getScopedSchoolsData(data: SchoolsScreenPayload): SchoolsScreenPayload {
-    if (!session || isAdminProfile(roleProfile)) return data
+    if (!session || isNetworkAdminProfile(roleProfile)) return data
 
     const user = session.currentUser
     const withScopedAcademicExtras = (
@@ -1000,9 +1094,12 @@ export default function App() {
     const studentIds = new Set(data.students
       .filter((student) => student.id === user.linkedStudentId || student.userId === user.id)
       .map((student) => student.id))
-    const guardianIds = new Set(data.guardians
-      .filter((guardian) => guardian.id === user.linkedGuardianId || guardian.userId === user.id)
-      .map((guardian) => guardian.id))
+    const guardianIds = new Set([
+      user.linkedGuardianId,
+      ...data.guardians
+        .filter((guardian) => guardian.id === user.linkedGuardianId || guardian.userId === user.id)
+        .map((guardian) => guardian.id),
+    ].filter((id): id is string => Boolean(id)))
 
     if (isSchoolLeadership(roleProfile)) {
       const relatedSchoolIds = userRelatedSchoolIds(user, data.schools)
@@ -1022,7 +1119,6 @@ export default function App() {
       const classes = data.classes.filter((classRoom) => (
         teacherIds.has(classRoom.teacherId)
         || (classRoom.teacherIds ?? []).some((teacherId) => teacherIds.has(teacherId))
-        || linkedTeachers.some((teacher) => teacherMatchesClassByDiscipline(teacher, classRoom))
       ))
       const classIds = new Set(classes.map((classRoom) => classRoom.id))
       const schoolIds = new Set([
@@ -1079,27 +1175,51 @@ export default function App() {
   }
 
   function getScopedEvaluationsData(data: EvaluationsScreenPayload): EvaluationsScreenPayload {
-    if (!session || isAdminProfile(roleProfile)) return data
+    if (!session || isNetworkAdminProfile(roleProfile)) return data
 
     const currentQuestionCreatorIds = new Set(
       [session.currentUser.id, session.currentUser.linkedTeacherId].filter((id): id is string => Boolean(id)),
     )
     const scopedSchools = screenData.schools ? getScopedSchoolsData(screenData.schools) : null
     const relatedSchoolIds = userRelatedSchoolIds(session.currentUser, data.schools ?? scopedSchools?.schools ?? [])
-    const allowedSchoolIds = new Set(scopedSchools?.schools.map((school) => school.id) ?? Array.from(relatedSchoolIds))
+    const allowedSchoolIds = new Set([
+      ...(scopedSchools?.schools.map((school) => school.id) ?? []),
+      ...Array.from(relatedSchoolIds),
+    ])
     if (session.currentUser.schoolId) allowedSchoolIds.add(session.currentUser.schoolId)
+    if (allowedSchoolIds.size === 0 && (data.schools ?? []).length === 1 && data.schools?.[0]?.id) allowedSchoolIds.add(data.schools[0].id)
     const allowedClassIdsFromSchools = new Set(scopedSchools?.classes.map((classRoom) => classRoom.id) ?? [])
+    const schoolScopedEvaluations = roleProfile === 'PROFESSOR' || isSchoolLeadership(roleProfile)
     const allowedClasses = data.classes.filter((classRoom) => {
-      if (roleProfile === 'PROFESSOR') {
-        return classRoom.teacherId === session.currentUser.linkedTeacherId || (classRoom.teacherIds ?? []).includes(session.currentUser.linkedTeacherId ?? '')
-      }
-
+      if (schoolScopedEvaluations) return allowedSchoolIds.has(classRoom.schoolId)
       if (allowedClassIdsFromSchools.size > 0) return allowedClassIdsFromSchools.has(classRoom.id)
       return allowedSchoolIds.has(classRoom.schoolId)
     })
     const allowedClassIds = new Set(allowedClasses.map((classRoom) => classRoom.id))
 
-    const scopedEvaluations = data.evaluations.filter((evaluation) => allowedClassIds.has(evaluation.classId))
+    const currentTeacherIds = new Set([session.currentUser.linkedTeacherId].filter((id): id is string => Boolean(id)))
+    const teacherPool = mergeById(data.teachers ?? [], scopedSchools?.teachers ?? [])
+    const currentTeachers = teacherPool.filter((teacher) => (
+      teacher.userId === session.currentUser.id
+      || teacher.id === session.currentUser.linkedTeacherId
+      || currentQuestionCreatorIds.has(teacher.userId)
+    ))
+    for (const teacher of currentTeachers) currentTeacherIds.add(teacher.id)
+    const evaluationMatchesTeacherSubject = (evaluation: EvaluationsScreenPayload['evaluations'][number]) => {
+      if (roleProfile !== 'PROFESSOR') return true
+
+      const evaluationClass = allowedClasses.find((classRoom) => classRoom.id === evaluation.classId)
+      if (!evaluationClass) return false
+      const evaluationSchoolId = evaluation.schoolId ?? evaluationClass.schoolId
+      if (!allowedSchoolIds.has(evaluationSchoolId)) return false
+
+      const creatorIds = [evaluation.createdById, evaluation.teacherId, evaluation.createdBy?.id].filter((id): id is string => Boolean(id))
+      if (creatorIds.some((id) => currentQuestionCreatorIds.has(id) || currentTeacherIds.has(id))) return true
+
+      return currentTeachers.some((teacher) => teacherCanTeachSubject(teacher, evaluation.subject))
+    }
+
+    const scopedEvaluations = data.evaluations.filter((evaluation) => allowedClassIds.has(evaluation.classId) && evaluationMatchesTeacherSubject(evaluation))
     const scopedEvaluationIds = new Set(scopedEvaluations.map((evaluation) => evaluation.id))
     const referencedQuestionIds = new Set(scopedEvaluations.flatMap((evaluation) => evaluation.questionIds ?? []))
 
@@ -1109,6 +1229,7 @@ export default function App() {
       evaluations: scopedEvaluations,
       students: data.students?.filter((student) => allowedClassIds.has(student.classId)),
       evaluationCorrections: data.evaluationCorrections?.filter((correction) => scopedEvaluationIds.has(correction.evaluationId)),
+      answerCards: data.answerCards?.filter((card) => scopedEvaluationIds.has(getAnswerCardEvaluationId(card))),
       schools: data.schools?.filter((school) => allowedSchoolIds.has(school.id)),
       teachers: data.teachers?.filter((teacher) => allowedSchoolIds.has(teacher.schoolId)),
       questionBank: data.questionBank?.filter((question) => {
@@ -1123,42 +1244,15 @@ export default function App() {
     }
   }
 
-  function getScopedPedagogyEvaluationData(data: PedagogyScreenPayload, scopedSchools: SchoolsScreenPayload) {
-    if (!session || isAdminProfile(roleProfile)) {
-      return {
-        evaluations: data.evaluations,
-        curriculumSkills: data.curriculumSkills ?? [],
-        assessmentDescriptors: data.assessmentDescriptors ?? [],
-        questionBank: data.questionBank ?? [],
-      }
-    }
-
-    const allowedClassIds = new Set(scopedSchools.classes.map((classRoom) => classRoom.id))
-    const allowedSchoolIds = new Set(scopedSchools.schools.map((school) => school.id))
-    const currentQuestionCreatorIds = new Set(
-      [session.currentUser.id, session.currentUser.linkedTeacherId].filter((id): id is string => Boolean(id)),
-    )
-
-    return {
-      evaluations: data.evaluations.filter((evaluation) => allowedClassIds.has(evaluation.classId)),
-      curriculumSkills: data.curriculumSkills ?? [],
-      assessmentDescriptors: data.assessmentDescriptors ?? [],
-      questionBank: (data.questionBank ?? []).filter((question) => {
-        if (question.sourceType === 'INEP_ENEM') return true
-        if (question.visibility === 'PRIVATE') return currentQuestionCreatorIds.has(question.createdById)
-        if (question.visibility === 'GLOBAL' || question.visibility === 'NETWORK') return true
-        if (roleProfile === 'PROFESSOR') return allowedSchoolIds.has(question.schoolId) || currentQuestionCreatorIds.has(question.createdById)
-        if (isSchoolLeadership(roleProfile)) return allowedSchoolIds.has(question.schoolId)
-        return currentQuestionCreatorIds.has(question.createdById)
-      }),
-    }
-  }
-
   function getScopedCalendarData(data: CalendarScreenPayload): CalendarScreenPayload {
-    if (!session || isAdminProfile(roleProfile)) return data
+    if (!session || isNetworkAdminProfile(roleProfile)) return data
 
     const scopeSource = data.scope ?? screenData.schools
-    const scopedSchools = scopeSource ? getScopedSchoolsData(scopeSource) : null
+    const scopedSchools = data.scope
+      ? data.scope
+      : scopeSource
+        ? getScopedSchoolsData(scopeSource)
+        : null
     const schoolIds = new Set(scopedSchools?.schools.map((school) => school.id) ?? [session.currentUser.schoolId].filter(Boolean) as string[])
     const classIds = new Set(scopedSchools?.classes.map((classRoom) => classRoom.id) ?? [])
 
@@ -1175,7 +1269,7 @@ export default function App() {
   }
 
   function getScopedNotificationsData(data: NotificationsScreenPayload): NotificationsScreenPayload {
-    if (!session || isAdminProfile(roleProfile)) return data
+    if (!session || isSuperAdminProfile(roleProfile)) return data
 
     const notifications = data.notifications.filter((notification) => notification.userId === session.currentUser.id)
     return {
@@ -1186,7 +1280,7 @@ export default function App() {
   }
 
   function getScopedMealsData(data: MealsScreenPayload): MealsScreenPayload {
-    if (!session || isAdminProfile(roleProfile) || roleProfile === 'NUTRITIONIST') return data
+    if (!session || isNetworkAdminProfile(roleProfile) || roleProfile === 'NUTRITIONIST') return data
 
     const allowedSchoolIds = isSchoolLeadership(roleProfile)
       ? getStrictSchoolScopeIds(session.currentUser, data.schools, data.mealManagements)
@@ -1316,13 +1410,31 @@ export default function App() {
     return (
       <ScreenLoadingState
         title="Carregando tela"
-        description="Buscando apenas os dados necessarios para esta area."
+        description="Buscando dados..."
       />
     )
   }
 
   function renderActiveScreen(): ReactNode {
     if (!token || !session) return null
+    if (!roleProfile) {
+      return (
+        <ScreenErrorState
+          title="Acesso negado"
+          description="Nao foi possivel validar um perfil de acesso para esta sessao."
+          onRetry={() => void refreshSession(token)}
+        />
+      )
+    }
+    if (!allowedSections.length || !allowedSections.includes(activeSection)) {
+      return (
+        <ScreenErrorState
+          title="Acesso negado"
+          description="Seu perfil nao possui permissoes explicitas para acessar esta area. Entre novamente ou solicite revisao de permissoes."
+          onRetry={() => void refreshSession(token)}
+        />
+      )
+    }
 
     switch (activeSection) {
       case 'dashboard': {
@@ -1358,12 +1470,15 @@ export default function App() {
             currentUser={session.currentUser}
             currentRole={userRole}
             schools={scopedData.schools}
+            schoolsPagination={scopedData.schoolsPagination}
             classes={scopedData.classes}
             students={scopedData.students}
             teachers={scopedData.teachers}
             guardians={scopedData.guardians}
+            lessonRecords={scopedData.lessonRecords}
             assetVersion={profileAssetVersion}
             readOnly={!isAdminProfile(roleProfile)}
+            onLoadSchoolsPage={(params: SchoolsPageQuery) => listSchoolsPage(token, params, { networkScope: isNetworkAdminProfile(roleProfile) })}
             onCreate={(draft) => isAdminProfile(roleProfile) ? runAction(async () => {
               const created = await createSchool(token, draft)
               updateScreenData('schools', (current) => ({ ...current, schools: [created, ...current.schools] }))
@@ -1479,8 +1594,8 @@ export default function App() {
             currentUser={session.currentUser}
             currentRole={userRole}
             assetVersion={profileAssetVersion}
-            onLoadTeachersPage={(params) => listTeachersPage(token, params)}
-            onLoadStudentsPage={(params) => listStudentsPage(token, params)}
+            onLoadTeachersPage={(params) => listTeachersPage(token, params, { networkScope: isNetworkAdminProfile(roleProfile) })}
+            onLoadStudentsPage={(params) => listStudentsPage(token, params, { networkScope: isNetworkAdminProfile(roleProfile) })}
           />
         )
       }
@@ -1491,15 +1606,22 @@ export default function App() {
       case 'lesson-records':
       case 'attendance-list':
       case 'student-performance':
+      case 'student-grades':
       case 'student-attendance':
       case 'child-attendance':
       case 'child-performance': {
         const data = screenData[activeSection]
         if (!data) return renderMissingScreen(activeSection)
-        const scopedData = getScopedSchoolsData(data)
+        const scopedData = activeSection === 'room-reservations'
+          ? data
+          : getScopedSchoolsData(data)
         const evaluationsData = activeSection === 'pedagogy'
-          ? getScopedPedagogyEvaluationData(data as PedagogyScreenPayload, scopedData)
-          : undefined
+          ? undefined
+          : 'evaluations' in data
+            ? getScopedEvaluationsData(data as EvaluationsScreenPayload)
+            : screenData.evaluations
+            ? getScopedEvaluationsData(screenData.evaluations)
+            : undefined
 
         return (
           <RolePortalView
@@ -1509,6 +1631,17 @@ export default function App() {
             currentRole={userRole}
             schoolsData={scopedData}
             evaluationsData={evaluationsData}
+            onLoadEvaluationsData={activeSection === 'teacher-subjects' ? async () => {
+              const payload = await loadTeacherSubjectEvaluationsScreen(token, { networkScope: isNetworkAdminProfile(roleProfile) })
+              const mergedPayload: EvaluationsScreenPayload = {
+                ...payload,
+                schools: scopedData.schools,
+                teachers: scopedData.teachers,
+                students: scopedData.students,
+                classes: payload.classes.length ? payload.classes : scopedData.classes,
+              }
+              return getScopedEvaluationsData(mergedPayload)
+            } : undefined}
             onCreateRoomReservation={async (draft) => {
               let createdReservation: RoomReservation | null = null
 
@@ -1537,6 +1670,26 @@ export default function App() {
               if (!createdLesson) throw new Error('Nao foi possivel salvar o registro de aula.')
               return createdLesson
             }}
+            onUpdateLessonRecord={async (id, draft) => {
+              let updatedLesson: LessonRecord | null = null
+
+              await runAction(async () => {
+                updatedLesson = await updateLessonRecord(token, id, draft)
+                upsertLessonRecordInCachedScreens(updatedLesson)
+              }, 'Frequencia atualizada no banco.')
+
+              if (!updatedLesson) throw new Error('Nao foi possivel atualizar a frequencia.')
+              return updatedLesson
+            }}
+            onLoadTeacherSubjectCardsPage={(params) => listTeacherSubjectCardsPage(token, params, { networkScope: isNetworkAdminProfile(roleProfile) })}
+            onDownloadEvaluation={(id) => runAction(async () => {
+              const file = await downloadEvaluationFile(token, id)
+              saveDownloadedFile(file)
+            }, 'Download da prova iniciado.')}
+            onDownloadAnswerKey={(id) => runAction(async () => {
+              const file = await downloadEvaluationFile(token, id, 'answer_key')
+              saveDownloadedFile(file)
+            }, 'Download do gabarito iniciado.')}
           />
         )
       }
@@ -1545,7 +1698,7 @@ export default function App() {
         const data = screenData.evaluations
         if (!data) return renderMissingScreen('evaluations')
         const scopedData = getScopedEvaluationsData(data)
-        const canManageEvaluations = roleProfile === 'ADMIN' || roleProfile === 'PROFESSOR'
+        const canManageEvaluations = isAdminProfile(roleProfile) || roleProfile === 'PROFESSOR'
 
         return (
           <EvaluationsView
@@ -1554,35 +1707,60 @@ export default function App() {
             evaluations={scopedData.evaluations}
             classes={scopedData.classes}
             teachers={scopedData.teachers ?? []}
+            answerCards={scopedData.answerCards ?? []}
             curriculumSkills={scopedData.curriculumSkills ?? []}
             assessmentDescriptors={scopedData.assessmentDescriptors ?? []}
             questionBank={scopedData.questionBank ?? []}
             questionImportPlans={scopedData.questionImportPlans ?? []}
             onCreate={(draft) => canManageEvaluations ? runAction(async () => {
-              const created = await createEvaluation(token, draft)
+              const createdPayload = await createEvaluation(token, draft)
+              const created = getCreatedEvaluation(createdPayload)
+              const answerCards = getCreatedAnswerCards(createdPayload)
               const createdWithBlueprint = {
                 ...created,
                 createdById: created.createdById ?? draft.createdById ?? session.currentUser.id,
                 createdByName: created.createdByName ?? draft.createdByName ?? session.currentUser.name,
                 buildMode: created.buildMode ?? draft.buildMode,
+                omrCardVersion: created.omrCardVersion ?? draft.omrCardVersion,
                 questionIds: created.questionIds ?? draft.questionIds,
                 questionSnapshots: created.questionSnapshots ?? draft.questionSnapshots,
                 skillCodes: created.skillCodes ?? draft.skillCodes,
                 descriptorCodes: created.descriptorCodes ?? draft.descriptorCodes,
                 sourceSummary: created.sourceSummary ?? draft.sourceSummary,
+                answerCardsCount: created.answerCardsCount ?? answerCards.length,
               }
-              updateScreenData('evaluations', (current) => ({ ...current, evaluations: [createdWithBlueprint, ...current.evaluations] }))
+              updateScreenData('evaluations', (current) => ({
+                ...current,
+                evaluations: [createdWithBlueprint, ...current.evaluations],
+                answerCards: answerCards.length ? mergeById(answerCards, current.answerCards ?? []) : current.answerCards,
+              }))
+              updateScreenData('evaluation-corrections', (current) => ({
+                ...current,
+                answerCards: answerCards.length ? mergeById(answerCards, current.answerCards ?? []) : current.answerCards,
+              }))
               invalidateScreens(['dashboard', 'calendar', 'pedagogy'])
-            }, 'Prova criada.') : blockUnauthorizedAction('Seu perfil pode acompanhar provas, mas nao criar novas avaliacoes.')}
+            }, 'Prova criada com cartoes individualizados.') : blockUnauthorizedAction('Seu perfil pode acompanhar provas, mas nao criar novas avaliacoes.')}
             onDelete={isAdminProfile(roleProfile) ? (id) => runAction(async () => {
               await deleteEvaluation(token, id)
-              updateScreenData('evaluations', (current) => ({ ...current, evaluations: removeById(current.evaluations, id) }))
+              updateScreenData('evaluations', (current) => ({
+                ...current,
+                evaluations: removeById(current.evaluations, id),
+                answerCards: current.answerCards?.filter((card) => getAnswerCardEvaluationId(card) !== id),
+              }))
+              updateScreenData('evaluation-corrections', (current) => ({
+                ...current,
+                answerCards: current.answerCards?.filter((card) => getAnswerCardEvaluationId(card) !== id),
+              }))
               invalidateScreens(['dashboard', 'calendar', 'pedagogy'])
             }, 'Prova excluida.') : undefined}
             onDownload={(id) => runAction(async () => {
               const file = await downloadEvaluationFile(token, id)
               saveDownloadedFile(file)
             }, 'Download da prova iniciado.')}
+            onDownloadAnswerCards={(id) => runAction(async () => {
+              const file = await downloadEvaluationFile(token, id, 'answer_cards')
+              saveDownloadedFile(file)
+            }, 'Download dos cartoes iniciado.')}
             onCreateQuestion={async (draft) => {
               if (!canManageEvaluations) {
                 await blockUnauthorizedAction('Seu perfil pode acompanhar questoes, mas nao criar novas.')
@@ -1608,16 +1786,16 @@ export default function App() {
                 throw new Error('Acao nao permitida para este perfil.')
               }
 
-              try {
-                return await generateQuestionSelection(token, draft)
-              } catch (error) {
-                if (error instanceof ApiError && error.statusCode === 404) {
-                  return buildLocalQuestionSelection(scopedData.questionBank ?? [], draft)
-                }
-
-                throw error
+              const generated = await generateQuestionSelection(token, draft)
+              if (generated.questions?.length) {
+                updateScreenData('evaluations', (current) => ({
+                  ...current,
+                  questionBank: mergeById(current.questionBank ?? [], generated.questions),
+                }))
               }
+              return generated
             }}
+            onLoadQuestionsPage={loadQuestionsPageForEvaluations}
             onDeleteQuestion={async (id) => {
               if (!canManageEvaluations) {
                 await blockUnauthorizedAction('Seu perfil pode acompanhar questoes, mas nao excluir.')
@@ -1657,6 +1835,15 @@ export default function App() {
             ...(current.evaluationCorrections ?? []).filter((item) => item.id !== correction.id && !(item.evaluationId === correction.evaluationId && item.studentId === correction.studentId)),
           ],
         })
+        const upsertCorrections = (current: EvaluationsScreenPayload, nextCorrections: EvaluationCorrection[]): EvaluationsScreenPayload => ({
+          ...current,
+          evaluationCorrections: [
+            ...nextCorrections,
+            ...(current.evaluationCorrections ?? []).filter((item) => !nextCorrections.some((correction) => (
+              item.id === correction.id || (item.evaluationId === correction.evaluationId && item.studentId === correction.studentId)
+            ))),
+          ],
+        })
 
         return (
           <EvaluationCorrectionsView
@@ -1664,19 +1851,41 @@ export default function App() {
             classes={scopedData.classes}
             students={scopedData.students ?? []}
             corrections={scopedData.evaluationCorrections ?? []}
+            answerCards={scopedData.answerCards ?? []}
+            onLoadStudentsPage={(params) => listStudentsPage(token, params, { networkScope: isNetworkAdminProfile(roleProfile) })}
             onDownloadEvaluation={(id) => runAction(async () => {
               const file = await downloadEvaluationFile(token, id)
               saveDownloadedFile(file)
             }, 'Download da prova iniciado.')}
+            onDownloadAnswerCards={(id) => runAction(async () => {
+              const file = await downloadEvaluationFile(token, id, 'answer_cards')
+              saveDownloadedFile(file)
+            }, 'Download dos cartoes iniciado.')}
+            onLoadCorrectionDetail={(correctionId) => getEvaluationCorrection(token, correctionId)}
+            onLoadCorrectionCardPreview={(correctionId) => getEvaluationCorrectionCardFile(token, correctionId)}
             onProcess={async (evaluationId, studentId, image) => {
               let processed: EvaluationCorrection | null = null
               await runAction(async () => {
                 processed = await processEvaluationOmr(token, evaluationId, studentId, image)
                 updateScreenData('evaluation-corrections', (current) => upsertCorrection(current, processed as EvaluationCorrection))
                 updateScreenData('evaluations', (current) => upsertCorrection(current, processed as EvaluationCorrection))
-                invalidateScreens(['dashboard', 'pedagogy'])
+                invalidateScreens(['dashboard', 'pedagogy', 'teacher-subjects', 'student-grades'])
               }, 'Sugestao de correcao gerada.')
               if (!processed) throw new Error('A API nao retornou a sugestao de correcao.')
+              return processed
+            }}
+            onBatchProcess={async (evaluationId, files) => {
+              let processed: EvaluationOmrBatchResponse | null = null
+              await runAction(async () => {
+                processed = await processEvaluationOmrBatch(token, evaluationId, files)
+                const batchCorrections = getBatchCorrections(processed)
+                if (batchCorrections.length) {
+                  updateScreenData('evaluation-corrections', (current) => upsertCorrections(current, batchCorrections))
+                  updateScreenData('evaluations', (current) => upsertCorrections(current, batchCorrections))
+                }
+                invalidateScreens(['dashboard', 'pedagogy', 'teacher-subjects', 'evaluations', 'student-grades'])
+              }, 'Lote OMR processado.')
+              if (!processed) throw new Error('A API nao retornou o resumo do lote.')
               return processed
             }}
             onReview={async (correctionId, payload) => {
@@ -1685,9 +1894,23 @@ export default function App() {
                 reviewed = await reviewEvaluationCorrection(token, correctionId, payload)
                 updateScreenData('evaluation-corrections', (current) => upsertCorrection(current, reviewed as EvaluationCorrection))
                 updateScreenData('evaluations', (current) => upsertCorrection(current, reviewed as EvaluationCorrection))
-                invalidateScreens(['dashboard', 'pedagogy', 'evaluations'])
+                invalidateScreens(['dashboard', 'pedagogy', 'evaluations', 'teacher-subjects', 'student-grades'])
               }, 'Revisao da correcao salva.')
               if (!reviewed) throw new Error('A API nao retornou a correcao revisada.')
+              return reviewed
+            }}
+            onReviewMany={async (evaluationId, payload) => {
+              let reviewed: Awaited<ReturnType<typeof confirmEvaluationCorrections>> | null = null
+              await runAction(async () => {
+                reviewed = await confirmEvaluationCorrections(token, evaluationId, payload)
+                const confirmedCorrections = reviewed.corrections ?? []
+                if (confirmedCorrections.length) {
+                  updateScreenData('evaluation-corrections', (current) => upsertCorrections(current, confirmedCorrections))
+                  updateScreenData('evaluations', (current) => upsertCorrections(current, confirmedCorrections))
+                }
+                invalidateScreens(['dashboard', 'pedagogy', 'evaluations', 'teacher-subjects', 'student-grades'])
+              }, 'Notas confirmadas em lote.')
+              if (!reviewed) throw new Error('A API nao retornou as correcoes confirmadas.')
               return reviewed
             }}
           />
@@ -1698,7 +1921,7 @@ export default function App() {
         const data = screenData.calendar
         if (!data) return renderMissingScreen('calendar')
         const scopedData = getScopedCalendarData(data)
-        const canCreateCalendar = roleProfile === 'ADMIN' || roleProfile === 'PROFESSOR'
+        const canCreateCalendar = isAdminProfile(roleProfile) || roleProfile === 'PROFESSOR'
         const currentCalendarCreatorIds = new Set([
           session.currentUser.id,
           session.currentUser.linkedTeacherId,
@@ -1706,7 +1929,7 @@ export default function App() {
           session.currentUser.linkedGuardianId,
         ].filter((id): id is string => Boolean(id)))
         const canManageCalendarEvent = (id: string) => {
-          if (roleProfile === 'ADMIN') return true
+          if (isAdminProfile(roleProfile)) return true
           const event = data.calendarEvents.find((item) => item.id === id)
           return Boolean(event?.createdById && currentCalendarCreatorIds.has(event.createdById))
         }
@@ -1739,9 +1962,9 @@ export default function App() {
         const data = screenData.meals
         if (!data) return renderMissingScreen('meals')
         const scopedData = getScopedMealsData(data)
-        const canManageMeals = roleProfile === 'ADMIN'
+        const canManageMeals = isAdminProfile(roleProfile)
         const canCreateFoodRequest = roleProfile === 'DIRETOR'
-        const canAddRequestToStock = roleProfile === 'ADMIN'
+        const canAddRequestToStock = isAdminProfile(roleProfile)
 
         return (
           <MealsView
@@ -1752,31 +1975,15 @@ export default function App() {
             foodRequests={scopedData.foodRequests ?? []}
             mealRequestHistory={scopedData.mealRequestHistory ?? []}
             onLoadSchoolPage={async (page: number, limit: number, search = ''): Promise<MealManagementsPagePayload> => {
-              if (roleProfile !== 'ADMIN' && roleProfile !== 'NUTRITIONIST') {
+              if (!isAdminProfile(roleProfile) && roleProfile !== 'NUTRITIONIST') {
                 return buildMealManagementsPagePayload(scopedData, page, limit, search)
               }
 
               try {
-                const payload = await listMealManagementSchoolPage(token, page, limit, search)
-                if (payload.mealManagements.length > 0) return payload
-
-                const fallbackData = scopedData.mealManagements.length > 0
-                  ? scopedData
-                  : normalizeMealsPayload(await listMealManagements(token).catch(() => null))
-
-                if (fallbackData.mealManagements.length > 0) {
-                  return buildMealManagementsPagePayload(fallbackData, page, limit, search)
-                }
-
+                const payload = await listMealManagementSchoolPage(token, page, limit, search, { networkScope: isNetworkAdminProfile(roleProfile) || roleProfile === 'NUTRITIONIST' })
                 return payload
               } catch (error) {
-                const fallbackData = scopedData.mealManagements.length > 0
-                  ? scopedData
-                  : normalizeMealsPayload(await listMealManagements(token).catch(() => null))
-
-                if (fallbackData.mealManagements.length > 0) {
-                  return buildMealManagementsPagePayload(fallbackData, page, limit, search)
-                }
+                if (scopedData.mealManagements.length > 0) return buildMealManagementsPagePayload(scopedData, page, limit, search)
 
                 throw error
               }
@@ -1855,7 +2062,7 @@ export default function App() {
       case 'access': {
         const data = screenData.access
         if (!data) return renderMissingScreen('access')
-        if (!isAdminProfile(roleProfile)) return <ScreenErrorState title="Acesso restrito" description="Apenas ADMIN pode gerenciar cargos e permissoes." onRetry={() => navigateToSection(fallbackSection, 'replace')} />
+        if (!isNetworkAdminProfile(roleProfile)) return <ScreenErrorState title="Acesso restrito" description="Apenas administradores globais podem gerenciar cargos e permissoes globais." onRetry={() => navigateToSection(fallbackSection, 'replace')} />
 
         return (
           <AccessView
@@ -1954,7 +2161,7 @@ export default function App() {
   if (isAuthRestoring) {
     return (
       <FullScreenState
-        title="Preparando o LiEnsina"
+        title="Preparando o MeuEnsino"
         description="Verificando se sua sessao ainda esta ativa."
       />
     )
@@ -1978,7 +2185,7 @@ export default function App() {
   if (isSessionLoading || !session) {
     return (
       <FullScreenState
-        title="Preparando o LiEnsina"
+        title="Preparando o MeuEnsino"
         description="Validando sessao e carregando seu perfil."
       />
     )
@@ -2048,38 +2255,1130 @@ export default function App() {
   )
 }
 
-function FullScreenState({ title, description }: { title: string; description: string }) {
+const particles = Array.from({ length: 18 }, (_, i) => ({
+  id: i,
+  x: Math.random() * 100,
+  y: Math.random() * 100,
+  size: Math.random() * 3 + 1.5,
+  duration: Math.random() * 6 + 5,
+  delay: Math.random() * 4,
+}))
+
+const shimmerWords = ["Carregando", "Preparando", "Quase lá"]
+
+const WORDS = ["Preparando tudo", "Carregando dados", "Quase pronto"]
+
+const PARTICLES = Array.from({ length: 60 }, (_, i) => ({
+  id: i,
+  x: Math.random() * 100,
+  y: Math.random() * 100,
+  size: Math.random() * 2 + 0.5,
+  duration: Math.random() * 8 + 6,
+  delay: Math.random() * 5,
+  opacity: Math.random() * 0.4 + 0.1,
+}))
+
+const ORBS = [
+  { cx: "15%", cy: "20%", r: 280, color: "#7c3aed", opacity: 0.07 },
+  { cx: "85%", cy: "75%", r: 320, color: "#6d28d9", opacity: 0.06 },
+  { cx: "50%", cy: "50%", r: 200, color: "#8b5cf6", opacity: 0.05 },
+]
+
+function ParticleField() {
   return (
-    <div className="grid min-h-screen place-items-center content-center gap-3 p-6 text-center font-['DM_Sans']">
-      <img className="w-[min(400px,82vw)]" src="/liensina-logo.png" alt="LiEnsina" />
-      <h1 className="m-0 font-['Sora',system-ui,sans-serif] text-[clamp(1.8rem,5vw,3rem)] font-black text-slate-900">{title}</h1>
-      <p className="m-0 text-slate-500">{description}</p>
+    <div className="pointer-events-none absolute inset-0 overflow-hidden">
+      {PARTICLES.map((p) => (
+        <motion.div
+          key={p.id}
+          className="absolute rounded-full bg-violet-400"
+          style={{
+            left: `${p.x}%`,
+            top: `${p.y}%`,
+            width: p.size,
+            height: p.size,
+            opacity: p.opacity,
+          }}
+          animate={{
+            y: [0, -40, 0],
+            x: [0, Math.sin(p.id) * 12, 0],
+            opacity: [p.opacity, p.opacity * 2.5, p.opacity],
+          }}
+          transition={{
+            duration: p.duration,
+            repeat: Infinity,
+            delay: p.delay,
+            ease: "easeInOut",
+          }}
+        />
+      ))}
     </div>
   )
 }
 
-function ScreenLoadingState({ title, description }: { title: string; description: string }) {
+function HexagonRing({ delay = 0, size = 100, strokeWidth = 1, color = "#7c3aed", opacity = 0.2 }) {
+  const r = size / 2
+  const points = Array.from({ length: 6 }, (_, i) => {
+    const angle = (Math.PI / 3) * i - Math.PI / 6
+    return `${r + r * Math.cos(angle)},${r + r * Math.sin(angle)}`
+  }).join(" ")
+
   return (
-    <div className="grid min-h-[calc(100vh-80px)] place-items-center content-center gap-3 p-6 text-center">
-      <div className="h-12 w-12 animate-spin rounded-full border-4 border-indigo-100 border-t-indigo-600" />
-      <h2 className="m-0 font-['Sora',system-ui,sans-serif] text-xl font-black text-slate-900">{title}</h2>
-      <p className="m-0 max-w-md text-sm leading-6 text-slate-500">{description}</p>
-    </div>
+    <motion.svg
+      width={size}
+      height={size}
+      viewBox={`0 0 ${size} ${size}`}
+      className="absolute"
+      style={{ opacity }}
+      animate={{ rotate: 360, opacity: [opacity, opacity * 2, opacity] }}
+      transition={{ rotate: { duration: 20 + delay * 3, repeat: Infinity, ease: "linear" }, opacity: { duration: 3, repeat: Infinity, ease: "easeInOut", delay } }}
+    >
+      <polygon points={points} fill="none" stroke={color} strokeWidth={strokeWidth} />
+    </motion.svg>
   )
 }
 
-function ScreenErrorState({ title, description, onRetry }: { title: string; description: string; onRetry: () => void }) {
+function CenterOrb() {
+  const rings = [
+    { size: 220, delay: 0, opacity: 0.06, strokeWidth: 1 },
+    { size: 170, delay: 0.4, opacity: 0.1, strokeWidth: 0.8 },
+    { size: 130, delay: 0.8, opacity: 0.14, strokeWidth: 1 },
+    { size: 100, delay: 1.2, opacity: 0.2, strokeWidth: 1 },
+  ]
+
   return (
-    <div className="grid min-h-[calc(100vh-80px)] place-items-center content-center gap-3 p-6 text-center">
-      <h2 className="m-0 font-['Sora',system-ui,sans-serif] text-xl font-black text-slate-900">{title}</h2>
-      <p className="m-0 max-w-md text-sm leading-6 text-slate-500">{description}</p>
-      <button
-        type="button"
-        onClick={onRetry}
-        className="mt-2 inline-flex min-h-10 items-center justify-center rounded-sm bg-indigo-600 px-4 text-sm font-bold text-white transition-colors hover:bg-indigo-700"
+    <div className="relative flex items-center justify-center" style={{ width: 220, height: 220 }}>
+      {rings.map((r, i) => (
+        <div key={i} className="absolute flex items-center justify-center" style={{ width: r.size, height: r.size }}>
+          <HexagonRing size={r.size} delay={r.delay} opacity={r.opacity} strokeWidth={r.strokeWidth} />
+        </div>
+      ))}
+
+      {[0, 1, 2].map((i) => (
+        <motion.div
+          key={i}
+          className="absolute rounded-full border border-violet-400/20"
+          style={{ inset: -i * 16 - 8 }}
+          animate={{ scale: [1, 1.08, 1], opacity: [0.3, 0.08, 0.3] }}
+          transition={{ duration: 3.5, repeat: Infinity, delay: i * 0.9, ease: "easeInOut" }}
+        />
+      ))}
+
+      <motion.div
+        className="absolute rounded-full"
+        style={{
+          width: 88,
+          height: 88,
+          background: "radial-gradient(circle at 35% 35%, #a78bfa, #7c3aed 60%, #4c1d95)",
+        }}
+        animate={{ scale: [1, 1.04, 1] }}
+        transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
       >
-        Tentar novamente
-      </button>
+        <motion.div
+          className="absolute inset-0 rounded-full"
+          style={{ background: "radial-gradient(circle at 30% 25%, rgba(255,255,255,0.25) 0%, transparent 60%)" }}
+        />
+      </motion.div>
+
+      <motion.div
+        className="absolute rounded-full bg-violet-300/20"
+        style={{ width: 64, height: 64 }}
+        animate={{ scale: [1, 1.6, 1], opacity: [0.4, 0, 0.4] }}
+        transition={{ duration: 2.8, repeat: Infinity, ease: "easeOut" }}
+      />
+
+      <motion.svg
+        className="absolute"
+        width={72}
+        height={72}
+        viewBox="0 0 72 72"
+        animate={{ rotate: -360 }}
+        transition={{ duration: 12, repeat: Infinity, ease: "linear" }}
+      >
+        <circle
+          cx="36" cy="36" r="30"
+          fill="none"
+          stroke="url(#arcGrad)"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeDasharray="40 150"
+        />
+        <defs>
+          <linearGradient id="arcGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stopColor="#a78bfa" stopOpacity="0" />
+            <stop offset="100%" stopColor="#a78bfa" stopOpacity="1" />
+          </linearGradient>
+        </defs>
+      </motion.svg>
+
+      <motion.svg
+        className="absolute"
+        width={52}
+        height={52}
+        viewBox="0 0 52 52"
+        animate={{ rotate: 360 }}
+        transition={{ duration: 8, repeat: Infinity, ease: "linear" }}
+      >
+        <circle
+          cx="26" cy="26" r="22"
+          fill="none"
+          stroke="#c4b5fd"
+          strokeWidth="1"
+          strokeLinecap="round"
+          strokeDasharray="12 80"
+          strokeOpacity="0.5"
+        />
+      </motion.svg>
+    </div>
+  )
+}
+
+function AnimatedProgressBar() {
+  const progress = useMotionValue(0)
+  const width = useTransform(progress, [0, 1], ["0%", "100%"])
+
+  useEffect(() => {
+    const controls = animate(progress, 0.7, {
+      duration: 2.2,
+      ease: [0.22, 1, 0.36, 1],
+    })
+    return controls.stop
+  }, [])
+
+  return (
+    <div className="relative h-[2px] w-56 overflow-hidden rounded-full bg-violet-100/60">
+      <motion.div
+        className="absolute inset-y-0 left-0 rounded-full bg-violet-500"
+        style={{ width }}
+      />
+      <motion.div
+        className="absolute inset-y-0 w-16 rounded-full bg-white/60"
+        style={{ left: width }}
+        animate={{ opacity: [0, 0.8, 0] }}
+        transition={{ duration: 0.8, repeat: Infinity, ease: "easeOut" }}
+      />
+    </div>
+  )
+}
+
+function FloatingChip({ label, style }: { label: string; style: React.CSSProperties }) {
+  return (
+    <motion.div
+      className="absolute flex items-center gap-1.5 rounded-full border border-violet-200/50 bg-white/70 px-3 py-1 backdrop-blur-sm"
+      style={style}
+      animate={{ y: [0, -6, 0], opacity: [0.6, 1, 0.6] }}
+      transition={{ duration: 4 + Math.random() * 2, repeat: Infinity, ease: "easeInOut", delay: Math.random() * 2 }}
+    >
+      <span className="h-1.5 w-1.5 rounded-full bg-violet-400" />
+      <span className="text-[10px] font-medium tracking-wide text-violet-600">{label}</span>
+    </motion.div>
+  )
+}
+
+export function FullScreenState({
+  title,
+  description,
+}: {
+  title: string
+  description: string
+}) {
+  const [wordIndex, setWordIndex] = useState(0)
+
+  useEffect(() => {
+    const t = setInterval(() => setWordIndex((i) => (i + 1) % WORDS.length), 2200)
+    return () => clearInterval(t)
+  }, [])
+
+  return (
+    <div
+      className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden font-['DM_Sans']"
+      style={{ background: "#faf9ff" }}
+    >
+      {ORBS.map((o, i) => (
+        <motion.div
+          key={i}
+          className="pointer-events-none absolute rounded-full"
+          style={{
+            left: o.cx,
+            top: o.cy,
+            width: o.r * 2,
+            height: o.r * 2,
+            background: o.color,
+            opacity: o.opacity,
+            transform: "translate(-50%, -50%)",
+            filter: "blur(80px)",
+          }}
+          animate={{ scale: [1, 1.08, 1] }}
+          transition={{ duration: 8 + i * 2, repeat: Infinity, ease: "easeInOut", delay: i * 1.5 }}
+        />
+      ))}
+
+      <ParticleField />
+
+      <div
+        className="pointer-events-none absolute inset-0 opacity-20"
+        style={{
+          backgroundImage: "radial-gradient(circle, #7c3aed 0.8px, transparent 0.8px)",
+          backgroundSize: "36px 36px",
+          maskImage: "radial-gradient(ellipse 60% 55% at 50% 50%, black 0%, transparent 100%)",
+        }}
+      />
+
+      <FloatingChip label="Sincronizando" style={{ top: "22%", left: "12%" }} />
+      <FloatingChip label="Verificando" style={{ top: "30%", right: "10%" }} />
+      <FloatingChip label="Processando" style={{ bottom: "28%", left: "8%" }} />
+      <FloatingChip label="Conectando" style={{ bottom: "22%", right: "12%" }} />
+
+      <div className="relative z-10 flex flex-col items-center gap-8 px-6 text-center">
+        <motion.div
+          initial={{ opacity: 0, scale: 0.8, y: 20 }}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          transition={{ duration: 0.8, ease: [0.34, 1.56, 0.64, 1] }}
+        >
+          <CenterOrb />
+        </motion.div>
+
+        <motion.div
+          className="flex flex-col items-center gap-3"
+          initial={{ opacity: 0, y: 24 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.65, delay: 0.3, ease: [0.22, 1, 0.36, 1] }}
+        >
+          <h1
+            className="m-0 font-['Sora',system-ui,sans-serif] font-black leading-tight tracking-tight text-slate-900"
+            style={{ fontSize: "clamp(1.7rem,4.5vw,2.8rem)" }}
+          >
+            {title}
+          </h1>
+          <p className="m-0 max-w-xs text-[15px] leading-relaxed text-slate-400">
+            {description}
+          </p>
+        </motion.div>
+
+        <motion.div
+          className="flex flex-col items-center gap-3"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.55, duration: 0.5 }}
+        >
+          <AnimatedProgressBar />
+
+          <div className="flex h-5 items-center gap-2">
+            <AnimatePresence mode="wait">
+              <motion.span
+                key={wordIndex}
+                className="text-[11px] font-semibold uppercase tracking-[0.14em] text-violet-400"
+                initial={{ opacity: 0, y: 5, filter: "blur(4px)" }}
+                animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+                exit={{ opacity: 0, y: -5, filter: "blur(4px)" }}
+                transition={{ duration: 0.3, ease: "easeOut" }}
+              >
+                {WORDS[wordIndex]}
+              </motion.span>
+            </AnimatePresence>
+
+            <div className="flex gap-[5px]">
+              {[0, 1, 2].map((i) => (
+                <motion.span
+                  key={i}
+                  className="block h-[5px] w-[5px] rounded-full bg-violet-300"
+                  animate={{ scale: [1, 1.8, 1], opacity: [0.3, 1, 0.3] }}
+                  transition={{ duration: 1, repeat: Infinity, delay: i * 0.18, ease: "easeInOut" }}
+                />
+              ))}
+            </div>
+          </div>
+        </motion.div>
+      </div>
+
+      <div
+        className="pointer-events-none absolute bottom-0 left-0 right-0 h-40"
+        style={{ background: "linear-gradient(to top, #ede9fe18, transparent)" }}
+      />
+    </div>
+  )
+}
+
+const LOADING_STEPS = [
+  { label: "Autenticando sessão", icon: "lock" },
+  { label: "Buscando permissões", icon: "shield" },
+  { label: "Carregando dados", icon: "database" },
+  { label: "Renderizando tela", icon: "layout" },
+]
+
+const SCAN_LINES = Array.from({ length: 6 }, (_, i) => i)
+
+function PulsingDot({ delay }: { delay: number }) {
+  return (
+    <motion.span
+      className="block h-[5px] w-[5px] rounded-full bg-indigo-400"
+      animate={{ scale: [1, 1.9, 1], opacity: [0.35, 1, 0.35] }}
+      transition={{ duration: 1.1, repeat: Infinity, delay, ease: "easeInOut" }}
+    />
+  )
+}
+
+function SegmentedRing() {
+  const segments = 8
+  return (
+    <svg width={96} height={96} viewBox="0 0 96 96" className="absolute">
+      {Array.from({ length: segments }, (_, i) => {
+        const angle = (360 / segments) * i
+        const rad = (angle * Math.PI) / 180
+        const r = 44
+        const cx = 48 + r * Math.cos(rad - Math.PI / 2)
+        const cy = 48 + r * Math.sin(rad - Math.PI / 2)
+        return (
+          <motion.circle
+            key={i}
+            cx={cx}
+            cy={cy}
+            r={3}
+            fill="#6366f1"
+            initial={{ opacity: 0.15 }}
+            animate={{ opacity: [0.15, 1, 0.15] }}
+            transition={{
+              duration: 1.4,
+              repeat: Infinity,
+              delay: (i / segments) * 1.4,
+              ease: "easeInOut",
+            }}
+          />
+        )
+      })}
+    </svg>
+  )
+}
+
+function CoreSpinner() {
+  return (
+    <div className="relative flex items-center justify-center" style={{ width: 96, height: 96 }}>
+      {/* Outer ring segmented */}
+      <SegmentedRing />
+
+      {/* Spinning arc */}
+      <motion.svg
+        width={80}
+        height={80}
+        viewBox="0 0 80 80"
+        className="absolute"
+        animate={{ rotate: 360 }}
+        transition={{ duration: 1.6, repeat: Infinity, ease: "linear" }}
+      >
+        <circle
+          cx="40" cy="40" r="36"
+          fill="none"
+          stroke="#6366f1"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          strokeDasharray="60 166"
+          strokeOpacity="0.9"
+        />
+      </motion.svg>
+
+      {/* Counter-spinning arc */}
+      <motion.svg
+        width={60}
+        height={60}
+        viewBox="0 0 60 60"
+        className="absolute"
+        animate={{ rotate: -360 }}
+        transition={{ duration: 2.2, repeat: Infinity, ease: "linear" }}
+      >
+        <circle
+          cx="30" cy="30" r="26"
+          fill="none"
+          stroke="#a5b4fc"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeDasharray="22 140"
+          strokeOpacity="0.6"
+        />
+      </motion.svg>
+
+      {/* Center core */}
+      <motion.div
+        className="absolute rounded-full bg-indigo-600"
+        style={{ width: 28, height: 28 }}
+        animate={{ scale: [1, 1.1, 1] }}
+        transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
+      >
+        {/* Gloss */}
+        <div
+          className="absolute rounded-full"
+          style={{
+            inset: 2,
+            background: "radial-gradient(circle at 35% 30%, rgba(255,255,255,0.35) 0%, transparent 65%)",
+          }}
+        />
+      </motion.div>
+
+      {/* Pulse ring */}
+      <motion.div
+        className="absolute rounded-full border border-indigo-400/30"
+        style={{ width: 42, height: 42 }}
+        animate={{ scale: [1, 1.5, 1], opacity: [0.5, 0, 0.5] }}
+        transition={{ duration: 2, repeat: Infinity, ease: "easeOut" }}
+      />
+    </div>
+  )
+}
+
+function StepRow({ step, index, activeIndex }: { step: typeof LOADING_STEPS[number]; index: number; activeIndex: number }) {
+  const state = index < activeIndex ? "done" : index === activeIndex ? "active" : "pending"
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, x: -12 }}
+      animate={{ opacity: 1, x: 0 }}
+      transition={{ delay: 0.3 + index * 0.08, duration: 0.4, ease: "easeOut" }}
+      className="flex items-center gap-3"
+    >
+      {/* Status indicator */}
+      <div className="relative flex h-5 w-5 flex-shrink-0 items-center justify-center">
+        <AnimatePresence mode="wait">
+          {state === "done" && (
+            <motion.svg
+              key="check"
+              width={16} height={16} viewBox="0 0 24 24"
+              fill="none" stroke="#22c55e" strokeWidth={2.5}
+              strokeLinecap="round" strokeLinejoin="round"
+              initial={{ scale: 0, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0, opacity: 0 }}
+              transition={{ duration: 0.25, ease: [0.34, 1.56, 0.64, 1] }}
+            >
+              <polyline points="20 6 9 17 4 12" />
+            </motion.svg>
+          )}
+          {state === "active" && (
+            <motion.span
+              key="dot"
+              className="block h-2 w-2 rounded-full bg-indigo-500"
+              initial={{ scale: 0 }}
+              animate={{ scale: [1, 1.5, 1] }}
+              transition={{ duration: 0.9, repeat: Infinity, ease: "easeInOut" }}
+            />
+          )}
+          {state === "pending" && (
+            <motion.span
+              key="idle"
+              className="block h-1.5 w-1.5 rounded-full bg-slate-300"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+            />
+          )}
+        </AnimatePresence>
+      </div>
+
+      {/* Label */}
+      <span
+        className="text-[13px] font-medium transition-colors duration-300"
+        style={{
+          color: state === "done" ? "#22c55e" : state === "active" ? "#4f46e5" : "#94a3b8",
+          fontFamily: "'DM Sans', sans-serif",
+        }}
+      >
+        {step.label}
+      </span>
+
+      {/* Active shimmer bar */}
+      {state === "active" && (
+        <motion.div
+          className="ml-auto h-[2px] w-12 overflow-hidden rounded-full bg-indigo-100"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+        >
+          <motion.div
+            className="h-full w-6 rounded-full bg-indigo-500"
+            animate={{ x: [-24, 48] }}
+            transition={{ duration: 1, repeat: Infinity, ease: "easeInOut" }}
+          />
+        </motion.div>
+      )}
+    </motion.div>
+  )
+}
+
+function ScanLine({ delay }: { delay: number }) {
+  return (
+    <motion.div
+      className="absolute left-0 right-0 h-px"
+      style={{ background: "linear-gradient(90deg, transparent, rgba(99,102,241,0.15), transparent)" }}
+      initial={{ top: "0%", opacity: 0 }}
+      animate={{ top: ["0%", "100%"], opacity: [0, 1, 0] }}
+      transition={{ duration: 3, repeat: Infinity, delay, ease: "linear" }}
+    />
+  )
+}
+
+export function ScreenLoadingState({ title, description }: { title: string; description: string }) {
+  const [activeStep, setActiveStep] = useState(0)
+  const [percentText, setPercentText] = useState(0)
+  const progressMotion = useMotionValue(0)
+  const widthPercent = useTransform(progressMotion, [0, 1], ["0%", "100%"])
+
+  useEffect(() => {
+    // Advance steps
+    const timings = [0, 600, 1400, 2400]
+    const timers = timings.map((t, i) =>
+      window.setTimeout(() => setActiveStep(i), t)
+    )
+    return () => timers.forEach(clearTimeout)
+  }, [])
+
+  useEffect(() => {
+    // Animate progress value
+    const ctrl = animate(progressMotion, 0.85, {
+      duration: 3.5,
+      ease: [0.22, 1, 0.36, 1],
+    })
+    return ctrl.stop
+  }, [])
+
+  useEffect(() => {
+    // Tick percentage display
+    const unsub = progressMotion.on("change", (v) => {
+      setPercentText(Math.round(v * 100))
+    })
+    return unsub
+  }, [])
+
+  return (
+    <div
+      className="relative flex min-h-[calc(100vh-80px)] flex-col items-center justify-center overflow-hidden p-6"
+      style={{ background: "transparent" }}
+    >
+      {/* Scan lines */}
+      {SCAN_LINES.map((i) => (
+        <ScanLine key={i} delay={i * 0.5} />
+      ))}
+
+      {/* Dot grid */}
+      <div
+        className="pointer-events-none absolute inset-0 opacity-[0.035]"
+        style={{
+          backgroundImage: "radial-gradient(circle, #6366f1 1px, transparent 1px)",
+          backgroundSize: "28px 28px",
+          maskImage: "radial-gradient(ellipse 65% 55% at 50% 50%, black 0%, transparent 100%)",
+        }}
+      />
+
+      {/* Content card */}
+      <motion.div
+        initial={{ opacity: 0, y: 20, scale: 0.97 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
+        className="relative z-10 flex w-full max-w-sm flex-col items-center gap-7"
+      >
+        {/* Spinner */}
+        <CoreSpinner />
+
+        {/* Text */}
+        <div className="flex flex-col items-center gap-2 text-center">
+          <h2
+            className="m-0 text-xl font-black tracking-tight text-slate-900"
+            style={{ fontFamily: "'Sora', system-ui, sans-serif", letterSpacing: "-0.025em" }}
+          >
+            {title}
+          </h2>
+          <p className="m-0 max-w-xs text-sm leading-relaxed text-slate-500">
+            {description}
+          </p>
+        </div>
+
+        {/* Steps list */}
+        <div
+          className="w-full rounded-2xl border border-slate-100 bg-white/80 p-4 shadow-sm backdrop-blur-sm"
+          style={{ display: "flex", flexDirection: "column", gap: 10 }}
+        >
+          {LOADING_STEPS.map((step, i) => (
+            <StepRow key={step.label} step={step} index={i} activeIndex={activeStep} />
+          ))}
+        </div>
+
+        {/* Progress bar + percent */}
+        <div className="flex w-full flex-col gap-2">
+          <div className="relative h-1 overflow-hidden rounded-full bg-slate-100">
+            <motion.div
+              className="absolute inset-y-0 left-0 rounded-full bg-indigo-600"
+              style={{ width: widthPercent }}
+            />
+            {/* Shimmer */}
+            <motion.div
+              className="absolute inset-y-0 w-12 rounded-full bg-white/50"
+              style={{ left: widthPercent }}
+              animate={{ opacity: [0, 1, 0] }}
+              transition={{ duration: 0.9, repeat: Infinity, ease: "easeOut" }}
+            />
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1.5">
+              <AnimatePresence mode="wait">
+                <motion.span
+                  key={activeStep}
+                  className="text-[11px] font-semibold uppercase tracking-[0.12em] text-indigo-500"
+                  initial={{ opacity: 0, y: 4, filter: "blur(3px)" }}
+                  animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+                  exit={{ opacity: 0, y: -4, filter: "blur(3px)" }}
+                  transition={{ duration: 0.25, ease: "easeOut" }}
+                >
+                  {LOADING_STEPS[Math.min(activeStep, LOADING_STEPS.length - 1)].label}
+                </motion.span>
+              </AnimatePresence>
+              <div className="flex gap-[4px]">
+                {[0, 1, 2].map((i) => (
+                  <PulsingDot key={i} delay={i * 0.2} />
+                ))}
+              </div>
+            </div>
+            <motion.span
+              className="text-[12px] font-bold tabular-nums text-slate-400"
+              style={{ fontFamily: "monospace" }}
+            >
+              {percentText}%
+            </motion.span>
+          </div>
+        </div>
+      </motion.div>
+    </div>
+  )
+}
+
+const GLITCH_CHARS = "!@#$%^&*<>[]{}|~"
+
+function GlitchText({ text }: { text: string }) {
+  const [displayed, setDisplayed] = useState(text)
+  const [isGlitching, setIsGlitching] = useState(false)
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setIsGlitching(true)
+      let frame = 0
+      const totalFrames = 10
+
+      const glitch = setInterval(() => {
+        frame++
+        setDisplayed(
+          text
+            .split("")
+            .map((char, i) => {
+              if (char === " ") return " "
+              if (frame > totalFrames - 3) return text[i]
+              return Math.random() > 0.75
+                ? GLITCH_CHARS[Math.floor(Math.random() * GLITCH_CHARS.length)]
+                : char
+            })
+            .join("")
+        )
+        if (frame >= totalFrames) {
+          clearInterval(glitch)
+          setDisplayed(text)
+          setIsGlitching(false)
+        }
+      }, 40)
+    }, 4000)
+
+    return () => clearInterval(interval)
+  }, [text])
+
+  return (
+    <span
+      style={{
+        fontFamily: "'Sora', system-ui, sans-serif",
+        letterSpacing: isGlitching ? "0.05em" : "normal",
+        transition: "letter-spacing 0.1s ease",
+      }}
+    >
+      {displayed}
+    </span>
+  )
+}
+
+const ERROR_CODE_CHARS = "0123456789ABCDEF"
+function randomHex(len = 8) {
+  return Array.from({ length: len }, () =>
+    ERROR_CODE_CHARS[Math.floor(Math.random() * ERROR_CODE_CHARS.length)]
+  ).join("")
+}
+
+function TerminalLine({ children, delay = 0 }: { children: React.ReactNode; delay?: number }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, x: -8 }}
+      animate={{ opacity: 1, x: 0 }}
+      transition={{ delay, duration: 0.3, ease: "easeOut" }}
+      style={{
+        fontFamily: "'DM Mono', 'Fira Mono', monospace",
+        fontSize: 11,
+        color: "#64748b",
+        lineHeight: "1.8",
+        display: "flex",
+        gap: 8,
+        alignItems: "center",
+      }}
+    >
+      {children}
+    </motion.div>
+  )
+}
+
+export function ScreenErrorState({
+  title,
+  description,
+  onRetry,
+}: {
+  title: string
+  description: string
+  onRetry: () => void
+}) {
+  const [isRetrying, setIsRetrying] = useState(false)
+  const [errorCode] = useState(() => randomHex(8))
+  const [timestamp] = useState(() => new Date().toISOString())
+  const [retryCount, setRetryCount] = useState(0)
+
+  async function handleRetry() {
+    setIsRetrying(true)
+    setRetryCount((c) => c + 1)
+    await new Promise((r) => setTimeout(r, 1200))
+    setIsRetrying(false)
+    onRetry()
+  }
+
+  return (
+    <div
+      style={{
+        minHeight: "calc(100vh - 80px)",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "3rem 1.5rem",
+        position: "relative",
+        overflow: "hidden",
+        background: "transparent",
+      }}
+    >
+      {/* Subtle grid background */}
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          backgroundImage: `
+            linear-gradient(rgba(99,102,241,0.04) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(99,102,241,0.04) 1px, transparent 1px)
+          `,
+          backgroundSize: "40px 40px",
+          maskImage: "radial-gradient(ellipse 70% 60% at 50% 50%, black 0%, transparent 100%)",
+          pointerEvents: "none",
+        }}
+      />
+
+      {/* Radial glow */}
+      <div
+        style={{
+          position: "absolute",
+          top: "50%",
+          left: "50%",
+          transform: "translate(-50%, -50%)",
+          width: 500,
+          height: 500,
+          borderRadius: "50%",
+          background: "radial-gradient(circle, rgba(239,68,68,0.06) 0%, transparent 70%)",
+          pointerEvents: "none",
+        }}
+      />
+
+      <div
+        style={{
+          position: "relative",
+          zIndex: 1,
+          width: "100%",
+          maxWidth: 440,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          gap: "2rem",
+        }}
+      >
+        {/* Icon area */}
+        <motion.div
+          initial={{ opacity: 0, scale: 0.7 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ duration: 0.5, ease: [0.34, 1.56, 0.64, 1] }}
+          style={{ position: "relative" }}
+        >
+          {/* Pulsing rings */}
+          {[0, 1].map((i) => (
+            <motion.div
+              key={i}
+              style={{
+                position: "absolute",
+                inset: -12 - i * 14,
+                borderRadius: "50%",
+                border: "1px solid rgba(239,68,68,0.2)",
+              }}
+              animate={{ scale: [1, 1.15, 1], opacity: [0.5, 0, 0.5] }}
+              transition={{
+                duration: 2.5,
+                repeat: Infinity,
+                delay: i * 0.7,
+                ease: "easeInOut",
+              }}
+            />
+          ))}
+
+          {/* Icon container */}
+          <div
+            style={{
+              width: 72,
+              height: 72,
+              borderRadius: "50%",
+              background: "rgba(239,68,68,0.08)",
+              border: "1px solid rgba(239,68,68,0.2)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              position: "relative",
+            }}
+          >
+            <motion.svg
+              width={32}
+              height={32}
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="rgba(239,68,68,0.8)"
+              strokeWidth={1.5}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              animate={{ rotate: [0, -3, 3, -2, 2, 0] }}
+              transition={{ duration: 0.5, repeat: Infinity, repeatDelay: 4 }}
+            >
+              <path d="M12 9v4M12 17h.01" />
+              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+            </motion.svg>
+
+            {/* Corner dot */}
+            <motion.div
+              style={{
+                position: "absolute",
+                top: 4,
+                right: 4,
+                width: 8,
+                height: 8,
+                borderRadius: "50%",
+                background: "rgb(239,68,68)",
+              }}
+              animate={{ opacity: [1, 0, 1] }}
+              transition={{ duration: 1.2, repeat: Infinity, ease: "easeInOut" }}
+            />
+          </div>
+        </motion.div>
+
+        {/* Text block */}
+        <motion.div
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, delay: 0.15, ease: [0.22, 1, 0.36, 1] }}
+          style={{ textAlign: "center", display: "flex", flexDirection: "column", gap: 10 }}
+        >
+          <h2
+            style={{
+              margin: 0,
+              fontSize: "clamp(1.25rem, 3vw, 1.6rem)",
+              fontWeight: 700,
+              fontFamily: "'Sora', system-ui, sans-serif",
+              color: "#0f172a",
+              letterSpacing: "-0.02em",
+            }}
+          >
+            <GlitchText text={title} />
+          </h2>
+          <p
+            style={{
+              margin: 0,
+              fontSize: 14,
+              lineHeight: 1.7,
+              color: "#64748b",
+              maxWidth: 360,
+            }}
+          >
+            {description}
+          </p>
+        </motion.div>
+
+        {/* Terminal diagnostic card */}
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, delay: 0.3, ease: [0.22, 1, 0.36, 1] }}
+          style={{
+            width: "100%",
+            background: "#f8fafc",
+            border: "1px solid #e2e8f0",
+            borderRadius: 12,
+            padding: "14px 16px",
+            display: "flex",
+            flexDirection: "column",
+            gap: 2,
+          }}
+        >
+          {/* Terminal header */}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              marginBottom: 10,
+              paddingBottom: 10,
+              borderBottom: "1px solid #e2e8f0",
+            }}
+          >
+            <div style={{ display: "flex", gap: 5 }}>
+              {["#f87171", "#facc15", "#4ade80"].map((c) => (
+                <div
+                  key={c}
+                  style={{ width: 8, height: 8, borderRadius: "50%", background: c, opacity: 0.7 }}
+                />
+              ))}
+            </div>
+            <span
+              style={{
+                fontFamily: "monospace",
+                fontSize: 10,
+                color: "#94a3b8",
+                marginLeft: 4,
+              }}
+            >
+              error.log
+            </span>
+          </div>
+
+          <TerminalLine delay={0.35}>
+            <span style={{ color: "#94a3b8" }}>$</span>
+            <span style={{ color: "#ef4444" }}>ERR</span>
+            <span style={{ color: "#475569" }}>code=0x{errorCode}</span>
+          </TerminalLine>
+          <TerminalLine delay={0.45}>
+            <span style={{ color: "#94a3b8" }}>$</span>
+            <span style={{ color: "#6366f1" }}>TS</span>
+            <span style={{ color: "#475569" }}>{timestamp.replace("T", " ").slice(0, 19)}</span>
+          </TerminalLine>
+          <TerminalLine delay={0.55}>
+            <span style={{ color: "#94a3b8" }}>$</span>
+            <span style={{ color: "#f59e0b" }}>RETRY</span>
+            <span style={{ color: "#475569" }}>attempts={retryCount}</span>
+          </TerminalLine>
+
+          <motion.div
+            animate={{ opacity: [1, 0, 1] }}
+            transition={{ duration: 1, repeat: Infinity }}
+            style={{
+              fontFamily: "monospace",
+              fontSize: 11,
+              color: "#94a3b8",
+              marginTop: 2,
+              display: "flex",
+              alignItems: "center",
+              gap: 4,
+            }}
+          >
+            <span>$</span>
+            <span
+              style={{
+                display: "inline-block",
+                width: 7,
+                height: 13,
+                background: "#94a3b8",
+                borderRadius: 1,
+              }}
+            />
+          </motion.div>
+        </motion.div>
+
+        {/* CTA */}
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.45, delay: 0.5 }}
+          style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}
+        >
+          <motion.button
+            type="button"
+            onClick={handleRetry}
+            disabled={isRetrying}
+            whileHover={{ scale: isRetrying ? 1 : 1.03 }}
+            whileTap={{ scale: isRetrying ? 1 : 0.97 }}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
+              minHeight: 44,
+              padding: "0 24px",
+              borderRadius: 10,
+              background: isRetrying
+                ? "rgba(99,102,241,0.08)"
+                : "rgba(99,102,241,1)",
+              border: isRetrying
+                ? "1px solid rgba(99,102,241,0.2)"
+                : "1px solid transparent",
+              color: isRetrying ? "rgba(99,102,241,0.8)" : "#fff",
+              fontSize: 14,
+              fontWeight: 600,
+              cursor: isRetrying ? "not-allowed" : "pointer",
+              transition: "all 0.2s ease",
+              fontFamily: "'DM Sans', sans-serif",
+              letterSpacing: "0.01em",
+              minWidth: 180,
+            }}
+          >
+            <AnimatePresence mode="wait">
+              {isRetrying ? (
+                <motion.span
+                  key="loading"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  style={{ display: "flex", alignItems: "center", gap: 8 }}
+                >
+                  <motion.span
+                    style={{
+                      display: "inline-block",
+                      width: 14,
+                      height: 14,
+                      border: "2px solid rgba(99,102,241,0.3)",
+                      borderTopColor: "rgba(99,102,241,0.8)",
+                      borderRadius: "50%",
+                    }}
+                    animate={{ rotate: 360 }}
+                    transition={{ duration: 0.8, repeat: Infinity, ease: "linear" }}
+                  />
+                  Reconectando…
+                </motion.span>
+              ) : (
+                <motion.span
+                  key="idle"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  style={{ display: "flex", alignItems: "center", gap: 6 }}
+                >
+                  <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="23 4 23 10 17 10" />
+                    <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+                  </svg>
+                  Tentar novamente
+                </motion.span>
+              )}
+            </AnimatePresence>
+          </motion.button>
+
+          <p style={{ margin: 0, fontSize: 12, color: "#94a3b8" }}>
+            Se o problema persistir, atualize a página.
+          </p>
+        </motion.div>
+      </div>
     </div>
   )
 }

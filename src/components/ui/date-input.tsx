@@ -11,8 +11,8 @@ import {
   type ReactNode,
 } from 'react'
 import { createPortal } from 'react-dom'
+import { motion, AnimatePresence } from 'motion/react'
 import { CalendarDays, ChevronLeft, ChevronRight, X } from 'lucide-react'
-
 import { cn } from '../../lib/cn'
 import { FieldMessage } from './form-field'
 
@@ -27,7 +27,7 @@ type DateInputProps = Omit<InputHTMLAttributes<HTMLInputElement>, 'type'> & {
   errorClassName?: string
 }
 
-const WEEKDAY_LABELS = ['S', 'T', 'Q', 'Q', 'S', 'S', 'D'] as const
+const WEEKDAY_LABELS = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'] as const
 const MONTH_LABELS = [
   'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
   'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro',
@@ -40,9 +40,6 @@ const MIN_CALENDAR_YEAR = 1900
 const MAX_CALENDAR_YEAR = new Date().getFullYear()
 const DEFAULT_MIN_DATE = `${MIN_CALENDAR_YEAR}-01-01`
 const DEFAULT_MAX_DATE = `${MAX_CALENDAR_YEAR}-12-31`
-
-export const dateInputClassName =
-  'min-h-10 w-full min-w-0 rounded-sm border border-slate-300 bg-slate-50 px-3 text-sm font-medium text-slate-900 outline-none transition-all [color-scheme:light] placeholder:text-slate-400 focus:border-indigo-500 focus:bg-white focus:ring-3 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:opacity-60'
 
 type CalView = 'days' | 'months' | 'years'
 
@@ -72,7 +69,7 @@ export const DateInput = forwardRef<HTMLInputElement, DateInputProps>(function D
   const fallbackId = useId()
   const inputId = id ?? `date-input-${fallbackId}`
   const triggerRef = useRef<HTMLDivElement | null>(null)
-  const panelRef   = useRef<HTMLDivElement | null>(null)
+  const panelRef = useRef<HTMLDivElement | null>(null)
 
   const selectedDate = useMemo(() => parseDateValue(String(value ?? '')), [value])
   const minDate = useMemo(() => {
@@ -87,23 +84,24 @@ export const DateInput = forwardRef<HTMLInputElement, DateInputProps>(function D
   }, [max])
 
   const [open, setOpen] = useState(false)
-  const [visibleMonth, setVisibleMonth] = useState(() => getMonthStart(clampDate(selectedDate ?? new Date(), minDate, maxDate)))
-  const [view, setView]   = useState<CalView>('days')
+  const [visibleMonth, setVisibleMonth] = useState(() =>
+    getMonthStart(clampDate(selectedDate ?? new Date(), minDate, maxDate))
+  )
+  const [view, setView] = useState<CalView>('days')
   const [yearRangeStart, setYearRangeStart] = useState(() =>
-    getYearRangeStart(clampDate(selectedDate ?? new Date(), minDate, maxDate).getFullYear()),
+    getYearRangeStart(clampDate(selectedDate ?? new Date(), minDate, maxDate).getFullYear())
   )
   const [panelStyle, setPanelStyle] = useState<CSSProperties>({})
+  const [hoveredDay, setHoveredDay] = useState<string | null>(null)
 
-  /* Sync visible month when value changes externally */
   useEffect(() => {
     if (selectedDate) {
-      const clampedDate = clampDate(selectedDate, minDate, maxDate)
-      setVisibleMonth(getMonthStart(clampedDate))
-      setYearRangeStart(getYearRangeStart(clampedDate.getFullYear()))
+      const clamped = clampDate(selectedDate, minDate, maxDate)
+      setVisibleMonth(getMonthStart(clamped))
+      setYearRangeStart(getYearRangeStart(clamped.getFullYear()))
     }
   }, [maxDate, minDate, selectedDate])
 
-  /* Close on outside click / Escape */
   useEffect(() => {
     if (!open) { setView('days'); return undefined }
 
@@ -122,7 +120,6 @@ export const DateInput = forwardRef<HTMLInputElement, DateInputProps>(function D
     }
   }, [open])
 
-  /* Recalculate panel position anchored to the trigger — width matches trigger */
   useEffect(() => {
     if (!open) return undefined
 
@@ -130,12 +127,19 @@ export const DateInput = forwardRef<HTMLInputElement, DateInputProps>(function D
       const el = triggerRef.current
       if (!el) return
       const r = el.getBoundingClientRect()
+      const panelHeight = 380
+      const spaceBelow = window.innerHeight - r.bottom
+      const top = spaceBelow >= panelHeight + 8
+        ? r.bottom + 6
+        : r.top - panelHeight - 6
 
-      const top  = r.bottom + 4
-      const left = r.left
-
-      // Use the trigger's own width so the calendar always matches the input
-      setPanelStyle({ position: 'fixed', top, left, width: r.width, zIndex: 99999 })
+      setPanelStyle({
+        position: 'fixed',
+        top,
+        left: r.left,
+        width: Math.max(r.width, 300),
+        zIndex: 99999,
+      })
     }
 
     reposition()
@@ -149,7 +153,6 @@ export const DateInput = forwardRef<HTMLInputElement, DateInputProps>(function D
 
   const calendarDays = useMemo(() => buildCalendarDays(visibleMonth), [visibleMonth])
   const today = new Date()
-  const FieldIcon = icon ?? <CalendarDays size={14} />
 
   function emitChange(nextValue: string) {
     onChange?.({
@@ -165,23 +168,22 @@ export const DateInput = forwardRef<HTMLInputElement, DateInputProps>(function D
     setOpen(false)
   }
 
-  const hasValue     = !!selectedDate
-  const displayDay   = selectedDate ? String(selectedDate.getDate()).padStart(2, '0') : null
-  const displayMonth = selectedDate ? MONTH_SHORT[selectedDate.getMonth()] : null
-  const displayYear  = selectedDate ? String(selectedDate.getFullYear()) : null
+  const hasValue = !!selectedDate
+  const displayDay = selectedDate ? String(selectedDate.getDate()).padStart(2, '0') : null
+  const displayMonth = selectedDate ? MONTH_LABELS[selectedDate.getMonth()] : null
+  const displayYear = selectedDate ? String(selectedDate.getFullYear()) : null
 
-  /* ─────────────── render ─────────────── */
+  const viewLabel =
+    view === 'years'
+      ? `${yearRangeStart} – ${yearRangeStart + 11}`
+      : view === 'months'
+        ? String(visibleMonth.getFullYear())
+        : `${MONTH_LABELS[visibleMonth.getMonth()]} ${visibleMonth.getFullYear()}`
+
   const control = (
     <div ref={triggerRef} className="relative min-w-0">
-      <style>{`
-        @keyframes di-drop {
-          from { opacity:0; transform:translateY(-4px) scaleY(0.97); }
-          to   { opacity:1; transform:translateY(0)    scaleY(1);    }
-        }
-        .di-panel { animation: di-drop 0.13s cubic-bezier(0.22,1,0.36,1) both; transform-origin: top; }
-      `}</style>
 
-      {/* Hidden native input for form compatibility */}
+      {/* Hidden native input */}
       <input
         ref={ref}
         id={inputId}
@@ -196,244 +198,366 @@ export const DateInput = forwardRef<HTMLInputElement, DateInputProps>(function D
         {...props}
       />
 
-      {/* ── Trigger button ── */}
+      {/* ── Trigger ── */}
       <button
         type="button"
         disabled={disabled}
         onClick={() => { if (!disabled && !readOnly) setOpen((v) => !v) }}
         className={cn(
-          'group flex min-h-10 w-full items-center gap-2 rounded-sm border bg-slate-50 px-3 text-left outline-none transition-all',
-          'border-slate-300 hover:border-slate-400 hover:bg-white',
-          open  && 'border-indigo-500 bg-white ring-3 ring-indigo-100',
-          error && 'border-red-400 bg-red-50',
-          disabled && 'cursor-not-allowed opacity-60',
+          'group relative flex min-h-11 w-full items-center gap-2.5 rounded-xl border px-3.5 text-left outline-none transition-all duration-200',
+          'border-slate-200 bg-white shadow-sm hover:border-indigo-300 hover:shadow-md',
+          open && 'border-indigo-500 shadow-[0_0_0_3px_rgba(99,102,241,0.12)]',
+          error && 'border-red-400 bg-red-50/50',
+          disabled && 'cursor-not-allowed opacity-55',
           className,
         )}
         aria-haspopup="dialog"
         aria-expanded={open}
       >
-        <span className={cn('shrink-0 transition-colors', open ? 'text-indigo-500' : 'text-slate-400')}>
-          {FieldIcon}
+        {/* Icon */}
+        <span
+          className={cn(
+            'flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg transition-all duration-200',
+            open ? 'bg-indigo-100 text-indigo-600' : 'bg-slate-100 text-slate-400 group-hover:bg-indigo-50 group-hover:text-indigo-500',
+            error && 'bg-red-100 text-red-400',
+          )}
+        >
+          {icon ?? <CalendarDays size={14} />}
         </span>
 
-        {hasValue ? (
-          <span className="flex min-w-0 flex-1 items-baseline gap-1">
-            <span className="font-['Sora',system-ui,sans-serif] text-base font-black leading-none tabular-nums text-slate-900">
-              {displayDay}
-            </span>
-            <span className="text-[12px] font-bold text-indigo-600">{displayMonth}</span>
-            <span className="text-[12px] font-semibold text-slate-400">{displayYear}</span>
-          </span>
-        ) : (
-          <span className="flex-1 text-sm font-medium text-slate-400">{placeholder}</span>
-        )}
+        {/* Value / placeholder */}
+        <span className="flex min-w-0 flex-1 items-center gap-0">
+          {hasValue ? (
+            <motion.span
+              key={String(value)}
+              initial={{ opacity: 0, y: 4 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.2, ease: 'easeOut' }}
+              className="flex items-baseline gap-1.5"
+            >
+              <span
+                className="text-[22px] font-black leading-none tabular-nums text-slate-900"
+                style={{ fontFamily: "'Sora', system-ui, sans-serif", letterSpacing: '-0.04em' }}
+              >
+                {displayDay}
+              </span>
+              <span className="text-sm font-bold text-indigo-600">{displayMonth}</span>
+              <span className="text-sm font-semibold text-slate-400">{displayYear}</span>
+            </motion.span>
+          ) : (
+            <span className="text-sm font-medium text-slate-400">{placeholder}</span>
+          )}
+        </span>
 
-        {hasValue && !disabled && !readOnly && (
-          <span
-            role="button"
-            tabIndex={-1}
-            onClick={(e) => { e.stopPropagation(); emitChange('') }}
-            className="ml-auto flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-slate-300 opacity-0 transition-all hover:text-red-400 group-hover:opacity-100"
-            aria-label="Limpar"
-          >
-            <X size={10} />
-          </span>
-        )}
+        {/* Clear */}
+        <AnimatePresence>
+          {hasValue && !disabled && !readOnly && (
+            <motion.span
+              initial={{ opacity: 0, scale: 0.7 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.7 }}
+              transition={{ duration: 0.15 }}
+              role="button"
+              tabIndex={-1}
+              onClick={(e) => { e.stopPropagation(); emitChange('') }}
+              className="ml-auto flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full text-slate-300 transition-colors hover:bg-red-50 hover:text-red-400"
+              aria-label="Limpar"
+            >
+              <X size={12} />
+            </motion.span>
+          )}
+        </AnimatePresence>
+
+        {/* Active indicator line */}
+        <motion.span
+          className="pointer-events-none absolute bottom-0 left-3 right-3 h-[2px] rounded-full bg-indigo-500"
+          initial={false}
+          animate={{ scaleX: open ? 1 : 0, opacity: open ? 1 : 0 }}
+          transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+          style={{ transformOrigin: 'left' }}
+        />
       </button>
 
-      {/* ── Calendar panel — rendered in <body> via portal to escape overflow:hidden ── */}
+      {/* ── Calendar panel ── */}
       {typeof document !== 'undefined' && createPortal(
-        open ? (
-          <div
-            ref={panelRef}
-            role="dialog"
-            aria-label="Selecionar data"
-            style={panelStyle}
-            className="di-panel overflow-hidden rounded-lg border border-slate-200 bg-white shadow-[0_8px_28px_rgba(15,23,42,0.14)]"
-          >
-            {/* Header */}
-            <div className="flex items-center gap-1.5 bg-indigo-600 px-2.5 py-1.5">
-              <button
-                type="button"
-                onClick={() => {
-                  if (view === 'days') setVisibleMonth((m) => clampMonth(shiftMonth(m, -1), minDate, maxDate))
-                  if (view === 'months') setVisibleMonth((m) => clampMonth(new Date(m.getFullYear() - 1, m.getMonth(), 1), minDate, maxDate))
-                  if (view === 'years') setYearRangeStart((y) => Math.max(MIN_CALENDAR_YEAR, y - 12))
-                }}
-                disabled={
-                  (view === 'days' && !canGoToPreviousMonth(visibleMonth, minDate)) ||
-                  (view === 'months' && visibleMonth.getFullYear() <= MIN_CALENDAR_YEAR) ||
-                  (view === 'years' && yearRangeStart <= MIN_CALENDAR_YEAR)
-                }
-                className="grid h-6 w-6 shrink-0 place-items-center rounded text-white/60 transition hover:bg-white/15 hover:text-white disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-white/60"
-                aria-label="Periodo anterior"
-              >
-                <ChevronLeft size={12} />
-              </button>
+        <AnimatePresence>
+          {open && (
+            <motion.div
+              ref={panelRef}
+              role="dialog"
+              aria-label="Selecionar data"
+              style={panelStyle}
+              initial={{ opacity: 0, y: -8, scale: 0.975 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -6, scale: 0.975 }}
+              transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+              className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-[0_20px_60px_rgba(15,23,42,0.14),0_4px_16px_rgba(15,23,42,0.08)]"
+            >
 
-              <button
-                type="button"
-                onClick={() => setView((v) => v === 'days' ? 'months' : v === 'months' ? 'years' : 'days')}
-                className="flex-1 text-center text-[11px] font-black text-white hover:text-indigo-200 transition"
-              >
-                {view === 'years'  ? `${yearRangeStart} – ${yearRangeStart + 11}`
-                  : view === 'months' ? String(visibleMonth.getFullYear())
-                  : `${MONTH_LABELS[visibleMonth.getMonth()]} ${visibleMonth.getFullYear()}`}
-              </button>
+              {/* ── Header ── */}
+              <div className="relative overflow-hidden bg-indigo-600 px-4 py-3">
+                {/* Decorative rings */}
+                <div className="pointer-events-none absolute -right-6 -top-6 h-24 w-24 rounded-full border border-white/10" />
+                <div className="pointer-events-none absolute -right-2 -top-2 h-14 w-14 rounded-full border border-white/8" />
 
-              <button
-                type="button"
-                onClick={() => {
-                  if (view === 'days') setVisibleMonth((m) => clampMonth(shiftMonth(m, 1), minDate, maxDate))
-                  if (view === 'months') setVisibleMonth((m) => clampMonth(new Date(m.getFullYear() + 1, m.getMonth(), 1), minDate, maxDate))
-                  if (view === 'years') setYearRangeStart((y) => Math.min(MAX_CALENDAR_YEAR - 11, y + 12))
-                }}
-                disabled={
-                  (view === 'days' && !canGoToNextMonth(visibleMonth, maxDate)) ||
-                  (view === 'months' && visibleMonth.getFullYear() >= MAX_CALENDAR_YEAR) ||
-                  (view === 'years' && yearRangeStart + 11 >= MAX_CALENDAR_YEAR)
-                }
-                className="grid h-6 w-6 shrink-0 place-items-center rounded text-white/60 transition hover:bg-white/15 hover:text-white disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-white/60"
-                aria-label="Proximo periodo"
-              >
-                <ChevronRight size={12} />
-              </button>
-            </div>
+                <div className="relative flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (view === 'days') setVisibleMonth((m) => clampMonth(shiftMonth(m, -1), minDate, maxDate))
+                      if (view === 'months') setVisibleMonth((m) => clampMonth(new Date(m.getFullYear() - 1, m.getMonth(), 1), minDate, maxDate))
+                      if (view === 'years') setYearRangeStart((y) => Math.max(MIN_CALENDAR_YEAR, y - 12))
+                    }}
+                    disabled={
+                      (view === 'days' && !canGoToPreviousMonth(visibleMonth, minDate)) ||
+                      (view === 'months' && visibleMonth.getFullYear() <= MIN_CALENDAR_YEAR) ||
+                      (view === 'years' && yearRangeStart <= MIN_CALENDAR_YEAR)
+                    }
+                    className="grid h-7 w-7 flex-shrink-0 place-items-center rounded-lg text-white/70 transition hover:bg-white/15 hover:text-white disabled:cursor-not-allowed disabled:opacity-30"
+                    aria-label="Período anterior"
+                  >
+                    <ChevronLeft size={14} />
+                  </button>
 
-            <div className="p-2">
-
-              {/* ═══ DAYS ═══ */}
-              {view === 'days' && (
-                <>
-                  {/* Weekday headers */}
-                  <div className="mb-0.5 grid grid-cols-7">
-                    {WEEKDAY_LABELS.map((wd, i) => (
-                      <div
-                        key={i}
-                        className={cn(
-                          'py-1 text-center text-[9px] font-black uppercase tracking-widest',
-                          i >= 5 ? 'text-violet-300' : 'text-slate-300',
-                        )}
+                  <button
+                    type="button"
+                    onClick={() => setView((v) => v === 'days' ? 'months' : v === 'months' ? 'years' : 'days')}
+                    className="flex-1 text-center"
+                  >
+                    <AnimatePresence mode="wait">
+                      <motion.span
+                        key={viewLabel}
+                        initial={{ opacity: 0, y: 6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -6 }}
+                        transition={{ duration: 0.18, ease: 'easeOut' }}
+                        className="block text-[13px] font-black tracking-tight text-white hover:text-indigo-200 transition-colors"
                       >
-                        {wd}
-                      </div>
-                    ))}
-                  </div>
+                        {viewLabel}
+                      </motion.span>
+                    </AnimatePresence>
+                  </button>
 
-                  {/* Day grid */}
-                  <div className="grid grid-cols-7 gap-px">
-                    {calendarDays.map((day) => {
-                      const isSelected = selectedDate ? isSameDay(day, selectedDate) : false
-                      const isToday    = isSameDay(day, today)
-                      const isCurMonth = day.getMonth() === visibleMonth.getMonth()
-                      const isDisabled = isDateDisabled(day, minDate, maxDate)
-                      const isWeekend  = day.getDay() === 0 || day.getDay() === 6
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (view === 'days') setVisibleMonth((m) => clampMonth(shiftMonth(m, 1), minDate, maxDate))
+                      if (view === 'months') setVisibleMonth((m) => clampMonth(new Date(m.getFullYear() + 1, m.getMonth(), 1), minDate, maxDate))
+                      if (view === 'years') setYearRangeStart((y) => Math.min(MAX_CALENDAR_YEAR - 11, y + 12))
+                    }}
+                    disabled={
+                      (view === 'days' && !canGoToNextMonth(visibleMonth, maxDate)) ||
+                      (view === 'months' && visibleMonth.getFullYear() >= MAX_CALENDAR_YEAR) ||
+                      (view === 'years' && yearRangeStart + 11 >= MAX_CALENDAR_YEAR)
+                    }
+                    className="grid h-7 w-7 flex-shrink-0 place-items-center rounded-lg text-white/70 transition hover:bg-white/15 hover:text-white disabled:cursor-not-allowed disabled:opacity-30"
+                    aria-label="Próximo período"
+                  >
+                    <ChevronRight size={14} />
+                  </button>
+                </div>
 
-                      return (
-                        <button
-                          key={formatDateValue(day)}
-                          type="button"
-                          disabled={isDisabled}
-                          onClick={() => selectDate(day)}
-                          className={cn(
-                            'relative grid h-7 w-full place-items-center rounded text-[11px] font-bold transition-all disabled:cursor-not-allowed disabled:opacity-25',
-                            isSelected
-                              ? 'bg-indigo-600 text-white'
-                              : isToday
-                                ? 'bg-indigo-50 text-indigo-700 ring-1 ring-inset ring-indigo-300'
-                                : isCurMonth
-                                  ? isWeekend
-                                    ? 'text-violet-500 hover:bg-violet-50'
-                                    : 'text-slate-700 hover:bg-indigo-50 hover:text-indigo-700'
-                                  : 'text-slate-300 hover:bg-slate-50',
-                          )}
-                        >
-                          {day.getDate()}
-                        </button>
-                      )
-                    })}
-                  </div>
-
-                  {/* Footer */}
-                  <div className="mt-2 flex items-center gap-1.5 border-t border-slate-100 pt-2">
-                    <button
-                      type="button"
-                      onClick={() => selectDate(today)}
-                      disabled={isDateDisabled(today, minDate, maxDate)}
-                      className="rounded border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[10px] font-black uppercase tracking-widest text-indigo-700 transition hover:bg-indigo-100 disabled:opacity-40"
+                {/* Selected date pill */}
+                <AnimatePresence>
+                  {selectedDate && view === 'days' && (
+                    <motion.div
+                      initial={{ opacity: 0, height: 0, marginTop: 0 }}
+                      animate={{ opacity: 1, height: 'auto', marginTop: 10 }}
+                      exit={{ opacity: 0, height: 0, marginTop: 0 }}
+                      transition={{ duration: 0.2, ease: 'easeOut' }}
+                      className="overflow-hidden"
                     >
-                      Hoje
-                    </button>
-                    {selectedDate && (
-                      <span className="ml-auto text-[10px] font-semibold text-slate-400">
-                        {String(selectedDate.getDate()).padStart(2, '0')}/{String(selectedDate.getMonth() + 1).padStart(2, '0')}/{selectedDate.getFullYear()}
-                      </span>
-                    )}
-                  </div>
-                </>
-              )}
+                      <div className="flex items-center gap-2 rounded-lg bg-white/15 px-3 py-1.5">
+                        <span className="text-[10px] font-bold uppercase tracking-widest text-white/60">Selecionado</span>
+                        <span className="ml-auto text-[13px] font-black text-white">
+                          {String(selectedDate.getDate()).padStart(2, '0')}/{String(selectedDate.getMonth() + 1).padStart(2, '0')}/{selectedDate.getFullYear()}
+                        </span>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
 
-              {/* ═══ MONTHS ═══ */}
-              {view === 'months' && (
-                <div className="grid grid-cols-3 gap-1">
-                  {MONTH_SHORT.map((m, i) => {
-                    const isSelected = selectedDate &&
-                      selectedDate.getFullYear() === visibleMonth.getFullYear() &&
-                      selectedDate.getMonth() === i
-                    const isCurrent = today.getFullYear() === visibleMonth.getFullYear() && today.getMonth() === i
-                    return (
-                      <button
-                        key={m}
-                        type="button"
-                        disabled={isMonthDisabled(visibleMonth.getFullYear(), i, minDate, maxDate)}
-                        onClick={() => { setVisibleMonth(clampMonth(new Date(visibleMonth.getFullYear(), i, 1), minDate, maxDate)); setView('days') }}
-                        className={cn(
-                          'rounded border py-1.5 text-[11px] font-bold transition-all disabled:cursor-not-allowed disabled:opacity-35',
-                          isSelected
-                            ? 'border-indigo-600 bg-indigo-600 text-white'
-                            : isCurrent
-                              ? 'border-indigo-200 bg-indigo-50 text-indigo-700'
-                              : 'border-slate-100 bg-slate-50 text-slate-600 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700',
-                        )}
-                      >
-                        {m}
-                      </button>
-                    )
-                  })}
-                </div>
-              )}
+              {/* ── Body ── */}
+              <div className="p-3">
+                <AnimatePresence mode="wait">
 
-              {/* ═══ YEARS ═══ */}
-              {view === 'years' && (
-                <div className="grid grid-cols-3 gap-1">
-                  {Array.from({ length: 12 }, (_, i) => yearRangeStart + i).map((yr) => {
-                    const isSelected = selectedDate && selectedDate.getFullYear() === yr
-                    const isCurrent  = today.getFullYear() === yr
-                    const isDisabled = yr < MIN_CALENDAR_YEAR || yr > MAX_CALENDAR_YEAR
-                    return (
-                      <button
-                        key={yr}
-                        type="button"
-                        disabled={isDisabled}
-                        onClick={() => { setVisibleMonth(clampMonth(new Date(yr, visibleMonth.getMonth(), 1), minDate, maxDate)); setView('months') }}
-                        className={cn(
-                          'rounded border py-1.5 text-[11px] font-bold transition-all disabled:cursor-not-allowed disabled:opacity-35',
-                          isSelected
-                            ? 'border-indigo-600 bg-indigo-600 text-white'
-                            : isCurrent
-                              ? 'border-indigo-200 bg-indigo-50 text-indigo-700'
-                              : 'border-slate-100 bg-slate-50 text-slate-600 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700',
+                  {/* DAYS */}
+                  {view === 'days' && (
+                    <motion.div
+                      key="days"
+                      initial={{ opacity: 0, x: -12 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0, x: 12 }}
+                      transition={{ duration: 0.18, ease: 'easeOut' }}
+                    >
+                      {/* Weekday headers */}
+                      <div className="mb-1 grid grid-cols-7">
+                        {WEEKDAY_LABELS.map((wd, i) => (
+                          <div
+                            key={i}
+                            className={cn(
+                              'py-1 text-center text-[9px] font-black uppercase tracking-[0.12em]',
+                              i >= 5 ? 'text-violet-400' : 'text-slate-300',
+                            )}
+                          >
+                            {wd.slice(0, 1)}
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Day grid */}
+                      <div className="grid grid-cols-7 gap-0.5">
+                        {calendarDays.map((day) => {
+                          const key = formatDateValue(day)
+                          const isSelected = selectedDate ? isSameDay(day, selectedDate) : false
+                          const isToday = isSameDay(day, today)
+                          const isCurMonth = day.getMonth() === visibleMonth.getMonth()
+                          const isDisabled = isDateDisabled(day, minDate, maxDate)
+                          const isWeekend = day.getDay() === 0 || day.getDay() === 6
+                          const isHovered = hoveredDay === key
+
+                          return (
+                            <button
+                              key={key}
+                              type="button"
+                              disabled={isDisabled}
+                              onClick={() => selectDate(day)}
+                              onMouseEnter={() => !isDisabled && setHoveredDay(key)}
+                              onMouseLeave={() => setHoveredDay(null)}
+                              className={cn(
+                                'relative flex h-8 w-full flex-col items-center justify-center rounded-lg text-[11px] font-bold transition-all duration-150 disabled:cursor-not-allowed disabled:opacity-20',
+                                isSelected
+                                  ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200'
+                                  : isToday
+                                    ? 'bg-indigo-50 text-indigo-700 ring-1 ring-inset ring-indigo-200'
+                                    : isCurMonth
+                                      ? isWeekend
+                                        ? 'text-violet-500 hover:bg-violet-50'
+                                        : 'text-slate-700 hover:bg-indigo-50 hover:text-indigo-700'
+                                      : 'text-slate-300 hover:bg-slate-50 hover:text-slate-500',
+                              )}
+                            >
+                              {day.getDate()}
+                              {isToday && !isSelected && (
+                                <span className="absolute bottom-1 left-1/2 h-[3px] w-[3px] -translate-x-1/2 rounded-full bg-indigo-400" />
+                              )}
+                            </button>
+                          )
+                        })}
+                      </div>
+
+                      {/* Footer */}
+                      <div className="mt-3 flex items-center gap-2 border-t border-slate-100 pt-2.5">
+                        <button
+                          type="button"
+                          onClick={() => selectDate(today)}
+                          disabled={isDateDisabled(today, minDate, maxDate)}
+                          className="flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-[10px] font-black uppercase tracking-widest text-indigo-700 transition hover:bg-indigo-100 disabled:opacity-40"
+                        >
+                          <span className="h-1.5 w-1.5 rounded-full bg-indigo-400" />
+                          Hoje
+                        </button>
+                        {selectedDate && (
+                          <button
+                            type="button"
+                            onClick={() => emitChange('')}
+                            className="ml-auto text-[10px] font-semibold text-slate-300 transition hover:text-red-400"
+                          >
+                            Limpar
+                          </button>
                         )}
-                      >
-                        {yr}
-                      </button>
-                    )
-                  })}
-                </div>
-              )}
-            </div>
-          </div>
-        ) : null,
+                      </div>
+                    </motion.div>
+                  )}
+
+                  {/* MONTHS */}
+                  {view === 'months' && (
+                    <motion.div
+                      key="months"
+                      initial={{ opacity: 0, x: -12 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0, x: 12 }}
+                      transition={{ duration: 0.18, ease: 'easeOut' }}
+                      className="grid grid-cols-3 gap-1.5"
+                    >
+                      {MONTH_SHORT.map((m, i) => {
+                        const isSelected = selectedDate &&
+                          selectedDate.getFullYear() === visibleMonth.getFullYear() &&
+                          selectedDate.getMonth() === i
+                        const isCurrent = today.getFullYear() === visibleMonth.getFullYear() && today.getMonth() === i
+                        const isDisabled = isMonthDisabled(visibleMonth.getFullYear(), i, minDate, maxDate)
+
+                        return (
+                          <button
+                            key={m}
+                            type="button"
+                            disabled={isDisabled}
+                            onClick={() => {
+                              setVisibleMonth(clampMonth(new Date(visibleMonth.getFullYear(), i, 1), minDate, maxDate))
+                              setView('days')
+                            }}
+                            className={cn(
+                              'rounded-xl border py-2.5 text-[12px] font-bold transition-all disabled:cursor-not-allowed disabled:opacity-35',
+                              isSelected
+                                ? 'border-indigo-600 bg-indigo-600 text-white shadow-md shadow-indigo-200'
+                                : isCurrent
+                                  ? 'border-indigo-200 bg-indigo-50 text-indigo-700'
+                                  : 'border-slate-100 bg-slate-50 text-slate-600 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700',
+                            )}
+                          >
+                            {m}
+                          </button>
+                        )
+                      })}
+                    </motion.div>
+                  )}
+
+                  {/* YEARS */}
+                  {view === 'years' && (
+                    <motion.div
+                      key="years"
+                      initial={{ opacity: 0, x: -12 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0, x: 12 }}
+                      transition={{ duration: 0.18, ease: 'easeOut' }}
+                      className="grid grid-cols-3 gap-1.5"
+                    >
+                      {Array.from({ length: 12 }, (_, i) => yearRangeStart + i).map((yr) => {
+                        const isSelected = selectedDate && selectedDate.getFullYear() === yr
+                        const isCurrent = today.getFullYear() === yr
+                        const isDisabled = yr < MIN_CALENDAR_YEAR || yr > MAX_CALENDAR_YEAR
+
+                        return (
+                          <button
+                            key={yr}
+                            type="button"
+                            disabled={isDisabled}
+                            onClick={() => {
+                              setVisibleMonth(clampMonth(new Date(yr, visibleMonth.getMonth(), 1), minDate, maxDate))
+                              setView('months')
+                            }}
+                            className={cn(
+                              'rounded-xl border py-2.5 text-[12px] font-bold transition-all disabled:cursor-not-allowed disabled:opacity-35',
+                              isSelected
+                                ? 'border-indigo-600 bg-indigo-600 text-white shadow-md shadow-indigo-200'
+                                : isCurrent
+                                  ? 'border-indigo-200 bg-indigo-50 text-indigo-700'
+                                  : 'border-slate-100 bg-slate-50 text-slate-600 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700',
+                            )}
+                          >
+                            {yr}
+                          </button>
+                        )
+                      })}
+                    </motion.div>
+                  )}
+
+                </AnimatePresence>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>,
         document.body,
       )}
     </div>
@@ -443,14 +567,19 @@ export const DateInput = forwardRef<HTMLInputElement, DateInputProps>(function D
 
   return (
     <div className={cn('flex min-w-0 flex-col gap-1.5', wrapperClassName)}>
-      {label ? (
+      {label && (
         <label
           htmlFor={inputId}
-          className={cn('text-[11px] font-black uppercase tracking-[0.14em] text-slate-500', labelClassName)}
+          className={cn(
+            'text-[10px] font-black uppercase tracking-[0.15em] text-slate-400 transition-colors',
+            open && 'text-indigo-500',
+            error && 'text-red-400',
+            labelClassName,
+          )}
         >
           {label}
         </label>
-      ) : null}
+      )}
       {control}
       <FieldMessage
         hint={hint}
@@ -461,7 +590,7 @@ export const DateInput = forwardRef<HTMLInputElement, DateInputProps>(function D
   )
 })
 
-/* ─── Pure helpers ─── */
+/* ─── Pure helpers (inalteradas) ─── */
 
 function parseDateValue(value: string) {
   if (!value) return null

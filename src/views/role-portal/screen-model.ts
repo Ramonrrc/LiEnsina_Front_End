@@ -16,15 +16,18 @@ import type {
   School,
   SchoolsScreenPayload,
   Student,
+  TeacherSubjectCardsPagePayload,
+  TeacherSubjectsPageQuery,
   Teacher,
+  UpdateLessonRecordPayload,
   UserAccount,
 } from '../../types'
 
-export type LessonRecordFormField = keyof CreateLessonRecordPayload
+export type LessonRecordFormField = Exclude<keyof CreateLessonRecordPayload, 'attendance'>
 export type ReservationFormField = keyof CreateRoomReservationPayload
 
 export type SubjectModal = {
-  type: 'classes' | 'history' | 'lesson' | 'attendance'
+  type: 'classes' | 'history' | 'lesson' | 'evaluations'
   subject: string
 } | null
 
@@ -42,10 +45,18 @@ export interface RolePortalScreenModel {
   schoolsData: SchoolsScreenPayload
   evaluationsData?: Pick<
     EvaluationsScreenPayload,
-    'evaluations' | 'curriculumSkills' | 'assessmentDescriptors' | 'questionBank'
+    'evaluations' | 'evaluationCorrections' | 'curriculumSkills' | 'assessmentDescriptors' | 'questionBank'
   >
   onCreateRoomReservation?: (draft: CreateRoomReservationPayload) => Promise<RoomReservation>
   onCreateLessonRecord?: (draft: CreateLessonRecordPayload) => Promise<LessonRecord>
+  onUpdateLessonRecord?: (id: string, draft: UpdateLessonRecordPayload) => Promise<LessonRecord>
+  onLoadTeacherSubjectCardsPage?: (params: TeacherSubjectsPageQuery) => Promise<TeacherSubjectCardsPagePayload>
+  onLoadEvaluationsData?: () => Promise<Pick<
+    EvaluationsScreenPayload,
+    'evaluations' | 'evaluationCorrections' | 'curriculumSkills' | 'assessmentDescriptors' | 'questionBank'
+  >>
+  onDownloadEvaluation?: (evaluationId: string) => Promise<void>
+  onDownloadAnswerKey?: (evaluationId: string) => Promise<void>
   schools: School[]
   classes: ClassRoom[]
   students: Student[]
@@ -143,6 +154,7 @@ export interface RolePortalScreenModel {
   updateReservationDraftField: <K extends keyof RoomReservation>(field: K, value: RoomReservation[K]) => void
   updateAttendance: (key: string, present: boolean) => void
   commitAttendanceChanges: (keys?: string[]) => void
+  handleSaveLessonAttendance: (lesson: LessonRecord, attendanceStudents: Student[]) => Promise<void>
   openLessonRecord: (subject: string, classId?: string) => void
   openAttendanceList: (subject: string, classId?: string) => void
   getLessonValidationMessage: () => string | null

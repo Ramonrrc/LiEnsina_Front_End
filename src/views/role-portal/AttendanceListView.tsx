@@ -170,6 +170,7 @@ export function AttendanceListView({ model }: { model: RolePortalScreenModel }) 
     updateReservationDraftField,
     updateAttendance,
     commitAttendanceChanges,
+    handleSaveLessonAttendance,
     openLessonRecord,
     openAttendanceList,
     getLessonValidationMessage,
@@ -191,10 +192,17 @@ export function AttendanceListView({ model }: { model: RolePortalScreenModel }) 
     reservationSelectClass,
   } = model
 
-const selectedClassAttendanceKeys = selectedClassStudents.map((student) => `${selectedClass?.id}:${student.id}`)
+    const selectedClassLessons = lessonRecords
+      .filter((record) => record.classId === selectedClass?.id)
+      .sort(compareLessonRecordsByNewest)
+    const selectedAttendanceLesson = selectedClassLessons[0] ?? null
+    const getSelectedClassAttendanceKey = (studentId: string) => selectedAttendanceLesson
+      ? getLessonAttendanceKey(selectedAttendanceLesson, studentId)
+      : `${selectedClass?.id}:${studentId}`
+    const selectedClassAttendanceKeys = selectedClassStudents.map((student) => getSelectedClassAttendanceKey(student.id))
     const selectedClassAttendanceHasChanges = selectedClassAttendanceKeys.some((key) => attendanceDirtyKeys.has(key))
     const presentCount = selectedClassStudents.filter(
-      (s) => (attendance[`${selectedClass?.id}:${s.id}`] ?? true),
+      (s) => (attendance[getSelectedClassAttendanceKey(s.id)] ?? true),
     ).length
     const totalCount = selectedClassStudents.length
 
@@ -227,19 +235,38 @@ const selectedClassAttendanceKeys = selectedClassStudents.map((student) => `${se
                   </span>
                   <button
                     type="button"
-                    onClick={() => commitAttendanceChanges(selectedClassAttendanceKeys)}
-                    disabled={!selectedClassAttendanceHasChanges}
+                    onClick={() => {
+                      if (selectedAttendanceLesson) void handleSaveLessonAttendance(selectedAttendanceLesson, selectedClassStudents)
+                    }}
+                    disabled={!selectedAttendanceLesson || !selectedClassAttendanceHasChanges || isSavingLesson}
                     className="btn-primary inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg bg-indigo-600 px-3 text-xs font-black text-white shadow-sm disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    <Save size={13} />Salvar
+                    <Save size={13} />{isSavingLesson ? 'Salvando' : 'Salvar'}
                   </button>
                 </div>
               )}
             </div>
           </div>
           <div className="grid gap-2 p-4">
+            {lessonError && <AlertBanner message={lessonError} tone="rose" soft />}
+            {selectedAttendanceLesson ? (
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-xs font-bold text-indigo-800">
+                <span>
+                  Frequencia da ultima aula: {selectedAttendanceLesson.subject}
+                </span>
+                <span className="text-indigo-600">
+                  {formatReservationDate(selectedAttendanceLesson.date)} - {formatReservationTime(selectedAttendanceLesson.time)}
+                </span>
+              </div>
+            ) : (
+              <AlertBanner
+                message="Nenhum registro de aula encontrado para esta turma. Crie uma aula para salvar a frequencia no banco."
+                tone="amber"
+                soft
+              />
+            )}
             {selectedClassStudents.map((student, i) => {
-              const key = `${selectedClass?.id}:${student.id}`
+              const key = getSelectedClassAttendanceKey(student.id)
               const present = attendance[key] ?? true
               return (
                 <label
@@ -274,10 +301,13 @@ const selectedClassAttendanceKeys = selectedClassStudents.map((student) => `${se
                     </span>
                     <button
                       type="button"
-                      onClick={() => updateAttendance(key, !present)}
+                      onClick={() => {
+                        if (selectedAttendanceLesson) updateAttendance(key, !present)
+                      }}
+                      disabled={!selectedAttendanceLesson}
                       className={`relative h-7 w-12 rounded-full p-1 transition-all duration-200 ${
                         present ? 'bg-emerald-500 shadow-md shadow-emerald-200' : 'bg-slate-300'
-                      }`}
+                      } disabled:cursor-not-allowed disabled:opacity-60`}
                       aria-label={present ? 'Presente' : 'Faltou'}
                     >
                       <span

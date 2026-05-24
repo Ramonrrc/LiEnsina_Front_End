@@ -4,7 +4,7 @@ export type EvaluationBuildMode = 'automatic_bank' | 'manual_bank' | 'teacher_cr
 export type LegacyRiskLevel = 'baixo' | 'medio' | 'alto'
 export type UserStatus = 'ativo' | 'pendente' | 'bloqueado'
 export type CalendarEventType = 'aula' | 'reuniao' | 'avaliacao' | 'prazo' | 'evento'
-export type RoleCode = 'ADMIN' | 'DIRETOR' | 'COORDENADOR' | 'PROFESSOR' | 'ALUNO' | 'RESPONSAVEL' | 'NUTRITIONIST'
+export type RoleCode = 'SUPERADMIN' | 'ADMIN' | 'ADMIN_ESCOLA' | 'DIRETOR' | 'COORDENADOR' | 'PROFESSOR' | 'ALUNO' | 'RESPONSAVEL' | 'NUTRITIONIST'
 export type AppSection =
   | 'dashboard'
   | 'schools'
@@ -24,6 +24,7 @@ export type AppSection =
   | 'lesson-records'
   | 'attendance-list'
   | 'student-performance'
+  | 'student-grades'
   | 'student-attendance'
   | 'children'
   | 'child-attendance'
@@ -169,7 +170,9 @@ export interface Evaluation {
   id: string
   title: string
   classId: string
+  schoolId?: string
   subject: string
+  subjectId?: string | null
   questions: number
   scheduledAt: string
   status: EvaluationStatus
@@ -178,11 +181,17 @@ export interface Evaluation {
   averageScore: number
   triLevel: string
   buildMode?: EvaluationBuildMode
+  omrCardVersion?: string
+  answerKey?: EvaluationAnswerKeyItem[]
+  answerCardsCount?: number
+  evaluationPdfUrl?: string | null
+  answerCardsPdfUrl?: string | null
   questionIds?: string[]
   questionSnapshots?: Question[]
   skillCodes?: string[]
   descriptorCodes?: string[]
   sourceSummary?: string
+  teacherId?: string
   createdById?: string
   createdByName?: string
   creatorName?: string
@@ -215,16 +224,21 @@ export interface EvaluationCorrectionDetectedAnswer {
   isCorrect: boolean
   status: 'ok' | 'blank' | 'multiple' | 'low_confidence' | 'unreadable'
   confidence: number
-  markedOptions: string[]
-  optionScores: EvaluationCorrectionOptionScore[]
+  markedOptions?: string[]
+  optionScores?: EvaluationCorrectionOptionScore[]
 }
 
 export interface EvaluationCorrection {
   id: string
   evaluationId: string
+  schoolId?: string
   classId: string
+  subject?: string
+  cardId?: string | null
   studentId: string
+  studentName?: string
   status: EvaluationCorrectionStatus
+  hasImage?: boolean
   imageUrl: string | null
   suggestedScore: number
   finalScore: number | null
@@ -237,9 +251,9 @@ export interface EvaluationCorrection {
   requiresReview: boolean
   shouldRetakeImage: boolean
   failures: string[]
-  detectedAnswers: EvaluationCorrectionDetectedAnswer[]
-  answerKey: EvaluationAnswerKeyItem[]
-  rawOmrResponse: Record<string, unknown>
+  detectedAnswers?: EvaluationCorrectionDetectedAnswer[]
+  answerKey?: EvaluationAnswerKeyItem[]
+  rawOmrResponse?: Record<string, unknown>
   teacherNotes: string | null
   reviewedById: string | null
   reviewedAt: string | null
@@ -255,6 +269,118 @@ export interface EvaluationCorrectionReviewPayload {
   teacherNotes?: string | null
 }
 
+export interface EvaluationCorrectionConfirmManyItemPayload {
+  id: string
+  finalScore?: number | null
+  teacherNotes?: string | null
+}
+
+export interface EvaluationCorrectionConfirmManyPayload {
+  corrections: EvaluationCorrectionConfirmManyItemPayload[]
+}
+
+export interface EvaluationCorrectionConfirmManyResponse {
+  corrections: EvaluationCorrection[]
+  updatedCount: number
+}
+
+export type EvaluationAnswerCardStatus =
+  | 'GENERATED'
+  | 'PRINTED'
+  | 'PROCESSING'
+  | 'CORRECTED'
+  | 'NEEDS_REVIEW'
+  | 'CANCELLED'
+
+export interface EvaluationAnswerCard {
+  id: string
+  cardId?: string
+  cartao_id?: string
+  schoolId?: string
+  escola_id?: string
+  classId?: string
+  turma_id?: string
+  subjectId?: string | null
+  materia_id?: string | null
+  subject?: string
+  evaluationId?: string
+  prova_id?: string
+  studentId?: string
+  aluno_id?: string
+  studentName?: string
+  aluno_nome?: string
+  teacherId?: string
+  professor_id?: string
+  qrPayload?: string | Record<string, unknown>
+  qr_payload?: string | Record<string, unknown>
+  status: EvaluationAnswerCardStatus | string
+  createdAt?: string
+  created_at?: string
+  updatedAt?: string
+  updated_at?: string
+}
+
+export interface CreateEvaluationResponse {
+  evaluation: Evaluation
+  answerCards?: EvaluationAnswerCard[]
+  cartoesResposta?: EvaluationAnswerCard[]
+  cardsPdfUrl?: string | null
+  answerCardsPdfUrl?: string | null
+  evaluationPdfUrl?: string | null
+}
+
+export type CreateEvaluationApiResponse = Evaluation | CreateEvaluationResponse
+
+export type EvaluationDownloadKind = 'complete' | 'answer_cards' | 'answer_key'
+
+export type EvaluationOmrBatchItemStatus =
+  | 'corrigido'
+  | 'precisa_revisao'
+  | 'cartao_nao_encontrado'
+  | 'imagem_invalida'
+  | 'erro'
+
+export interface EvaluationOmrBatchResultItem {
+  status: EvaluationOmrBatchItemStatus | string
+  motivo?: string
+  arquivo?: string
+  cardId?: string
+  cartao_id?: string
+  studentId?: string
+  aluno_id?: string
+  studentName?: string
+  aluno_nome?: string
+  evaluationId?: string
+  prova_id?: string
+  subject?: string
+  materia?: string
+  className?: string
+  turma?: string
+  detectedAnswers?: Record<string, string | null>
+  respostas_detectadas?: Record<string, string | null>
+  correctCount?: number
+  acertos?: number
+  wrongCount?: number
+  erros?: number
+  score?: number
+  nota?: number
+  correction?: EvaluationCorrection
+}
+
+export interface EvaluationOmrBatchResponse {
+  totalSent?: number
+  total_enviados?: number
+  corrected?: number
+  corrigidos?: number
+  needsReview?: number
+  precisam_revisao?: number
+  errorCount?: number
+  total_com_erro?: number
+  results?: EvaluationOmrBatchResultItem[]
+  resultados?: EvaluationOmrBatchResultItem[]
+  corrections?: EvaluationCorrection[]
+}
+
 export interface LessonRecord {
   id: string
   classId: string
@@ -266,9 +392,11 @@ export interface LessonRecord {
   resources: string
   activity: string
   notes: string
+  attendance?: Record<string, boolean>
 }
 
 export type CreateLessonRecordPayload = Omit<LessonRecord, 'id'>
+export type UpdateLessonRecordPayload = Partial<CreateLessonRecordPayload>
 
 export interface RoomReservation {
   id: string
@@ -543,6 +671,46 @@ export interface GenerateQuestionSelectionResponse {
   questions: Question[]
   questionIds: string[]
   totalEligible?: number
+}
+
+export interface QuestionBankPageQuery {
+  page?: number
+  limit?: number
+  search?: string
+  gradeLevel?: string
+  difficulty?: Difficulty | 'all' | string
+  status?: QuestionStatus | 'all' | string
+  sourceType?: QuestionSourceType | 'all' | string
+  schoolId?: string
+  createdById?: string
+  skillCode?: string
+  descriptorCode?: string
+  subject?: string
+  sourceMode?: QuestionSelectionSourceMode | 'all' | string
+  includeFacets?: boolean
+  facetsMode?: 'bank' | 'auto' | string
+}
+
+export interface QuestionBankPageFacets {
+  gradeLevels: string[]
+  sourceTypes: QuestionSourceType[]
+  schoolIds: string[]
+  createdByIds: string[]
+  subjects: string[]
+  skills: QuestionSkillSummary[]
+  descriptors: QuestionDescriptorSummary[]
+}
+
+export interface QuestionBankPagePayload {
+  questions: Question[]
+  pagination: PaginationMeta
+  totals: {
+    all: number
+    system: number
+    enem: number
+    filtered: number
+  }
+  facets: QuestionBankPageFacets
 }
 
 export interface QuestionImportSpreadsheetRow {
@@ -918,6 +1086,13 @@ export interface SessionPayload {
   alertCount: number
 }
 
+export interface MePermissionsPayload {
+  role: Role | null
+  roleCode: RoleCode
+  permissions: string[]
+  allowedSections: AppSection[]
+}
+
 export interface DashboardScreenPayload {
   dashboard: DashboardPayload
   evaluations: Evaluation[]
@@ -946,6 +1121,7 @@ export interface SchoolsScreenPayload {
   guardians: Guardian[]
   students: Student[]
   classes: ClassRoom[]
+  schoolsPagination?: PaginationMeta
   lessonRecords?: LessonRecord[]
   roomReservations?: RoomReservation[]
 }
@@ -955,6 +1131,7 @@ export interface EvaluationsScreenPayload {
   classes: ClassRoom[]
   students?: Student[]
   evaluationCorrections?: EvaluationCorrection[]
+  answerCards?: EvaluationAnswerCard[]
   schools?: School[]
   teachers?: Teacher[]
   curriculumBases?: CurriculumBase[]
@@ -968,6 +1145,14 @@ export interface EvaluationsScreenPayload {
 
 export interface PedagogyScreenPayload extends SchoolsScreenPayload {
   evaluations: Evaluation[]
+  curriculumSkills?: CurriculumSkill[]
+  assessmentDescriptors?: AssessmentDescriptor[]
+  questionBank?: Question[]
+}
+
+export interface StudentGradesScreenPayload extends SchoolsScreenPayload {
+  evaluations: Evaluation[]
+  evaluationCorrections?: EvaluationCorrection[]
   curriculumSkills?: CurriculumSkill[]
   assessmentDescriptors?: AssessmentDescriptor[]
   questionBank?: Question[]
@@ -1006,12 +1191,46 @@ export interface PaginationMeta {
   totalPages: number
 }
 
+export interface SchoolsPageQuery {
+  page: number
+  limit: number
+  search?: string
+}
+
+export interface SchoolsPagePayload {
+  schools: School[]
+  pagination: PaginationMeta
+}
+
+export interface TeacherSubjectCard {
+  subject: string
+  classes: ClassRoom[]
+  lessons: LessonRecord[]
+}
+
+export interface TeacherSubjectsPageQuery {
+  page: number
+  limit: number
+  search?: string
+}
+
+export interface TeacherSubjectCardsPagePayload {
+  subjectCards: TeacherSubjectCard[]
+  pagination: PaginationMeta
+  totals: {
+    subjects: number
+    classes: number
+    lessons: number
+  }
+}
+
 export interface PeoplePageQuery {
   page: number
   limit: number
   search?: string
   schoolId?: string
   discipline?: string
+  classId?: string
 }
 
 export interface TeachersPagePayload {
@@ -1071,6 +1290,7 @@ export interface ScreenPayloads {
   'lesson-records': SchoolsScreenPayload
   'attendance-list': SchoolsScreenPayload
   'student-performance': SchoolsScreenPayload
+  'student-grades': StudentGradesScreenPayload
   'student-attendance': SchoolsScreenPayload
   children: SchoolsScreenPayload
   'child-attendance': SchoolsScreenPayload

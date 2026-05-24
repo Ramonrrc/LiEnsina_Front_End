@@ -3,6 +3,7 @@ import { BookOpen, GraduationCap, Plus, Save, Users } from 'lucide-react'
 import { z } from 'zod'
 
 import { formatClassGrade, getClassGradeOptions } from '../class-grade-options'
+import { getAcademicSubjectLabel, splitAcademicList, uniqueAcademicList } from '../components/role-portal/portal-components'
 import { FormField, fieldStateClass, zodFieldErrors, type FieldErrors } from '../components/ui/form-field'
 import { PageTitleBar } from '../components/ui/page-title-bar'
 import type { ClassRoom, Desempenho, School, Student, Teacher } from '../types'
@@ -239,6 +240,11 @@ export default function ClassesView({ classes, schools, teachers, students, read
             const classStudents = students.filter((student) => student.classId === classRoom.id)
             const classAverageScore = getClassAverageScore(classStudents)
             const classPerformance = getPerformanceFromScore(classAverageScore)
+            const classFocusLabels = uniqueAcademicList(
+              (classRoom.bnccFocus ?? [])
+                .flatMap(splitAcademicList)
+                .map((focus) => getAcademicSubjectLabel(focus)),
+            )
 
             return (
               <article key={classRoom.id} className="grid min-w-0 gap-3.5 rounded-xl border border-slate-300 bg-white p-4 transition-all hover:border-indigo-300 hover:bg-indigo-50/30 hover:shadow-sm">
@@ -251,10 +257,10 @@ export default function ClassesView({ classes, schools, teachers, students, read
                   <span><dt className="text-[10px] font-black uppercase tracking-[0.14em] text-slate-400">Professor</dt><dd className="mt-1 [overflow-wrap:anywhere] text-sm font-bold text-slate-700">{getTeacherName(classRoom.teacherId)}</dd></span>
                   <span><dt className="text-[10px] font-black uppercase tracking-[0.14em] text-slate-400">Alunos</dt><dd className="mt-1 [overflow-wrap:anywhere] text-sm font-bold text-slate-700">{classStudents.length}</dd></span>
                   <span><dt className="text-[10px] font-black uppercase tracking-[0.14em] text-slate-400">Desempenho geral</dt><dd className="mt-1 [overflow-wrap:anywhere] text-sm font-bold text-slate-700">{classAverageScore === null ? 'Sem notas' : `${classAverageScore.toFixed(1)} · ${getPerformanceLabel(classPerformance)}`}</dd></span>
-                  <span><dt className="text-[10px] font-black uppercase tracking-[0.14em] text-slate-400">BNCC</dt><dd className="mt-1 [overflow-wrap:anywhere] text-sm font-bold text-slate-700">{classRoom.bnccFocus.length}</dd></span>
+                  <span><dt className="text-[10px] font-black uppercase tracking-[0.14em] text-slate-400">Disciplinas</dt><dd className="mt-1 [overflow-wrap:anywhere] text-sm font-bold text-slate-700">{classFocusLabels.length}</dd></span>
                 </dl>
                 <div className="flex flex-wrap gap-2.5">
-                  {classRoom.bnccFocus.slice(0, 4).map((focus) => <span className="inline-flex min-w-0 items-center gap-2 rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-[12px] font-bold text-indigo-700" key={focus}>{focus}</span>)}
+                  {classFocusLabels.slice(0, 4).map((focus) => <span className="inline-flex min-w-0 items-center gap-2 rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-[12px] font-bold text-indigo-700" key={focus}>{focus}</span>)}
                 </div>
                 <button type="button" className="inline-flex min-h-10 items-center justify-center gap-2 rounded-sm border border-slate-400 bg-white px-4 text-[13px] font-bold text-slate-600 transition-all hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700 disabled:cursor-not-allowed disabled:opacity-70" onClick={() => startEditing(classRoom)}>Editar</button>
               </article>

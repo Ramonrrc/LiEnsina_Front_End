@@ -15,10 +15,10 @@ import {
   TrendingUp,
 } from 'lucide-react'
 
-import { formatClassGrade } from '../../class-grade-options'
+import { formatClassGrade, normalizeClassGradeValue } from '../../class-grade-options'
 import type { CompactSelectOption } from '../ui/compact-select'
 import { PageTitleBar } from '../ui/page-title-bar'
-import type { ClassRoom, Student } from '../../types'
+import type { ClassRoom, CurriculumSkill, Student } from '../../types'
 
 export function SkeletonPulse({ className = '' }: { className?: string }) {
   return (
@@ -387,7 +387,7 @@ export function normalizeAcademicText(value?: string | null) {
 }
 export function splitAcademicList(value?: string | null) {
   return (value ?? '')
-    .split(/[,;|/]+|\s+-\s+/)
+    .split(/[,;|/]+|\s+-\s+|\s+(?:e|ou)\s+/i)
     .map((item) => item.trim())
     .filter(Boolean)
 }
@@ -400,15 +400,184 @@ export function uniqueAcademicList(values: string[]) {
     return true
   })
 }
-function isCurriculumSkillCode(value?: string | null) {
-  return /^EF\d{2}[A-Z]{2}\d{2}[A-Z]?$/i.test(String(value ?? '').trim())
+
+type CurriculumSkillRef = Pick<CurriculumSkill, 'code' | 'component'> & {
+  subject?: string | null
 }
-export function classMatchesSubject(classRoom: ClassRoom, subject: string) {
-  const classSubjects = classRoom.bnccFocus ?? []
+
+const CURRICULUM_COMPONENT_LABELS: Record<string, string> = {
+  AR: 'Arte',
+  CI: 'Ciências',
+  EF: 'Educação Física',
+  ER: 'Ensino Religioso',
+  ES: 'Língua Espanhola',
+  GE: 'Geografia',
+  HI: 'História',
+  LI: 'Língua Inglesa',
+  LP: 'Língua Portuguesa',
+  MA: 'Matemática',
+  PV: 'Projeto de Vida',
+  CHS: 'Ciências Humanas',
+  CNT: 'Ciências da Natureza',
+  LGG: 'Linguagens',
+  MAT: 'Matemática',
+}
+
+const OFFICIAL_ACADEMIC_SUBJECTS_BY_CODE: Record<string, string> = {
+  LINGUA_PORTUGUESA: 'Língua Portuguesa',
+  LITERATURA: 'Literatura',
+  REDACAO: 'Redação',
+  MATEMATICA: 'Matemática',
+  CIENCIAS: 'Ciências',
+  BIOLOGIA: 'Biologia',
+  FISICA: 'Física',
+  QUIMICA: 'Química',
+  HISTORIA: 'História',
+  GEOGRAFIA: 'Geografia',
+  FILOSOFIA: 'Filosofia',
+  SOCIOLOGIA: 'Sociologia',
+  ARTE: 'Arte',
+  EDUCACAO_FISICA: 'Educação Física',
+  LINGUA_INGLESA: 'Língua Inglesa',
+  LINGUA_ESPANHOLA: 'Língua Espanhola',
+  ENSINO_RELIGIOSO: 'Ensino Religioso',
+  PROJETO_DE_VIDA: 'Projeto de Vida',
+}
+
+const FUNDAMENTAL_BASE_OFFICIAL_SUBJECTS = [
+  'Língua Portuguesa',
+  'Matemática',
+  'Ciências',
+  'História',
+  'Geografia',
+  'Arte',
+  'Educação Física',
+  'Ensino Religioso',
+]
+const FUNDAMENTAL_FINAL_OFFICIAL_SUBJECTS = [...FUNDAMENTAL_BASE_OFFICIAL_SUBJECTS, 'Língua Inglesa', 'Língua Espanhola']
+const HIGH_SCHOOL_OFFICIAL_SUBJECTS = [
+  'Língua Portuguesa',
+  'Redação',
+  'Literatura',
+  'Matemática',
+  'História',
+  'Geografia',
+  'Filosofia',
+  'Sociologia',
+  'Biologia',
+  'Física',
+  'Química',
+  'Arte',
+  'Educação Física',
+  'Língua Inglesa',
+  'Língua Espanhola',
+  'Projeto de Vida',
+]
+const OFFICIAL_SUBJECTS_BY_GRADE: Record<string, string[]> = {
+  EF1: FUNDAMENTAL_BASE_OFFICIAL_SUBJECTS,
+  EF2: FUNDAMENTAL_BASE_OFFICIAL_SUBJECTS,
+  EF3: FUNDAMENTAL_BASE_OFFICIAL_SUBJECTS,
+  EF4: FUNDAMENTAL_BASE_OFFICIAL_SUBJECTS,
+  EF5: FUNDAMENTAL_BASE_OFFICIAL_SUBJECTS,
+  EF6: FUNDAMENTAL_FINAL_OFFICIAL_SUBJECTS,
+  EF7: FUNDAMENTAL_FINAL_OFFICIAL_SUBJECTS,
+  EF8: FUNDAMENTAL_FINAL_OFFICIAL_SUBJECTS,
+  EF9: FUNDAMENTAL_FINAL_OFFICIAL_SUBJECTS,
+  EM1: HIGH_SCHOOL_OFFICIAL_SUBJECTS,
+  EM2: HIGH_SCHOOL_OFFICIAL_SUBJECTS,
+  EM3: HIGH_SCHOOL_OFFICIAL_SUBJECTS,
+}
+
+function officialAcademicSubjectCode(value?: string | null) {
+  const text = normalizeAcademicText(value).replace(/[^a-z0-9]+/g, ' ').trim()
+  if (!text) return null
+  if (/(ciencias da natureza|natureza|ciencias humanas|humanas|linguagens)/.test(text)) return null
+  if (/(educacao fisica|ed fisica)/.test(text)) return 'EDUCACAO_FISICA'
+  if (/(lingua portuguesa|portugues|portuguesa|portugues brasil)/.test(text)) return 'LINGUA_PORTUGUESA'
+  if (/(lingua inglesa|ingles|inglesa|english)/.test(text)) return 'LINGUA_INGLESA'
+  if (/(lingua espanhola|espanhol|espanhola|espanol|spanish)/.test(text)) return 'LINGUA_ESPANHOLA'
+  if (/(ensino religioso|religiao|religioso)/.test(text)) return 'ENSINO_RELIGIOSO'
+  if (/(projeto de vida|projeto vida)/.test(text)) return 'PROJETO_DE_VIDA'
+  if (/literatura/.test(text)) return 'LITERATURA'
+  if (/redacao/.test(text)) return 'REDACAO'
+  if (/matematica/.test(text)) return 'MATEMATICA'
+  if (/biologia/.test(text)) return 'BIOLOGIA'
+  if (/(^|\s)fisica(\s|$)/.test(text)) return 'FISICA'
+  if (/quimica/.test(text)) return 'QUIMICA'
+  if (/historia/.test(text)) return 'HISTORIA'
+  if (/geografia/.test(text)) return 'GEOGRAFIA'
+  if (/filosofia/.test(text)) return 'FILOSOFIA'
+  if (/sociologia/.test(text)) return 'SOCIOLOGIA'
+  if (/ciencias/.test(text)) return 'CIENCIAS'
+  if (/(^|\s)arte(s)?(\s|$)/.test(text)) return 'ARTE'
+  return null
+}
+
+export function isCurriculumSkillCode(value?: string | null) {
+  return /^(EF\d{2}[A-Z]{2}\d{2}[A-Z]?|EM\d{2}[A-Z]{2,3}\d{2,3}[A-Z]?)$/i.test(String(value ?? '').trim())
+}
+
+export function getSubjectNameFromCurriculumCode(value?: string | null) {
+  const code = String(value ?? '').trim().toUpperCase()
+  const elementaryMatch = code.match(/^EF\d{2}([A-Z]{2})\d{2}[A-Z]?$/)
+  if (elementaryMatch?.[1]) return CURRICULUM_COMPONENT_LABELS[elementaryMatch[1]] ?? null
+
+  const highSchoolMatch = code.match(/^EM\d{2}([A-Z]{2,3})\d{2,3}[A-Z]?$/)
+  if (highSchoolMatch?.[1]) return CURRICULUM_COMPONENT_LABELS[highSchoolMatch[1]] ?? null
+
+  return null
+}
+
+export function getAcademicSubjectLabel(value?: string | null, curriculumSkills: CurriculumSkillRef[] = []) {
+  const trimmed = String(value ?? '').trim()
+  if (!trimmed) return ''
+
+  const normalizedValue = normalizeAcademicText(trimmed)
+  const skill = curriculumSkills.find((item) => normalizeAcademicText(item.code) === normalizedValue)
+  const skillSubject = skill?.component || skill?.subject
+  if (skillSubject) return skillSubject
+
+  return getSubjectNameFromCurriculumCode(trimmed) ?? trimmed
+}
+
+export function getOfficialAcademicSubjectLabel(value?: string | null, curriculumSkills: CurriculumSkillRef[] = []) {
+  const label = getAcademicSubjectLabel(value, curriculumSkills)
+  const code = officialAcademicSubjectCode(label) ?? officialAcademicSubjectCode(value)
+  return code ? OFFICIAL_ACADEMIC_SUBJECTS_BY_CODE[code] ?? '' : ''
+}
+
+export function getOfficialAcademicSubjectList(values: string[], curriculumSkills: CurriculumSkillRef[] = []) {
+  return uniqueAcademicList(
+    values
+      .flatMap(splitAcademicList)
+      .map((subject) => getOfficialAcademicSubjectLabel(subject, curriculumSkills))
+      .filter(Boolean),
+  )
+}
+
+export function getOfficialAcademicSubjectsForGrade(grade?: string | null) {
+  return OFFICIAL_SUBJECTS_BY_GRADE[normalizeClassGradeValue(grade)] ?? []
+}
+
+export function getOfficialAcademicSubjectListForGrade(values: string[], grade?: string | null, curriculumSkills: CurriculumSkillRef[] = []) {
+  const allowedSubjects = getOfficialAcademicSubjectsForGrade(grade)
+  const allowedKeys = new Set(allowedSubjects.map(normalizeAcademicText))
+  const subjects = getOfficialAcademicSubjectList(values, curriculumSkills)
+  if (!allowedKeys.size) return subjects
+  return subjects.filter((subject) => allowedKeys.has(normalizeAcademicText(subject)))
+}
+
+export function classMatchesSubject(
+  classRoom: ClassRoom,
+  subject: string,
+  curriculumSkills: CurriculumSkillRef[] = [],
+) {
+  const classSubjects = (classRoom.bnccFocus ?? []).flatMap(splitAcademicList)
   if (!classSubjects.length) return !isCurriculumSkillCode(subject)
-  const normalizedSubject = normalizeAcademicText(subject)
+  const normalizedSubject = normalizeAcademicText(getOfficialAcademicSubjectLabel(subject, curriculumSkills) || getAcademicSubjectLabel(subject, curriculumSkills))
   return classSubjects.some((item) => {
-    const normalizedItem = normalizeAcademicText(item)
+    const normalizedItem = normalizeAcademicText(getOfficialAcademicSubjectLabel(item, curriculumSkills) || getAcademicSubjectLabel(item, curriculumSkills))
+    if (!normalizedItem || !normalizedSubject) return false
     return (
       normalizedItem === normalizedSubject ||
       normalizedItem.includes(normalizedSubject) ||

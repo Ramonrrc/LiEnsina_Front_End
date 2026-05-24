@@ -60,6 +60,7 @@ import { LessonRecordsView } from './role-portal/LessonRecordsView'
 import { AttendanceListView } from './role-portal/AttendanceListView'
 import { StudentLegacyPerformanceView } from './role-portal/StudentLegacyPerformanceView'
 import { StudentGuardianProgressView } from './role-portal/StudentGuardianProgressView'
+import { StudentGradesView } from './role-portal/StudentGradesView'
 import { RolePortalFallbackView } from './role-portal/RolePortalFallbackView'
 import type { RolePortalScreenModel } from './role-portal/screen-model'
 import { formatClassGrade } from '../class-grade-options'
@@ -77,16 +78,23 @@ import {
   StudentCardSkeleton,
   classMatchesSubject,
   classOptions,
-  getAttendance,
+  getAcademicSubjectLabel,
+  getOfficialAcademicSubjectLabel,
+  getOfficialAcademicSubjectList,
+  getOfficialAcademicSubjectListForGrade,
   getAverage,
   getClassStudents,
   getSubjectAccent,
   getSubjectIcon,
   getSubjectIconBg,
   normalizeAcademicText,
-  splitAcademicList,
   uniqueAcademicList,
 } from '../components/role-portal/portal-components'
+import {
+  getAverageLessonAttendanceRate,
+  getLessonRecordsAttendanceState,
+  getStudentAttendanceRateFromLessons,
+} from '../lib/lesson-attendance'
 import type {
   AppSection,
   ClassRoom,
@@ -99,6 +107,9 @@ import type {
   RoomReservation,
   SchoolsScreenPayload,
   Student,
+  TeacherSubjectCardsPagePayload,
+  TeacherSubjectsPageQuery,
+  UpdateLessonRecordPayload,
   UserAccount,
 } from '../types'
 
@@ -110,10 +121,18 @@ interface RolePortalViewProps {
   schoolsData: SchoolsScreenPayload
   evaluationsData?: Pick<
     EvaluationsScreenPayload,
-    'evaluations' | 'curriculumSkills' | 'assessmentDescriptors' | 'questionBank'
+    'evaluations' | 'evaluationCorrections' | 'curriculumSkills' | 'assessmentDescriptors' | 'questionBank'
   >
   onCreateRoomReservation?: (draft: CreateRoomReservationPayload) => Promise<RoomReservation>
   onCreateLessonRecord?: (draft: CreateLessonRecordPayload) => Promise<LessonRecord>
+  onUpdateLessonRecord?: (id: string, draft: UpdateLessonRecordPayload) => Promise<LessonRecord>
+  onLoadTeacherSubjectCardsPage?: (params: TeacherSubjectsPageQuery) => Promise<TeacherSubjectCardsPagePayload>
+  onLoadEvaluationsData?: () => Promise<Pick<
+    EvaluationsScreenPayload,
+    'evaluations' | 'evaluationCorrections' | 'curriculumSkills' | 'assessmentDescriptors' | 'questionBank'
+  >>
+  onDownloadEvaluation?: (evaluationId: string) => Promise<void>
+  onDownloadAnswerKey?: (evaluationId: string) => Promise<void>
 }
 
 
@@ -159,6 +178,21 @@ const reservationTimeOptions: CompactSelectOption[] = Array.from({ length: 23 },
   return { value, label: `${hour}:${String(minutes).padStart(2, '0')}` }
 })
 const reservationStartTimeOptions = reservationTimeOptions.slice(0, -1)
+
+function compareTeacherSubjectCardsByPriority(
+  first: { subject: string; classes: ClassRoom[]; lessons: LessonRecord[] },
+  second: { subject: string; classes: ClassRoom[]; lessons: LessonRecord[] },
+) {
+  const firstHasClasses = first.classes.length > 0 ? 1 : 0
+  const secondHasClasses = second.classes.length > 0 ? 1 : 0
+
+  return (
+    secondHasClasses - firstHasClasses ||
+    second.classes.length - first.classes.length ||
+    second.lessons.length - first.lessons.length ||
+    first.subject.localeCompare(second.subject, 'pt-BR')
+  )
+}
 
 function getNextReservationTime(time: string) {
   const currentIndex = reservationTimeOptions.findIndex((option) => option.value === time)
@@ -228,6 +262,8 @@ function getFirstLessonTimeForClass(classRoom?: ClassRoom | null) {
   return getLessonTimeOptions(classRoom)[0]?.value ?? ''
 }
 function getLessonAttendanceKey(lesson: LessonRecord, studentId: string) {
+  if (lesson.id) return ['lesson', lesson.id, studentId].join(':')
+
   return [
     lesson.classId,
     lesson.date,
@@ -235,6 +271,16 @@ function getLessonAttendanceKey(lesson: LessonRecord, studentId: string) {
     normalizeAcademicText(lesson.subject),
     studentId,
   ].join(':')
+}
+function buildLessonAttendancePayload(
+  lesson: LessonRecord,
+  students: Student[],
+  attendance: Record<string, boolean>,
+) {
+  return students.reduce<Record<string, boolean>>((acc, student) => {
+    acc[student.id] = attendance[getLessonAttendanceKey(lesson, student.id)] ?? true
+    return acc
+  }, {})
 }
 function parseLessonRecordDraft(draft: LessonRecord) {
   const result = lessonRecordSchema.safeParse(draft)
@@ -282,13 +328,19 @@ export default function RolePortalView({
   evaluationsData,
   onCreateRoomReservation,
   onCreateLessonRecord,
+  onUpdateLessonRecord,
+  onLoadTeacherSubjectCardsPage,
+  onLoadEvaluationsData,
+  onDownloadEvaluation,
+  onDownloadAnswerKey,
 }: RolePortalViewProps) {
   const { schools, classes, students, teachers, guardians } = schoolsData
+  const [lazyEvaluationsData, setLazyEvaluationsData] = useState(evaluationsData)
   const [selectedClassId, setSelectedClassId] = useState(classes[0]?.id ?? '')
   const [selectedStudentId, setSelectedStudentId] = useState(students[0]?.id ?? '')
   const [activeSubject, setActiveSubject] = useState('')
   const [subjectModal, setSubjectModal] = useState<{
-    type: 'classes' | 'history' | 'lesson' | 'attendance'
+    type: 'classes' | 'history' | 'lesson' | 'evaluations'
     subject: string
   } | null>(null)
   const [createdLessonRecords, setCreatedLessonRecords] = useState<LessonRecord[]>([])
@@ -328,6 +380,18 @@ export default function RolePortalView({
     purpose: '',
   })
 
+  useEffect(() => {
+    setLazyEvaluationsData(evaluationsData)
+  }, [evaluationsData])
+
+  const handleLoadEvaluationsData = onLoadEvaluationsData
+    ? async () => {
+        const payload = await onLoadEvaluationsData()
+        setLazyEvaluationsData(payload)
+        return payload
+      }
+    : undefined
+
   const linkedTeacher = teachers.find(
     (t) => t.userId === currentUser.id || t.id === currentUser.linkedTeacherId,
   )
@@ -345,12 +409,16 @@ export default function RolePortalView({
     () => (teacherClasses.length ? teacherClasses : classes),
     [classes, teacherClasses],
   )
+  const curriculumSkills = useMemo(
+    () => lazyEvaluationsData?.curriculumSkills ?? [],
+    [lazyEvaluationsData?.curriculumSkills],
+  )
   const activeSubjectClasses = useMemo(
     () =>
       activeSubject
-        ? visibleTeacherClasses.filter((c) => classMatchesSubject(c, activeSubject))
+        ? visibleTeacherClasses.filter((c) => classMatchesSubject(c, activeSubject, curriculumSkills))
         : visibleTeacherClasses,
-    [activeSubject, visibleTeacherClasses],
+    [activeSubject, curriculumSkills, visibleTeacherClasses],
   )
   const lessonRecords = useMemo(() => {
     const seen = new Set<string>()
@@ -360,24 +428,41 @@ export default function RolePortalView({
       return true
     })
   }, [createdLessonRecords, schoolsData.lessonRecords])
+  useEffect(() => {
+    const persistedAttendance = getLessonRecordsAttendanceState(lessonRecords, getLessonAttendanceKey)
+    setSavedAttendance(persistedAttendance)
+    setAttendance((current) => {
+      const next = { ...persistedAttendance }
+      attendanceDirtyKeys.forEach((key) => {
+        if (key in current) next[key] = current[key]
+      })
+      return next
+    })
+  }, [attendanceDirtyKeys, lessonRecords])
   const classScope = activeSubjectClasses.length ? activeSubjectClasses : visibleTeacherClasses
   const selectedClass = classScope.find((c) => c.id === selectedClassId) ?? classScope[0] ?? classes[0]
   const selectedStudent = students.find((s) => s.id === selectedStudentId) ?? students[0]
   const selectedClassStudents = selectedClass ? getClassStudents(students, selectedClass.id) : []
   const averageScore = getAverage(students)
-  const averageAttendance = getAttendance(students)
-  const lowAttendanceStudents = students.filter((s) => s.attendanceRate < 75)
+  const averageAttendance = getAverageLessonAttendanceRate(students, lessonRecords, attendance, getLessonAttendanceKey)
+  const lowAttendanceStudents = students.filter((s) => getStudentAttendanceRateFromLessons(s, lessonRecords, s.attendanceRate ?? 0, attendance, getLessonAttendanceKey) < 75)
   const lowScoreStudents = students.filter((s) => s.averageScore < 6)
 
   const subjectCards = useMemo(() => {
     const teacherSubjects = linkedTeacher
-      ? splitAcademicList(linkedTeacher.specialty)
-      : teachers.flatMap((t) => splitAcademicList(t.specialty))
-    const classSubjects = visibleTeacherClasses.flatMap((c) => c.bnccFocus ?? [])
-    const subjects = uniqueAcademicList([...teacherSubjects, ...classSubjects, lessonDraft.subject || 'Matéria'])
+      ? getOfficialAcademicSubjectList([linkedTeacher.specialty], curriculumSkills)
+      : teachers.flatMap((t) => getOfficialAcademicSubjectList([t.specialty], curriculumSkills))
+    const classSubjects = visibleTeacherClasses.flatMap((c) =>
+      getOfficialAcademicSubjectListForGrade(c.bnccFocus ?? [], c.grade, curriculumSkills),
+    )
+    const subjects = uniqueAcademicList([
+      ...teacherSubjects,
+      ...classSubjects,
+      getOfficialAcademicSubjectLabel(lessonDraft.subject, curriculumSkills),
+    ])
     return subjects.map((subject) => ({
       subject,
-      classes: visibleTeacherClasses.filter((c) => classMatchesSubject(c, subject)),
+      classes: visibleTeacherClasses.filter((c) => classMatchesSubject(c, subject, curriculumSkills)),
     })).map((card) => {
       const cardClassIds = new Set(card.classes.map((classRoom) => classRoom.id))
       const scopedClassIds = cardClassIds.size ? cardClassIds : new Set(visibleTeacherClasses.map((classRoom) => classRoom.id))
@@ -387,11 +472,11 @@ export default function RolePortalView({
         lessons: lessonRecords.filter(
           (record) =>
             scopedClassIds.has(record.classId) &&
-            normalizeAcademicText(record.subject) === normalizeAcademicText(card.subject),
+            normalizeAcademicText(getOfficialAcademicSubjectLabel(record.subject, curriculumSkills) || getAcademicSubjectLabel(record.subject, curriculumSkills)) === normalizeAcademicText(card.subject),
         ),
       }
-    })
-  }, [lessonDraft.subject, lessonRecords, linkedTeacher, teachers, visibleTeacherClasses])
+    }).sort(compareTeacherSubjectCardsByPriority)
+  }, [curriculumSkills, lessonDraft.subject, lessonRecords, linkedTeacher, teachers, visibleTeacherClasses])
 
   const modalCard = subjectModal
     ? subjectCards.find(
@@ -535,6 +620,42 @@ export default function RolePortalView({
     })
   }
 
+  async function handleSaveLessonAttendance(lesson: LessonRecord, attendanceStudents: Student[]) {
+    const keys = attendanceStudents.map((student) => getLessonAttendanceKey(lesson, student.id))
+    if (!keys.length) return
+
+    if (!onUpdateLessonRecord) {
+      commitAttendanceChanges(keys)
+      return
+    }
+
+    setIsSavingLesson(true)
+    setLessonError(null)
+    try {
+      const savedLesson = await onUpdateLessonRecord(lesson.id, {
+        classId: lesson.classId,
+        subject: lesson.subject,
+        date: lesson.date,
+        time: lesson.time,
+        content: lesson.content,
+        plan: lesson.plan,
+        resources: lesson.resources,
+        activity: lesson.activity,
+        notes: lesson.notes,
+        attendance: buildLessonAttendancePayload(lesson, attendanceStudents, attendance),
+      })
+      setCreatedLessonRecords((current) => [
+        savedLesson,
+        ...current.filter((record) => record.id !== savedLesson.id),
+      ])
+      commitAttendanceChanges(keys)
+    } catch {
+      setLessonError('Nao foi possivel salvar a frequencia no banco.')
+    } finally {
+      setIsSavingLesson(false)
+    }
+  }
+
   function openLessonRecord(subject: string, classId?: string) {
     const nextClassId =
       classId ??
@@ -623,6 +744,7 @@ export default function RolePortalView({
       resources: validationResult.data.resources,
       activity: validationResult.data.activity,
       notes: validationResult.data.notes ?? '',
+      attendance: buildLessonAttendancePayload(lessonDraft, lessonAttendanceStudents, attendance),
     }
 
     setIsSavingLesson(true)
@@ -702,8 +824,8 @@ export default function RolePortalView({
   const reservationSelectClass = 'min-h-10 w-full min-w-0 rounded-sm border border-slate-400 bg-white px-3 text-sm font-bold'
 
   const screenModel: RolePortalScreenModel = {
-    section, profile, currentUser, currentRole, schoolsData, evaluationsData, onCreateRoomReservation, onCreateLessonRecord,
-    schools, classes, students, teachers, guardians, selectedClassId, setSelectedClassId, selectedStudentId, setSelectedStudentId, activeSubject, setActiveSubject, subjectModal, setSubjectModal, createdLessonRecords, setCreatedLessonRecords, lessonHistoryPage, setLessonHistoryPage, subjectHistoryPage, setSubjectHistoryPage, reservations, setReservations, selectedReservation, setSelectedReservation, lessonRecordStep, setLessonRecordStep, lessonError, setLessonError, lessonFieldErrors, setLessonFieldErrors, isSavingLesson, setIsSavingLesson, isSavingReservation, setIsSavingReservation, reservationError, setReservationError, reservationFieldErrors, setReservationFieldErrors, attendance, setAttendance, savedAttendance, setSavedAttendance, attendanceDirtyKeys, setAttendanceDirtyKeys, lessonDraft, setLessonDraft, reservationDraft, setReservationDraft, linkedTeacher, teacherClasses, visibleTeacherClasses, activeSubjectClasses, lessonRecords, classScope, selectedClass, selectedStudent, selectedClassStudents, averageScore, averageAttendance, lowAttendanceStudents, lowScoreStudents, subjectCards, modalCard, sortedSubjectHistoryRecords, subjectHistoryTotalPages, safeSubjectHistoryPage, subjectHistoryStartIndex, subjectHistoryEndIndex, visibleSubjectHistoryRecords, modalClasses, modalSelectedClass, modalSelectedStudents, lessonClass, lessonTimeOptions, lessonAttendanceStudents, lessonAttendanceKeys, lessonAttendanceHasChanges, modalAttendanceKeys, modalAttendanceHasChanges, lessonPresentCount, lessonDetailsReady, sortedLessonRecords, lessonHistoryTotalPages, safeLessonHistoryPage, lessonHistoryStartIndex, lessonHistoryEndIndex, visibleLessonHistoryRecords, reservationEndTimeOptions, getSchoolName, getClassName, getClassRoom, getReservationSchoolName, clearLessonFieldError, clearReservationFieldError, updateLessonDraftField, updateReservationDraftField, updateAttendance, commitAttendanceChanges, openLessonRecord, openAttendanceList, getLessonValidationMessage, handleGoToLessonAttendance, handleSaveLesson, handleSaveReservation, handleReservationStartTimeChange, lessonHistoryPageSize, reservationStartTimeOptions, today, formatReservationDate, formatReservationTime, getLessonAttendanceKey, getFirstLessonTimeForClass, compareLessonRecordsByNewest, reservationFieldClass, reservationLabelClass, reservationInputClass, reservationSelectClass,
+    section, profile, currentUser, currentRole, schoolsData, evaluationsData: lazyEvaluationsData, onCreateRoomReservation, onCreateLessonRecord, onUpdateLessonRecord, onLoadTeacherSubjectCardsPage, onLoadEvaluationsData: handleLoadEvaluationsData, onDownloadEvaluation, onDownloadAnswerKey,
+    schools, classes, students, teachers, guardians, selectedClassId, setSelectedClassId, selectedStudentId, setSelectedStudentId, activeSubject, setActiveSubject, subjectModal, setSubjectModal, createdLessonRecords, setCreatedLessonRecords, lessonHistoryPage, setLessonHistoryPage, subjectHistoryPage, setSubjectHistoryPage, reservations, setReservations, selectedReservation, setSelectedReservation, lessonRecordStep, setLessonRecordStep, lessonError, setLessonError, lessonFieldErrors, setLessonFieldErrors, isSavingLesson, setIsSavingLesson, isSavingReservation, setIsSavingReservation, reservationError, setReservationError, reservationFieldErrors, setReservationFieldErrors, attendance, setAttendance, savedAttendance, setSavedAttendance, attendanceDirtyKeys, setAttendanceDirtyKeys, lessonDraft, setLessonDraft, reservationDraft, setReservationDraft, linkedTeacher, teacherClasses, visibleTeacherClasses, activeSubjectClasses, lessonRecords, classScope, selectedClass, selectedStudent, selectedClassStudents, averageScore, averageAttendance, lowAttendanceStudents, lowScoreStudents, subjectCards, modalCard, sortedSubjectHistoryRecords, subjectHistoryTotalPages, safeSubjectHistoryPage, subjectHistoryStartIndex, subjectHistoryEndIndex, visibleSubjectHistoryRecords, modalClasses, modalSelectedClass, modalSelectedStudents, lessonClass, lessonTimeOptions, lessonAttendanceStudents, lessonAttendanceKeys, lessonAttendanceHasChanges, modalAttendanceKeys, modalAttendanceHasChanges, lessonPresentCount, lessonDetailsReady, sortedLessonRecords, lessonHistoryTotalPages, safeLessonHistoryPage, lessonHistoryStartIndex, lessonHistoryEndIndex, visibleLessonHistoryRecords, reservationEndTimeOptions, getSchoolName, getClassName, getClassRoom, getReservationSchoolName, clearLessonFieldError, clearReservationFieldError, updateLessonDraftField, updateReservationDraftField, updateAttendance, commitAttendanceChanges, handleSaveLessonAttendance, openLessonRecord, openAttendanceList, getLessonValidationMessage, handleGoToLessonAttendance, handleSaveLesson, handleSaveReservation, handleReservationStartTimeChange, lessonHistoryPageSize, reservationStartTimeOptions, today, formatReservationDate, formatReservationTime, getLessonAttendanceKey, getFirstLessonTimeForClass, compareLessonRecordsByNewest, reservationFieldClass, reservationLabelClass, reservationInputClass, reservationSelectClass,
   }
 
   if (section === 'pedagogy' || (profile === 'COORDENADOR' && section === 'dashboard')) {
@@ -728,6 +850,10 @@ export default function RolePortalView({
 
   if (false && profile === 'ALUNO' && section === 'student-performance') {
     return <StudentLegacyPerformanceView model={screenModel} />
+  }
+
+  if (section === 'student-grades') {
+    return <StudentGradesView model={screenModel} />
   }
 
   if (

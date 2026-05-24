@@ -1,27 +1,63 @@
-# LiEnsina_Front_End
+# MeuEnsino Front End
+
+Front-end React + Vite do MeuEnsino. A UI e apenas camada de experiencia: autorizacao real, ownership e escopo multi-tenant ficam no back-end.
 
 ## Desenvolvimento local
 
-Use sempre:
-
 ```bash
+npm install
 npm run dev
 ```
 
-O script de desenvolvimento fixa o servidor em `127.0.0.1:5173`, limpa o cache do Vite, encerra processos Vite/esbuild antigos deste projeto, para containers LiEnsina antigos nessa porta e usa `strictPort`. Se a porta continuar ocupada por outro processo, o servidor para com erro em vez de abrir automaticamente em outra porta.
+O script fixa o Vite em `127.0.0.1:5173`, limpa cache local e usa `strictPort`.
+Em desenvolvimento, o Vite encaminha `/api/*` para `DEV_API_PROXY_TARGET` (padrao `http://127.0.0.1:3001`), entao o backend precisa estar rodando nessa porta ou a variavel deve ser ajustada no `.env`.
 
-`npm run dev:raw` existe apenas para diagnostico direto do Vite e ignora essas protecoes.
+## Carregamento seguro
+
+Ao restaurar sessao, o front chama somente:
+
+- `POST /auth/refresh`, usando cookie `HttpOnly`.
+- `GET /me`.
+- `GET /me/permissions`.
+
+Depois carrega dados sob demanda por dominio quando a rota/componente precisa. O refresh token nao e salvo em `localStorage` nem fica acessivel ao JavaScript; o access token permanece em memoria.
 
 ## Docker
-
-O container de producao usa a porta `8080` por padrao para nao conflitar com o Vite em `5173`.
 
 ```bash
 docker compose up --build
 ```
 
-Se ja existir um container antigo usando `5173`, pare-o antes de iniciar o Vite:
+O container de producao roda Nginx como usuario nao-root na porta `8080` interna. O `nginx.conf` aplica CSP, `frame-ancestors 'none'`, `X-Frame-Options DENY`, `X-Content-Type-Options nosniff`, `Referrer-Policy` e `Permissions-Policy`.
+
+Por padrao, o healthcheck do compose valida `/health` e `/api/health`. Em desenvolvimento isolado do front, use `CHECK_BACKEND_HEALTH=false`; em homologacao/producao mantenha `true` para detectar API indisponivel.
+
+## Variaveis de ambiente
 
 ```bash
-docker stop liensina-frontend
+VITE_API_URL=/api
+DEV_API_PROXY_TARGET=http://127.0.0.1:3001
+VITE_ALLOWED_ASSET_ORIGINS=
+FRONTEND_PORT=8080
+CHECK_BACKEND_HEALTH=true
 ```
+
+`VITE_ALLOWED_ASSET_ORIGINS` deve ficar vazio sempre que possivel. Use apenas para CDNs explicitamente confiaveis que servem assets publicos e alinhe a allowlist com a CSP de producao.
+
+## Contrato com o back-end
+
+As telas agora preferem endpoints escopados por sessao, como `/me/schools`, `/me/classes`, `/me/exams`, `/me/students`, `/me/grades`, `/me/exam-corrections`, `/me/answer-cards`, `/me/lesson-records`, `/me/room-reservations`, `/me/calendar-events` e `/me/meal-managements`. Endpoints globais devem ficar restritos a perfis administrativos autorizados.
+
+O contrato detalhado de seguranca do back-end esta em `SECURITY_BACKEND_CONTRACT.md`.
+
+## Comandos
+
+```bash
+npm test
+npm run build
+npm audit --omit=dev
+```
+
+## Observacao de seguranca
+
+Rotas, menus e botoes escondidos no front nao sao controle de seguranca. Qualquer chamada manual via Insomnia/Postman precisa ser bloqueada pelo back-end, e as telas devem tratar 401/403/404 como estado normal de acesso negado.
