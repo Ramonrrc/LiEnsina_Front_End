@@ -10,7 +10,7 @@ npm run dev
 ```
 
 O script fixa o Vite em `127.0.0.1:5173`, limpa cache local e usa `strictPort`.
-Em desenvolvimento, o Vite encaminha `/api/*` para `DEV_API_PROXY_TARGET` (padrao `http://127.0.0.1:3001`), entao o backend precisa estar rodando nessa porta ou a variavel deve ser ajustada no `.env`.
+Em desenvolvimento, o Vite encaminha `/api/*` e `/uploads/*` para `DEV_API_PROXY_TARGET` (padrao `http://127.0.0.1:3001`), entao o backend precisa estar rodando nessa porta ou a variavel deve ser ajustada no `.env`.
 
 ## Carregamento seguro
 
@@ -49,6 +49,10 @@ CHECK_BACKEND_HEALTH=true
 As telas agora preferem endpoints escopados por sessao, como `/me/schools`, `/me/classes`, `/me/exams`, `/me/students`, `/me/grades`, `/me/exam-corrections`, `/me/answer-cards`, `/me/lesson-records`, `/me/room-reservations`, `/me/calendar-events` e `/me/meal-managements`. Endpoints globais devem ficar restritos a perfis administrativos autorizados.
 
 O contrato detalhado de seguranca do back-end esta em `SECURITY_BACKEND_CONTRACT.md`.
+
+## Provas
+
+A criacao de provas no front limita a quantidade a 100 questoes, alinhada ao backend e ao servico OMR. Se o backend rejeitar payload acima desse teto, a tela exibe erro publico sem detalhes internos.
 
 ## Comandos
 

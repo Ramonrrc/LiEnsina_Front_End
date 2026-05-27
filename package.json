@@ -11,6 +11,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@fontsource/dm-sans": "^5.2.8",
     "@react-pdf/renderer": "^4.3.2",
     "@schedule-x/calendar": "^4.5.0",
     "@schedule-x/theme-default": "^4.5.0",
