@@ -16,7 +16,7 @@ import { getOfficialAcademicSubjectList, getOfficialAcademicSubjectListForGrade 
 import { resolveApiAssetUrl } from '../api'
 import { formatClassGrade, getClassGradeOptions } from '../class-grade-options'
 import { getAverageLessonAttendanceRate, getStudentAttendanceRateFromLessons } from '../lib/lesson-attendance'
-import type { ClassRoom, Desempenho, Guardian, LessonRecord, PaginationMeta, Role, School, SchoolsPagePayload, SchoolsPageQuery, Student, Teacher, UserAccount } from '../types'
+import type { ClassesPagePayload, ClassesPageQuery, ClassRoom, Desempenho, Guardian, LessonRecord, PaginationMeta, Role, School, SchoolsPagePayload, SchoolsPageQuery, Student, Teacher, UserAccount } from '../types'
 
 /* ─── Types ─── */
 interface SchoolsViewProps {
@@ -25,6 +25,7 @@ interface SchoolsViewProps {
   schools: School[]
   schoolsPagination?: PaginationMeta
   classes: ClassRoom[]
+  classesPagination?: PaginationMeta
   students: Student[]
   teachers: Teacher[]
   guardians: Guardian[]
@@ -32,6 +33,7 @@ interface SchoolsViewProps {
   assetVersion?: ProfileAssetVersion
   readOnly?: boolean
   onLoadSchoolsPage?: (params: SchoolsPageQuery) => Promise<SchoolsPagePayload>
+  onLoadClassesPage?: (params: ClassesPageQuery) => Promise<ClassesPagePayload>
   onCreate: (draft: Partial<School>) => Promise<void>
   onUpdate: (id: string, draft: Partial<School>) => Promise<void>
   onCreateClass: (draft: Partial<ClassRoom>) => Promise<void>
@@ -46,6 +48,7 @@ interface SchoolsViewProps {
 
 /* ─── Constants ─── */
 const currentYear = new Date().getFullYear()
+const classPageSizeOptions = [15, 25, 50, 100] as const
 
 const emptySchool: Partial<School> = { name: '', city: '', address: '', director: '', inepCode: '', active: true }
 const emptyClass: Partial<ClassRoom> = { name: '', grade: '', shift: 'Manha', schoolId: '', teacherId: '', teacherIds: [], academicYear: currentYear, schedule: '', bnccFocus: [] }
@@ -449,7 +452,7 @@ function SectionHeader({ label, title, description, icon: Icon }: { label: strin
 function PrimaryBtn({ children, onClick, type = 'button', disabled }: { children: React.ReactNode; onClick?: () => void; type?: 'button' | 'submit'; disabled?: boolean }) {
   return (
     <button type={type} onClick={onClick} disabled={disabled}
-      className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-indigo-600 to-violet-600 px-4 text-[13px] font-semibold text-white shadow-sm transition-all hover:from-indigo-700 hover:to-violet-700 hover:shadow-md hover:-translate-y-px active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none disabled:hover:translate-y-0 font-['DM_Sans']">
+      className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-[#5b4fe8] px-4 text-[13px] font-semibold text-white shadow-sm transition-all hover:from-indigo-700 hover:to-violet-700 hover:shadow-md hover:-translate-y-px active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none disabled:hover:translate-y-0 font-['DM_Sans']">
       {children}
     </button>
   )
@@ -487,7 +490,7 @@ function SchoolCard({
       onClick={onSelect}
       onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect() } }}
       className={`sv-card sv-school-card group cursor-pointer rounded-2xl border bg-white p-5 text-left focus:outline-none focus:ring-2 focus:ring-indigo-200 flex flex-col gap-3.5
-        ${isSelected ? 'sv-school-selected border-indigo-500' : 'border-slate-200'}`}
+        ${isSelected ? 'sv-school-selected border-indigo-500' : 'border-slate-300'}`}
     >
       {/* Header */}
       <div className="flex items-start justify-between gap-3">
@@ -621,7 +624,7 @@ function ClassCard({
       {/* Footer */}
       <div className="mt-auto grid grid-cols-2 gap-2 pt-3 border-t border-slate-300">
         <button type="button" onClick={onViewDetails}
-          className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-gradient-to-r from-indigo-600 to-violet-600 px-3 text-xs font-semibold text-white shadow-sm transition-all hover:shadow-md active:scale-95 font-['DM_Sans']">
+          className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-[#5b4fe8] px-3 text-xs font-semibold text-white shadow-sm transition-all hover:shadow-md active:scale-95 font-['DM_Sans']">
           <Eye size={13} /> Ver detalhes
         </button>
         <button type="button" onClick={onEdit}
@@ -637,9 +640,9 @@ function ClassCard({
    Main Component
 ════════════════════════════════════════════════════════════════ */
 export default function SchoolsView({
-  currentUser, currentRole, schools, schoolsPagination, classes, students, teachers, guardians,
+  currentUser, currentRole, schools, schoolsPagination, classes, classesPagination, students, teachers, guardians,
   lessonRecords = [], assetVersion, readOnly = false,
-  onLoadSchoolsPage,
+  onLoadSchoolsPage, onLoadClassesPage,
   onCreate, onUpdate, onCreateClass, onUpdateClass,
   onCreateTeacher, onCreateStudent, onCreateGuardian,
 }: SchoolsViewProps) {
@@ -692,15 +695,35 @@ export default function SchoolsView({
   const [schoolPageLoading, setSchoolPageLoading] = useState(false)
   const [schoolPageError, setSchoolPageError] = useState<string | null>(null)
   const loadSchoolsPageRef = useRef(onLoadSchoolsPage)
+  const [classQuery, setClassQuery] = useState('')
+  const [classBackendSearch, setClassBackendSearch] = useState('')
+  const [classPage, setClassPage] = useState(classesPagination?.page ?? 1)
+  const [classLimit, setClassLimit] = useState(classesPagination?.limit ?? DEFAULT_PAGE_SIZE)
+  const [classPageClasses, setClassPageClasses] = useState(classes)
+  const [classPagePagination, setClassPagePagination] = useState<PaginationMeta>(
+    classesPagination ?? getLocalPagination(classes.length, 1, DEFAULT_PAGE_SIZE),
+  )
+  const [classPageLoading, setClassPageLoading] = useState(false)
+  const [classPageError, setClassPageError] = useState<string | null>(null)
+  const loadClassesPageRef = useRef(onLoadClassesPage)
 
   useEffect(() => {
     loadSchoolsPageRef.current = onLoadSchoolsPage
   }, [onLoadSchoolsPage])
 
   useEffect(() => {
+    loadClassesPageRef.current = onLoadClassesPage
+  }, [onLoadClassesPage])
+
+  useEffect(() => {
     setSchoolPageSchools(schools)
     setSchoolPagePagination(schoolsPagination ?? getLocalPagination(schools.length, schoolPage, schoolLimit))
   }, [schools, schoolsPagination])
+
+  useEffect(() => {
+    setClassPageClasses(classes)
+    setClassPagePagination(classesPagination ?? getLocalPagination(classes.length, classPage, classLimit))
+  }, [classes, classesPagination])
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -710,6 +733,19 @@ export default function SchoolsView({
 
     return () => window.clearTimeout(timer)
   }, [query])
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setClassPage(1)
+      setClassBackendSearch(classQuery)
+    }, 350)
+
+    return () => window.clearTimeout(timer)
+  }, [classQuery])
+
+  useEffect(() => {
+    setClassPage(1)
+  }, [selectedSchoolId])
 
   useEffect(() => {
     const loadSchoolsPage = loadSchoolsPageRef.current
@@ -738,7 +774,35 @@ export default function SchoolsView({
     }
   }, [schoolBackendSearch, schoolLimit, schoolPage])
 
+  useEffect(() => {
+    const loadClassesPage = loadClassesPageRef.current
+    if (!loadClassesPage || !selectedSchoolId) return
+
+    let cancelled = false
+    setClassPageLoading(true)
+    setClassPageError(null)
+
+    loadClassesPage({ page: classPage, limit: classLimit, search: classBackendSearch, schoolId: selectedSchoolId })
+      .then((payload) => {
+        if (cancelled) return
+        setClassPageClasses(payload.classes)
+        setClassPagePagination(payload.pagination)
+      })
+      .catch((error) => {
+        if (cancelled) return
+        setClassPageError(error instanceof Error ? error.message : 'Nao foi possivel carregar as turmas.')
+      })
+      .finally(() => {
+        if (!cancelled) setClassPageLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [classBackendSearch, classLimit, classPage, selectedSchoolId, classes])
+
   const schoolsForList = onLoadSchoolsPage ? schoolPageSchools : schools
+  const classesForList = onLoadClassesPage ? classPageClasses : classes
 
   const visibleSchools = useMemo(
     () => isDirectorView ? schoolsForList.filter(s => s.id === linkedSchoolId) : schoolsForList,
@@ -746,7 +810,7 @@ export default function SchoolsView({
   )
   const selectedSchool = useMemo(() => visibleSchools.find(s => s.id === selectedSchoolId) ?? null, [selectedSchoolId, visibleSchools])
   const detailsSchool = useMemo(() => schoolDetailsId ? schoolsForList.find(s => s.id === schoolDetailsId) ?? schools.find(s => s.id === schoolDetailsId) ?? null : null, [schoolDetailsId, schools, schoolsForList])
-  const detailsClass = useMemo(() => classDetailsId ? classes.find(c => c.id === classDetailsId) ?? null : null, [classDetailsId, classes])
+  const detailsClass = useMemo(() => classDetailsId ? classesForList.find(c => c.id === classDetailsId) ?? classes.find(c => c.id === classDetailsId) ?? null : null, [classDetailsId, classes, classesForList])
 
   function isCurrentLinkedProfile(entity: ProfilePreviewEntity) {
     return Boolean(entity.id && (entity.id === currentUser.linkedStudentId || entity.id === currentUser.linkedTeacherId || entity.userId === currentUser.id))
@@ -778,7 +842,16 @@ export default function SchoolsView({
     return visibleSchools.filter(s => s.name.toLowerCase().includes(q))
   }, [onLoadSchoolsPage, query, visibleSchools])
 
-  const filteredClasses = useMemo(() => selectedSchoolId ? classes.filter(c => c.schoolId === selectedSchoolId) : [], [classes, selectedSchoolId])
+  const filteredClasses = useMemo(() => {
+    if (!selectedSchoolId) return []
+    if (onLoadClassesPage) return classesForList
+
+    const q = classQuery.trim().toLowerCase()
+    return classesForList.filter((classRoom) => (
+      classRoom.schoolId === selectedSchoolId
+      && (!q || classRoom.name.toLowerCase().includes(q))
+    ))
+  }, [classQuery, classesForList, onLoadClassesPage, selectedSchoolId])
 
   const schoolOptions = useMemo<Array<CompactSelectOption<string>>>(() => [{ value: '', label: 'Selecione a escola', disabled: true }, ...visibleSchools.map(s => ({ value: s.id, label: s.name }))], [visibleSchools])
   const teacherOptions = useMemo<Array<CompactSelectOption<string>>>(() => [{ value: '', label: 'Selecione o professor', disabled: true }, ...teachers.filter(t => !classDraft.schoolId || t.schoolId === classDraft.schoolId).map(t => ({ value: t.id, label: t.name, description: getReadableDisciplines([t.specialty]).join(', ') || 'Sem disciplina' }))], [classDraft.schoolId, teachers])
@@ -917,6 +990,7 @@ export default function SchoolsView({
   const totalActive = visibleSchools.filter(s => s.active).length
   const totalStudents = students.filter(s => visibleSchools.some(sc => sc.id === s.schoolId)).length
   const schoolResultsTotal = onLoadSchoolsPage ? schoolPagePagination.total : filteredSchools.length
+  const classResultsTotal = onLoadClassesPage ? classPagePagination.total : filteredClasses.length
 
   /* ── Render ── */
   return (
@@ -983,12 +1057,7 @@ export default function SchoolsView({
           <header className="sv-section">
             <Eyebrow>Gestão escolar · Rede de ensino</Eyebrow>
             <div className="flex items-end justify-between gap-4 flex-wrap mt-1">
-              <h1 className="font-['Lora'] text-3xl lg:text-4xl font-semibold text-slate-900 leading-tight tracking-tight">Escolas</h1>
-              {!readOnly && !isDirectorView && (
-                <PrimaryBtn onClick={openCreateSchoolModal}>
-                  <Plus className="h-4 w-4" /> Nova escola
-                </PrimaryBtn>
-              )}
+              <h1 className="font-DMSans text-3xl lg:text-4xl font-semibold text-slate-900 leading-tight tracking-tight">Escolas</h1>
             </div>
 
             {/* Context bar (sem barra colorida no topo, divisórias finas) */}
@@ -998,7 +1067,7 @@ export default function SchoolsView({
                 {!isDirectorView && (
                   <div className="flex flex-col gap-2 p-4">
                     <Eyebrow>Buscar escola</Eyebrow>
-                    <label className="flex items-center gap-2.5 rounded-lg border border-slate-300 bg-white px-3 py-2 transition-all focus-within:border-indigo-500 focus-within:ring-2 focus-within:ring-indigo-100 hover:border-slate-300">
+                    <label className="flex items-center gap-2.5 rounded-lg border border-slate-400 bg-white px-3 py-2 transition-all focus-within:border-indigo-500 focus-within:ring-2 focus-within:ring-indigo-100 hover:border-indigo-500">
                       <Search className="h-3.5 w-3.5 shrink-0 text-slate-400" />
                       <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Nome da escola"
                         className="w-full bg-transparent text-sm font-medium text-slate-800 outline-none placeholder:text-slate-400" />
@@ -1020,9 +1089,8 @@ export default function SchoolsView({
 
                 {/* Global metrics */}
                 <div className="flex flex-col justify-between gap-3 p-4 min-w-[320px]">
-                  <div className="grid grid-cols-4 gap-2">
+                  <div className="grid grid-cols-3 gap-2">
                     <MetricTile label="Escolas" value={visibleSchools.length} accent="text-slate-900" />
-                    <MetricTile label="Ativas" value={totalActive} accent="text-emerald-600" />
                     <MetricTile label="Turmas" value={classes.length} accent="text-indigo-600" />
                     <MetricTile label="Alunos" value={totalStudents} accent="text-violet-600" />
                   </div>
@@ -1046,71 +1114,73 @@ export default function SchoolsView({
           {toast && <Toast message={toast.msg} type={toast.type} onClose={() => setToast(null)} />}
 
           {/* ═══ SECTION 1 — Schools ═══ */}
-          <section className="sv-section overflow-hidden rounded-2xl border border-slate-300 bg-white shadow-sm">
-            <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 bg-white px-5 py-4">
-              <SectionHeader
-                icon={Building2}
-                label={isDirectorView ? 'Escola vinculada' : 'Escolas'}
-                title={isDirectorView ? 'Minha escola' : 'Unidades cadastradas'}
-                description={`${schoolResultsTotal} escola${schoolResultsTotal !== 1 ? 's' : ''} encontrada${schoolResultsTotal !== 1 ? 's' : ''}`}
-              />
-              {!isDirectorView && !readOnly && (
-                <PrimaryBtn onClick={openCreateSchoolModal}>
-                  <Plus size={15} /> Nova escola
-                </PrimaryBtn>
-              )}
-            </div>
-            <div className="p-5">
-              {schoolPageError && (
-                <div className="mb-4 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700">
-                  {schoolPageError}
-                </div>
-              )}
-              {loading || schoolPageLoading ? (
-                <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 xl:grid-cols-3">
-                  {[0,1,2].map(i => <SkeletonSchoolCard key={i} />)}
-                </div>
-              ) : filteredSchools.length > 0 ? (
-                <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 xl:grid-cols-3">
-                  {filteredSchools.map((school, i) => (
-                    <SchoolCard
-                      key={school.id} school={school}
-                      classCount={classes.filter(c => c.schoolId === school.id).length}
-                      studentCount={students.filter(s => s.schoolId === school.id).length}
-                      isSelected={selectedSchoolId === school.id}
-                      animDelay={i * 50}
-                      onSelect={() => setSelectedSchoolId(school.id)}
-                      onEdit={() => openEditSchoolModal(school)}
-                      onViewDetails={() => setSchoolDetailsId(school.id)}
-                    />
-                  ))}
-                </div>
-              ) : (
-                <EmptyState
+          {!isDirectorView && (
+            <section className="sv-section overflow-hidden rounded-2xl border border-slate-300 bg-white shadow-sm">
+              <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 bg-white px-5 py-4">
+                <SectionHeader
                   icon={Building2}
-                  title={query ? 'Nenhuma escola encontrada' : 'Nenhuma escola cadastrada'}
-                  sub={query ? 'Tente ajustar o termo de busca.' : 'Comece cadastrando a primeira escola da rede.'}
-                  action={!readOnly && !query && !isDirectorView ? (
-                    <PrimaryBtn onClick={openCreateSchoolModal}><Plus size={15} /> Cadastrar escola</PrimaryBtn>
-                  ) : undefined}
+                  label="Escolas"
+                  title="Unidades cadastradas"
+                  description={`${schoolResultsTotal} escola${schoolResultsTotal !== 1 ? 's' : ''} encontrada${schoolResultsTotal !== 1 ? 's' : ''}`}
+                />
+                {!readOnly && (
+                  <PrimaryBtn onClick={openCreateSchoolModal}>
+                    <Plus size={15} /> Nova escola
+                  </PrimaryBtn>
+                )}
+              </div>
+              <div className="p-5">
+                {schoolPageError && (
+                  <div className="mb-4 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700">
+                    {schoolPageError}
+                  </div>
+                )}
+                {loading || schoolPageLoading ? (
+                  <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 xl:grid-cols-3">
+                    {[0,1,2].map(i => <SkeletonSchoolCard key={i} />)}
+                  </div>
+                ) : filteredSchools.length > 0 ? (
+                  <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 xl:grid-cols-3">
+                    {filteredSchools.map((school, i) => (
+                      <SchoolCard
+                        key={school.id} school={school}
+                        classCount={classes.filter(c => c.schoolId === school.id).length}
+                        studentCount={students.filter(s => s.schoolId === school.id).length}
+                        isSelected={selectedSchoolId === school.id}
+                        animDelay={i * 50}
+                        onSelect={() => setSelectedSchoolId(school.id)}
+                        onEdit={() => openEditSchoolModal(school)}
+                        onViewDetails={() => setSchoolDetailsId(school.id)}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <EmptyState
+                    icon={Building2}
+                    title={query ? 'Nenhuma escola encontrada' : 'Nenhuma escola cadastrada'}
+                    sub={query ? 'Tente ajustar o termo de busca.' : 'Comece cadastrando a primeira escola da rede.'}
+                    action={!readOnly && !query ? (
+                      <PrimaryBtn onClick={openCreateSchoolModal}><Plus size={15} /> Cadastrar escola</PrimaryBtn>
+                    ) : undefined}
+                  />
+                )}
+              </div>
+              {onLoadSchoolsPage && (
+                <PaginationControls
+                  label="Escolas"
+                  pagination={schoolPagePagination}
+                  limit={schoolLimit}
+                  loading={schoolPageLoading}
+                  source="backend"
+                  onPageChange={(page) => setSchoolPage(page)}
+                  onLimitChange={(limit) => {
+                    setSchoolLimit(limit)
+                    setSchoolPage(1)
+                  }}
                 />
               )}
-            </div>
-            {!isDirectorView && onLoadSchoolsPage && (
-              <PaginationControls
-                label="Escolas"
-                pagination={schoolPagePagination}
-                limit={schoolLimit}
-                loading={schoolPageLoading}
-                source="backend"
-                onPageChange={(page) => setSchoolPage(page)}
-                onLimitChange={(limit) => {
-                  setSchoolLimit(limit)
-                  setSchoolPage(1)
-                }}
-              />
-            )}
-          </section>
+            </section>
+          )}
 
           {/* ═══ SECTION 2 — Classes ═══ */}
           <section className="sv-section overflow-hidden rounded-2xl border border-slate-300 bg-white shadow-sm">
@@ -1120,17 +1190,32 @@ export default function SchoolsView({
                 label="Turmas"
                 title={selectedSchool ? selectedSchool.name : 'Selecione uma escola'}
                 description={selectedSchool
-                  ? `${filteredClasses.length} turma${filteredClasses.length !== 1 ? 's' : ''} vinculada${filteredClasses.length !== 1 ? 's' : ''}`
+                  ? `${classResultsTotal} turma${classResultsTotal !== 1 ? 's' : ''} vinculada${classResultsTotal !== 1 ? 's' : ''}`
                   : 'Escolha uma escola acima para listar as turmas.'}
               />
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <label className="flex h-10 min-w-[240px] items-center gap-2.5 rounded-lg border border-slate-300 bg-white px-3 transition-all focus-within:border-indigo-500 focus-within:ring-2 focus-within:ring-indigo-100 hover:border-indigo-300">
+                  <Search className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                  <input
+                    value={classQuery}
+                    onChange={e => setClassQuery(e.target.value)}
+                    placeholder="Buscar turma"
+                    disabled={!selectedSchool}
+                    className="w-full bg-transparent text-sm font-medium text-slate-800 outline-none placeholder:text-slate-400 disabled:cursor-not-allowed disabled:text-slate-400"
+                  />
+                  {classQuery && (
+                    <button type="button" onClick={() => setClassQuery('')} aria-label="Limpar busca de turmas">
+                      <X className="h-3.5 w-3.5 text-slate-400" />
+                    </button>
+                  )}
+                </label>
                 {/* Quick-add toolbar */}
                 {!readOnly && (
-                  <div className="flex items-center overflow-hidden rounded-lg border border-slate-200 bg-white">
+                  <div className="flex items-center overflow-hidden rounded-lg border border-slate-300 bg-white">
                     {[
-                      { title: 'Cadastrar professor', icon: UserRound, action: () => openCreateTeacherModal(), hover: 'hover:bg-indigo-50 hover:text-indigo-600' },
-                      { title: 'Cadastrar aluno', icon: GraduationCap, action: () => openCreateStudentModal(), hover: 'hover:bg-violet-50 hover:text-violet-600' },
-                      { title: 'Cadastrar responsável', icon: Shield, action: () => openCreateGuardianModal(), hover: 'hover:bg-emerald-50 hover:text-emerald-600' },
+                      { title: 'Cadastrar professor', icon: UserRound, action: () => openCreateTeacherModal(), hover: 'hover:bg-indigo-200/90 hover:text-indigo-600' },
+                      { title: 'Cadastrar aluno', icon: GraduationCap, action: () => openCreateStudentModal(), hover: 'hover:bg-violet-200/90 hover:text-violet-600' },
+                      { title: 'Cadastrar responsável', icon: Shield, action: () => openCreateGuardianModal(), hover: 'hover:bg-emerald-100 hover:text-emerald-600' },
                     ].map((btn, i, arr) => (
                       <button key={btn.title} type="button" title={btn.title} disabled={!selectedSchool}
                         onClick={btn.action}
@@ -1148,7 +1233,12 @@ export default function SchoolsView({
               </div>
             </div>
             <div className="p-5">
-              {loading ? (
+              {classPageError && (
+                <div className="mb-4 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700">
+                  {classPageError}
+                </div>
+              )}
+              {loading || classPageLoading ? (
                 <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 xl:grid-cols-3">
                   {[0,1,2].map(i => <SkeletonClassCard key={i} />)}
                 </div>
@@ -1171,12 +1261,27 @@ export default function SchoolsView({
               ) : (
                 <EmptyState
                   icon={GraduationCap}
-                  title="Nenhuma turma cadastrada"
-                  sub="Crie uma turma para vincular professores e alunos."
-                  action={!readOnly ? <PrimaryBtn onClick={openCreateClassModal}><Plus size={15} /> Criar turma</PrimaryBtn> : undefined}
+                  title={classBackendSearch ? 'Nenhuma turma encontrada' : 'Nenhuma turma cadastrada'}
+                  sub={classBackendSearch ? 'Tente ajustar o nome pesquisado.' : 'Crie uma turma para vincular professores e alunos.'}
+                  action={!readOnly && !classBackendSearch ? <PrimaryBtn onClick={openCreateClassModal}><Plus size={15} /> Criar turma</PrimaryBtn> : undefined}
                 />
               )}
             </div>
+            {selectedSchool && onLoadClassesPage && (
+              <PaginationControls
+                label="Turmas"
+                pagination={classPagePagination}
+                limit={classLimit}
+                loading={classPageLoading}
+                source="backend"
+                pageSizeOptions={classPageSizeOptions}
+                onPageChange={(page) => setClassPage(page)}
+                onLimitChange={(limit) => {
+                  setClassLimit(limit)
+                  setClassPage(1)
+                }}
+              />
+            )}
           </section>
 
         </div>
@@ -1271,7 +1376,7 @@ export default function SchoolsView({
           <LightModal open onClose={() => setClassDetailsId(null)} title={detailsClass.name} subtitle="Detalhes da turma" wide
             headerAction={!readOnly ? (
               <button type="button" onClick={() => { setClassDetailsId(null); openEditClassModal(detailsClass) }}
-                className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[12px] font-semibold text-slate-600 transition-all hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700 font-['DM_Sans']">
+                className="inline-flex items-center gap-2 rounded-lg border border-slate-500 bg-white px-3 py-1.5 text-[12px] font-semibold text-slate-600 transition-all hover:border-indigo-400 hover:bg-indigo-50 hover:text-indigo-700 font-['DM_Sans']">
                 <Pencil size={13} /> Editar turma
               </button>
             ) : undefined}
@@ -1295,74 +1400,6 @@ export default function SchoolsView({
                   </div>
                 ))}
               </div>
-
-              {/* Performance metrics */}
-              {classStudents.length > 0 && (
-                <div className="grid grid-cols-3 gap-3 max-[640px]:grid-cols-1">
-                  {/* Frequência */}
-                  <div className="rounded-xl border border-slate-300 bg-white px-4 py-3.5">
-                    <div className="flex items-center gap-2 mb-2.5">
-                      <div className="flex h-6 w-6 items-center justify-center rounded-md bg-indigo-600">
-                        <Activity size={12} className="text-white" />
-                      </div>
-                      <Eyebrow>Freq. média</Eyebrow>
-                    </div>
-                    <p className={`font-['Lora'] text-2xl font-semibold leading-none mb-2 ${(avgAttendance ?? 0) >= 75 ? 'text-emerald-600' : 'text-rose-600'}`}>{avgAttendance}%</p>
-                    <div className="h-1.5 w-full rounded-full bg-slate-100 overflow-hidden">
-                      <div className={`h-full rounded-full transition-all duration-700 ${(avgAttendance ?? 0) >= 75 ? 'bg-emerald-500' : 'bg-rose-500'}`} style={{ width: `${avgAttendance ?? 0}%` }} />
-                    </div>
-                  </div>
-
-                  {/* Média geral */}
-                  <div className="rounded-xl border border-slate-300 bg-white px-4 py-3.5">
-                    <div className="flex items-center gap-2 mb-2.5">
-                      <div className="flex h-6 w-6 items-center justify-center rounded-md bg-violet-600">
-                        <BarChart3 size={12} className="text-white" />
-                      </div>
-                      <Eyebrow>Média geral</Eyebrow>
-                    </div>
-                    <p className={`font-['Lora'] text-2xl font-semibold leading-none mb-2 ${scoreColor(avgResult.average)}`}>
-                      {avgResult.average !== null ? avgResult.average.toFixed(1) : '—'}
-                    </p>
-                    <div className="h-1.5 w-full rounded-full bg-slate-100 overflow-hidden">
-                      <div className={`h-full rounded-full transition-all duration-700 ${scoreBar(avgResult.average)}`} style={{ width: `${pct}%` }} />
-                    </div>
-                  </div>
-
-                  {/* Distribuição */}
-                  {(() => {
-                    const otimo = classStudents.filter(s => getStudentPerformance(s) === 'Otimo').length
-                    const medio = classStudents.filter(s => getStudentPerformance(s) === 'Medio').length
-                    const baixo = classStudents.filter(s => getStudentPerformance(s) === 'Baixo').length
-                    const total = classStudents.length
-                    return (
-                      <div className="rounded-xl border border-slate-300 bg-white px-4 py-3.5">
-                        <div className="flex items-center gap-2 mb-2.5">
-                          <div className="flex h-6 w-6 items-center justify-center rounded-md bg-sky-500">
-                            <Award size={12} className="text-white" />
-                          </div>
-                          <Eyebrow>Distribuição</Eyebrow>
-                        </div>
-                        <div className="flex h-1.5 w-full overflow-hidden rounded-full bg-slate-100 mb-2.5">
-                          {total > 0 && <>
-                            <div className="h-full bg-emerald-500 transition-all" style={{ width: `${(otimo/total)*100}%` }} />
-                            <div className="h-full bg-amber-400 transition-all" style={{ width: `${(medio/total)*100}%` }} />
-                            <div className="h-full bg-rose-500 transition-all" style={{ width: `${(baixo/total)*100}%` }} />
-                          </>}
-                        </div>
-                        <div className="flex items-center justify-between">
-                          {[{ l:'Ótimo', v: otimo, c:'text-emerald-600' },{ l:'Médio', v: medio, c:'text-amber-600' },{ l:'Baixo', v: baixo, c:'text-rose-600' }].map(d => (
-                            <div key={d.l} className="text-center">
-                              <p className={`font-['Lora'] text-base font-semibold leading-none ${d.c}`}>{d.v}</p>
-                              <Eyebrow className="mt-1">{d.l}</Eyebrow>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )
-                  })()}
-                </div>
-              )}
 
               {/* Quick add */}
               {!readOnly && (
@@ -1592,7 +1629,7 @@ export default function SchoolsView({
           </div>
 
           {/* Additional teachers */}
-          <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-4">
+          <div className="rounded-xl border border-slate-300 bg-slate-50/60 p-4">
             <div className="flex items-center gap-2 mb-3">
               <Users size={12} className="text-indigo-500" />
               <Eyebrow>Professores adicionais</Eyebrow>
@@ -1602,7 +1639,7 @@ export default function SchoolsView({
                 const checked = t.id === classDraft.teacherId || (classDraft.teacherIds ?? []).includes(t.id)
                 return (
                   <label key={t.id} className={`flex cursor-pointer items-start gap-3 rounded-lg border px-3.5 py-2.5 text-sm font-semibold text-slate-700 transition-all
-                    ${checked ? 'border-indigo-400 bg-indigo-50' : 'border-slate-200 bg-white hover:border-indigo-200'}`}>
+                    ${checked ? 'border-indigo-400 bg-indigo-50' : 'border-slate-300 bg-white hover:border-indigo-200'}`}>
                     <input type="checkbox" className="mt-0.5 h-4 w-4 accent-indigo-600" checked={checked} onChange={() => toggleClassTeacher(t.id)} />
                     <span className="min-w-0">
                       <span className="block truncate">{t.name}</span>

@@ -4,6 +4,8 @@ import type {
   AccessUserSearchPayload,
   AddMealFoodRequestToStockPayload,
   CalendarScreenPayload,
+  ClassesPagePayload,
+  ClassesPageQuery,
   ClassRoom,
   AssessmentDescriptor,
   CreateMealFoodRequestPayload,
@@ -15,6 +17,7 @@ import type {
   CreateMealManagementPayload,
   CreateRoomReservationPayload,
   DashboardAlertsPageQuery,
+  DashboardFiltersQuery,
   DashboardScreenPayload,
   Evaluation,
   EvaluationAnswerCard,
@@ -37,7 +40,6 @@ import type {
   MealsScreenPayload,
   MePermissionsPayload,
   NotificationsScreenPayload,
-  PeoplePageQuery,
   Question,
   QuestionBankPagePayload,
   QuestionBankPageQuery,
@@ -53,10 +55,12 @@ import type {
   SessionPayload,
   SettingsScreenPayload,
   Student,
+  StudentsPageQuery,
   StudentsPagePayload,
   TeacherSubjectCardsPagePayload,
   TeacherSubjectsPageQuery,
   Teacher,
+  TeachersPageQuery,
   TeachersPagePayload,
   UpdateLessonRecordPayload,
   UpdateMealBudgetPayload,
@@ -67,6 +71,7 @@ import type {
 } from './types'
 import { sanitizePublicErrorMessage } from './lib/safe-errors'
 import { validateOmrBatchFiles, validateOmrFile, validateProfileImageFile } from './lib/file-security'
+import { MAX_EVALUATION_QUESTIONS, evaluationQuestionLimitMessage } from './lib/evaluation-limits'
 
 const configuredApiBaseUrl = import.meta.env.VITE_API_URL || '/api'
 
@@ -422,6 +427,39 @@ async function listResource<T, K extends string>(
   return normalizeResourceList(payload, key)
 }
 
+async function listAllResource<T, K extends string>(
+  token: string,
+  path: string,
+  key: K,
+  params: Record<string, string | number | boolean | null | undefined> = {},
+) {
+  const limit = clampApiPageLimit(params.limit ?? MAX_API_PAGE_LIMIT, MAX_API_PAGE_LIMIT)
+  let page = clampApiPage(params.page, 1)
+  const items: T[] = []
+
+  for (let guard = 0; guard < 1000; guard += 1) {
+    const payload = await apiRequest<PaginatedResponse<T, K> | T[]>(`${path}${buildQuery({ ...params, page, limit })}`, { token })
+    const pageItems = normalizeResourceList(payload, key)
+    items.push(...pageItems)
+
+    if (Array.isArray(payload)) break
+
+    const pagination = payload.pagination
+    if (!pagination) {
+      if (pageItems.length < limit) break
+      page += 1
+      continue
+    }
+
+    const totalPages = Math.max(1, Math.trunc(Number(pagination.totalPages)) || 1)
+    const currentPage = Math.max(1, Math.trunc(Number(pagination.page)) || page)
+    if (currentPage >= totalPages || pageItems.length === 0) break
+    page = currentPage + 1
+  }
+
+  return items
+}
+
 function normalizePagePayload<T, K extends string>(payload: PaginatedResponse<T, K> | T[], key: K) {
   if (!Array.isArray(payload)) return payload
   return {
@@ -458,6 +496,18 @@ export function resolveApiAssetUrl(value?: string | null, version?: string | num
   if (raw.startsWith('//')) return undefined
 
   const normalizedPath = raw.startsWith('/') ? raw : `/${raw}`
+  if (normalizedPath.startsWith('/uploads/') && /^https?:/i.test(API_BASE_URL)) {
+    try {
+      const url = new URL(API_BASE_URL)
+      url.pathname = normalizedPath
+      url.search = ''
+      url.hash = ''
+      return appendAssetVersion(url.toString(), version)
+    } catch {
+      return appendAssetVersion(normalizedPath, version)
+    }
+  }
+
   return appendAssetVersion(normalizedPath, version)
 }
 
@@ -481,11 +531,24 @@ export async function loadMePermissions(token: string) {
   return apiRequest<MePermissionsPayload>('/me/permissions', { token })
 }
 
-export async function loadDashboardScreen(token: string, alertsPage?: Partial<DashboardAlertsPageQuery>) {
+const dashboardPeriodFilters = new Set(['all', 'week', 'month', 'year'])
+
+function appendDashboardSelectionFilter(query: URLSearchParams, key: 'schoolId' | 'classId' | 'subject', value?: string) {
+  const sanitized = sanitizeApiSearchParam(value)
+  if (sanitized && sanitized !== 'all') query.set(key, sanitized)
+}
+
+export async function loadDashboardScreen(token: string, queryParams?: Partial<DashboardAlertsPageQuery & DashboardFiltersQuery>) {
   const params = new URLSearchParams()
 
-  if (alertsPage?.page) params.set('alertPage', String(clampApiPage(alertsPage.page)))
-  if (alertsPage?.limit) params.set('alertLimit', String(clampApiPageLimit(alertsPage.limit)))
+  if (queryParams?.page) params.set('alertPage', String(clampApiPage(queryParams.page)))
+  if (queryParams?.limit) params.set('alertLimit', String(clampApiPageLimit(queryParams.limit)))
+  if (queryParams?.alertPage) params.set('alertPage', String(clampApiPage(queryParams.alertPage)))
+  if (queryParams?.alertLimit) params.set('alertLimit', String(clampApiPageLimit(queryParams.alertLimit)))
+  appendDashboardSelectionFilter(params, 'schoolId', queryParams?.schoolId)
+  appendDashboardSelectionFilter(params, 'classId', queryParams?.classId)
+  appendDashboardSelectionFilter(params, 'subject', queryParams?.subject)
+  if (queryParams?.period && dashboardPeriodFilters.has(queryParams.period)) params.set('period', queryParams.period)
 
   const query = params.toString()
   return apiRequest<DashboardScreenPayload>(`/dashboard${query ? `?${query}` : ''}`, { token })
@@ -496,20 +559,51 @@ export async function loadNotificationsScreen(token: string) {
 }
 
 export async function loadSchoolsScreen(token: string, options: ScopedResourceOptions = {}) {
-  const [schoolsPage, teachers, guardians, students, classes, lessonRecords] = await Promise.all([
+  const [schoolsPage, teachers, guardians, students, classesPage, lessonRecords] = await Promise.all([
     listSchoolsPage(token, { page: 1, limit: DEFAULT_API_PAGE_LIMIT }, options),
     listResource<Teacher, 'teachers'>(token, scopedResourcePath('teachers', options), 'teachers'),
     listResource<Guardian, 'guardians'>(token, scopedResourcePath('guardians', options), 'guardians'),
     listResource<Student, 'students'>(token, scopedResourcePath('students', options), 'students'),
+    listClassesPage(token, { page: 1, limit: DEFAULT_API_PAGE_LIMIT }, options),
+    listLessonRecords(token, options),
+  ])
+
+  return {
+    schools: schoolsPage.schools,
+    schoolsPagination: schoolsPage.pagination,
+    teachers,
+    guardians,
+    students,
+    classes: classesPage.classes,
+    classesPagination: classesPage.pagination,
+    lessonRecords,
+  }
+}
+
+export async function loadTeachersScreen(token: string, options: ScopedResourceOptions = {}) {
+  const [schools, teachers, students, guardians, classes, lessonRecords] = await Promise.all([
+    listResource<School, 'schools'>(token, scopedResourcePath('schools', options), 'schools'),
+    listResource<Teacher, 'teachers'>(token, scopedResourcePath('teachers', options), 'teachers'),
+    listResource<Student, 'students'>(token, scopedResourcePath('students', options), 'students'),
+    listResource<Guardian, 'guardians'>(token, scopedResourcePath('guardians', options), 'guardians'),
     listResource<ClassRoom, 'classes'>(token, scopedResourcePath('classes', options), 'classes'),
     listLessonRecords(token, options),
   ])
 
-  return { schools: schoolsPage.schools, schoolsPagination: schoolsPage.pagination, teachers, guardians, students, classes, lessonRecords }
+  return { schools, teachers, guardians, students, classes, lessonRecords }
 }
 
-export async function loadPeopleScreen(token: string, options: ScopedResourceOptions = {}) {
-  return loadSchoolsScreen(token, options)
+export async function loadStudentsScreen(token: string, options: ScopedResourceOptions = {}) {
+  const [schools, students, teachers, guardians, classes, lessonRecords] = await Promise.all([
+    listResource<School, 'schools'>(token, scopedResourcePath('schools', options), 'schools'),
+    listResource<Student, 'students'>(token, scopedResourcePath('students', options), 'students'),
+    listResource<Teacher, 'teachers'>(token, scopedResourcePath('teachers', options), 'teachers'),
+    listResource<Guardian, 'guardians'>(token, scopedResourcePath('guardians', options), 'guardians'),
+    listResource<ClassRoom, 'classes'>(token, scopedResourcePath('classes', options), 'classes'),
+    listLessonRecords(token, options),
+  ])
+
+  return { schools, teachers, guardians, students, classes, lessonRecords }
 }
 
 export async function loadClassesScreen(token: string, options: ScopedResourceOptions = {}) {
@@ -536,14 +630,14 @@ export async function loadAcademicScopeScreen(token: string, options: AcademicSc
   const includeTeachers = options.includeTeachers ?? true
   const includeStudents = options.includeStudents ?? true
   const [schools, teachers, students, classes] = await Promise.all([
-    listResource<School, 'schools'>(token, scopedResourcePath('schools', options), 'schools', { view: options.schoolsView }),
+    listAllResource<School, 'schools'>(token, scopedResourcePath('schools', options), 'schools', { view: options.schoolsView }),
     includeTeachers
       ? listResource<Teacher, 'teachers'>(token, scopedResourcePath('teachers', options), 'teachers')
       : Promise.resolve([]),
     includeStudents
       ? listResource<Student, 'students'>(token, scopedResourcePath('students', options), 'students', { view: options.studentsView })
       : Promise.resolve([]),
-    listResource<ClassRoom, 'classes'>(token, scopedResourcePath('classes', options), 'classes', { view: options.classesView }),
+    listAllResource<ClassRoom, 'classes'>(token, scopedResourcePath('classes', options), 'classes', { view: options.classesView }),
   ])
 
   return { schools, teachers, guardians: [], students, classes }
@@ -783,6 +877,23 @@ export async function listSchoolsPage(token: string, params: SchoolsPageQuery, o
   return normalizePagePayload(payload, 'schools') as SchoolsPagePayload
 }
 
+export async function listClassesPage(token: string, params: ClassesPageQuery, options: ScopedResourceOptions = {}) {
+  const query = new URLSearchParams({
+    page: String(clampApiPage(params.page)),
+    limit: String(clampApiPageLimit(params.limit)),
+  })
+  const sanitizedSearch = sanitizeApiSearchParam(params.search)
+  const sanitizedSchoolId = sanitizeApiSearchParam(params.schoolId)
+  if (sanitizedSearch) query.set('search', sanitizedSearch)
+  if (sanitizedSchoolId && sanitizedSchoolId !== 'all') query.set('schoolId', sanitizedSchoolId)
+
+  const payload = await apiRequest<PaginatedResponse<ClassRoom, 'classes'> | ClassRoom[]>(
+    `${scopedResourcePath('classes', options)}?${query.toString()}`,
+    { token },
+  )
+  return normalizePagePayload(payload, 'classes') as ClassesPagePayload
+}
+
 export async function searchMealFoods(token: string, search: string, limit = DEFAULT_API_PAGE_LIMIT) {
   const params = new URLSearchParams({
     search: sanitizeApiSearchParam(search),
@@ -816,7 +927,7 @@ export async function searchAccessUsers(token: string, params: AccessUserSearchQ
   return apiRequest<AccessUserSearchPayload>(`/users/search?${query.toString()}`, { token })
 }
 
-function buildPeoplePageQuery(params: PeoplePageQuery) {
+function buildTeachersPageQuery(params: TeachersPageQuery) {
   const query = new URLSearchParams({
     page: String(clampApiPage(params.page)),
     limit: String(clampApiPageLimit(params.limit)),
@@ -826,13 +937,12 @@ function buildPeoplePageQuery(params: PeoplePageQuery) {
   if (sanitizedSearch) query.set('search', sanitizedSearch)
   if (params.schoolId && params.schoolId !== 'all') query.set('schoolId', params.schoolId)
   if (params.discipline && params.discipline !== 'all') query.set('subject', params.discipline)
-  if (params.classId && params.classId !== 'all') query.set('classId', params.classId)
 
   return query.toString()
 }
 
-export async function listTeachersPage(token: string, params: PeoplePageQuery, options: ScopedResourceOptions = {}) {
-  return apiRequest<TeachersPagePayload>(`${scopedResourcePath('teachers', options)}?${buildPeoplePageQuery(params)}`, { token })
+export async function listTeachersPage(token: string, params: TeachersPageQuery, options: ScopedResourceOptions = {}) {
+  return apiRequest<TeachersPagePayload>(`${scopedResourcePath('teachers', options)}?${buildTeachersPageQuery(params)}`, { token })
 }
 
 export async function listTeacherSubjectCardsPage(token: string, params: TeacherSubjectsPageQuery, options: ScopedResourceOptions = {}) {
@@ -849,8 +959,23 @@ export async function listTeacherSubjectCardsPage(token: string, params: Teacher
   return apiRequest<TeacherSubjectCardsPagePayload>(`${scopedResourcePath('teacher-subjects', options)}?${search}`, { token })
 }
 
-export async function listStudentsPage(token: string, params: PeoplePageQuery, options: ScopedResourceOptions = {}) {
-  return apiRequest<StudentsPagePayload>(`${scopedResourcePath('students', options)}?${buildPeoplePageQuery(params)}`, { token })
+function buildStudentsPageQuery(params: StudentsPageQuery) {
+  const query = new URLSearchParams({
+    page: String(clampApiPage(params.page)),
+    limit: String(clampApiPageLimit(params.limit)),
+  })
+
+  const sanitizedSearch = sanitizeApiSearchParam(params.search)
+  if (sanitizedSearch) query.set('search', sanitizedSearch)
+  if (params.schoolId && params.schoolId !== 'all') query.set('schoolId', params.schoolId)
+  if (params.discipline && params.discipline !== 'all') query.set('subject', params.discipline)
+  if (params.classId && params.classId !== 'all') query.set('classId', params.classId)
+
+  return query.toString()
+}
+
+export async function listStudentsPage(token: string, params: StudentsPageQuery, options: ScopedResourceOptions = {}) {
+  return apiRequest<StudentsPagePayload>(`${scopedResourcePath('students', options)}?${buildStudentsPageQuery(params)}`, { token })
 }
 
 export async function loadSettingsScreen(token: string) {
@@ -956,6 +1081,12 @@ export async function updateGuardian(token: string, id: string, payload: Partial
 
 export async function createEvaluation(token: string, payload: Partial<Evaluation>) {
   const safePayload = pickAllowedPayload(payload, evaluationCreatePayloadFields)
+  const questionCount = Number((safePayload as Partial<Evaluation>).questions ?? 0)
+  const questionIds = Array.isArray((safePayload as Partial<Evaluation>).questionIds)
+    ? (safePayload as Partial<Evaluation>).questionIds ?? []
+    : []
+  if (Number.isFinite(questionCount) && questionCount > MAX_EVALUATION_QUESTIONS) throw new ApiError(evaluationQuestionLimitMessage(), 422)
+  if (questionIds.length > MAX_EVALUATION_QUESTIONS) throw new ApiError(evaluationQuestionLimitMessage(), 422)
   return apiRequest<CreateEvaluationApiResponse>('/evaluations', {
     method: 'POST',
     token,
@@ -1117,6 +1248,7 @@ function normalizeQuestionSelectionResponse(payload: unknown): GenerateQuestionS
 }
 
 export async function generateQuestionSelection(token: string, payload: GenerateQuestionSelectionRequest) {
+  if (Number(payload.quantity) > MAX_EVALUATION_QUESTIONS) throw new ApiError(evaluationQuestionLimitMessage(), 422)
   const response = await apiRequest<unknown>('/questions/generate-selection', {
     method: 'POST',
     token,

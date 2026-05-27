@@ -1,5 +1,24 @@
-@import url('https://fonts.googleapis.com/css2?family=Lora:wght@400;500;600&family=DM+Sans:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Lora:wght@400;500;600&display=swap');
+@import '@fontsource/dm-sans/300.css';
+@import '@fontsource/dm-sans/400.css';
+@import '@fontsource/dm-sans/500.css';
+@import '@fontsource/dm-sans/600.css';
+@import '@fontsource/dm-sans/700.css';
+@import '@fontsource/dm-sans/800.css';
+@import '@fontsource/dm-sans/900.css';
 @import "tailwindcss" important;
+
+@theme {
+  --font-DMSans: "DM Sans", system-ui, sans-serif;
+  --font-DMsans: "DM Sans", system-ui, sans-serif;
+}
+
+@layer utilities {
+  .font-DMSans,
+  .font-DMsans {
+    font-family: "DM Sans", system-ui, sans-serif !important;
+  }
+}
 
 textarea {
   resize: none !important;

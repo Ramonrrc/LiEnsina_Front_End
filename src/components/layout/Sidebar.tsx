@@ -1,4 +1,4 @@
-import { motion } from 'motion/react'
+import { motion, AnimatePresence } from 'motion/react'
 import { X, Wifi } from 'lucide-react'
 import { useState, useEffect, useRef } from 'react'
 
@@ -18,6 +18,8 @@ interface SidebarProps {
   onCloseMobile: () => void
 }
 
+// ─── Skeleton ─────────────────────────────────────────────────────────────────
+
 function SkeletonItem({ compact, delay = 0 }: { compact: boolean; delay?: number }) {
   return (
     <motion.div
@@ -26,41 +28,58 @@ function SkeletonItem({ compact, delay = 0 }: { compact: boolean; delay?: number
         compact ? 'justify-center px-0 py-2.5' : 'gap-3 px-3 py-2.5',
       )}
       initial={{ opacity: 0 }}
-      animate={{ opacity: [0, 0.5, 0.25, 0.5, 0] }}
-      transition={{ delay, duration: 1.8, repeat: Infinity, ease: 'easeInOut' }}
+      animate={{ opacity: [0, 0.45, 0.2, 0.45, 0] }}
+      transition={{ delay, duration: 2.0, repeat: Infinity, ease: 'easeInOut' }}
       style={{
-        background: 'rgba(180,170,255,0.05)',
-        border: '1px solid rgba(180,170,255,0.08)',
+        background: 'rgba(99,102,241,0.05)',
+        border: '1px solid rgba(99,102,241,0.07)',
       }}
     >
-      <div className="shrink-0 rounded-[10px]" style={{ width: 34, height: 34, background: 'rgba(180,170,255,0.08)' }} />
+      <div
+        className="shrink-0 rounded-[10px]"
+        style={{ width: 34, height: 34, background: 'rgba(99,102,241,0.07)' }}
+      />
       {!compact && (
         <div className="flex flex-1 flex-col gap-2">
-          <div className="h-2.5 rounded-full" style={{ width: '55%', background: 'rgba(180,170,255,0.08)' }} />
-          <div className="h-2 rounded-full" style={{ width: '38%', background: 'rgba(180,170,255,0.05)' }} />
+          <div className="h-2.5 rounded-full" style={{ width: '55%', background: 'rgba(99,102,241,0.07)' }} />
+          <div className="h-2 rounded-full" style={{ width: '38%', background: 'rgba(99,102,241,0.05)' }} />
         </div>
       )}
     </motion.div>
   )
 }
 
+// ─── Group label ──────────────────────────────────────────────────────────────
+
 function NavGroupLabel({ label, compact }: { label: string; compact: boolean }) {
   if (compact) {
-    return <div className="mx-auto my-3 h-px w-6" style={{ background: 'rgba(180,170,255,0.20)' }} />
+    return (
+      <div
+        className="mx-auto my-3 h-px w-5"
+        style={{ background: 'rgba(99,102,241,0.18)' }}
+      />
+    )
   }
   return (
     <div className="mb-1 mt-4 flex items-center gap-2 px-3 first:mt-2">
-      <span style={{
-        fontSize: '9px', fontWeight: 700, letterSpacing: '0.22em',
-        textTransform: 'uppercase' as const,
-        color: 'rgba(160,150,255,0.45)', fontFamily: "'DM Mono', monospace",
-      }}>
+      <span
+        style={{
+          fontSize: '9px',
+          fontWeight: 700,
+          letterSpacing: '0.20em',
+          textTransform: 'uppercase' as const,
+          color: 'rgba(99,102,241,0.50)',
+          fontFamily: "'DM Sans', sans-serif",
+        }}
+      >
         {label}
       </span>
-      <div className="h-px flex-1" style={{ background: 'rgba(180,170,255,0.12)' }} />
+      <div className="h-px flex-1" style={{ background: 'rgba(99,102,241,0.10)' }} />
     </div>
   )
 }
+
+// ─── Badge ────────────────────────────────────────────────────────────────────
 
 function Badge({ count, compact }: { count?: number; compact: boolean }) {
   if (!count) return null
@@ -68,7 +87,12 @@ function Badge({ count, compact }: { count?: number; compact: boolean }) {
     return (
       <span
         className="absolute right-1.5 top-1.5 block rounded-full"
-        style={{ width: 6, height: 6, background: '#4F46E5', boxShadow: '0 0 0 2px rgba(255,255,255,0.90)' }}
+        style={{
+          width: 6,
+          height: 6,
+          background: '#4F46E5',
+          boxShadow: '0 0 0 2px #f8f7ff',
+        }}
       />
     )
   }
@@ -76,8 +100,13 @@ function Badge({ count, compact }: { count?: number; compact: boolean }) {
     <span
       className="ml-auto shrink-0 rounded-md px-2 py-0.5"
       style={{
-        fontSize: '10px', fontWeight: 700, fontFamily: "'DM Mono', monospace",
-        background: '#EEF2FF', border: '1px solid #C7D2FE', color: '#4338CA', lineHeight: 1.4,
+        fontSize: '10px',
+        fontWeight: 700,
+        fontFamily: "'DM Sans', sans-serif",
+        background: '#EEF2FF',
+        border: '1px solid #C7D2FE',
+        color: '#4338CA',
+        lineHeight: 1.4,
       }}
     >
       {count}
@@ -85,8 +114,15 @@ function Badge({ count, compact }: { count?: number; compact: boolean }) {
   )
 }
 
+// ─── NavButton ────────────────────────────────────────────────────────────────
+
 function NavButton({
-  item, active, compact, index, onSectionChange, btnRef: btnRefProp,
+  item,
+  active,
+  compact,
+  index,
+  onSectionChange,
+  btnRef: btnRefProp,
 }: {
   item: NavItem
   active: boolean
@@ -98,7 +134,6 @@ function NavButton({
   const Icon = item.icon
   const localRef = useRef<HTMLButtonElement>(null)
 
-  // Sempre que active mudar, limpa estilos inline de hover
   useEffect(() => {
     const el = localRef.current
     if (!el) return
@@ -107,7 +142,7 @@ function NavButton({
   }, [active])
 
   const setRefs = (el: HTMLButtonElement | null) => {
-    (localRef as React.MutableRefObject<HTMLButtonElement | null>).current = el
+    ;(localRef as React.MutableRefObject<HTMLButtonElement | null>).current = el
     btnRefProp(el)
   }
 
@@ -125,8 +160,8 @@ function NavButton({
       style={{ background: 'transparent', border: '1px solid transparent' }}
       onMouseEnter={e => {
         if (!active) {
-          e.currentTarget.style.background = 'rgba(238,242,255,0.18)'
-          e.currentTarget.style.borderColor = 'rgba(199,210,254,0.25)'
+          e.currentTarget.style.background = 'rgba(99,102,241,0.05)'
+          e.currentTarget.style.borderColor = 'rgba(99,102,241,0.10)'
         }
       }}
       onMouseLeave={e => {
@@ -136,55 +171,78 @@ function NavButton({
         }
       }}
     >
-      {/* Barra lateral — CSS puro */}
+      {/* Indicador lateral ativo */}
       <span
         aria-hidden
         style={{
-          position: 'absolute', left: 0, top: '50%',
+          position: 'absolute',
+          left: 0,
+          top: '50%',
           transform: 'translateY(-50%)',
-          width: 3, height: active ? '52%' : '0%',
-          borderRadius: '0 4px 4px 0',
-          background: 'linear-gradient(to bottom, #818CF8, #4F46E5, #3730A3)',
+          width: 3,
+          height: active ? '50%' : '0%',
+          borderRadius: '0 3px 3px 0',
+          background: 'rgba(255,255,255,0.70)',
           opacity: active ? 1 : 0,
-          transition: 'height 0.22s ease, opacity 0.22s ease',
+          transition: 'height 0.24s cubic-bezier(0.34,1.56,0.64,1), opacity 0.20s ease',
+          zIndex: 1,
         }}
       />
 
+      {/* Ícone */}
       <span
         className="relative flex shrink-0 items-center justify-center rounded-[10px]"
         style={{
-          width: 34, height: 34,
-          background: active ? 'linear-gradient(145deg, #EEF2FF 0%, #E0E7FF 100%)' : 'rgba(180,170,255,0.07)',
-          border: active ? '1px solid #C7D2FE' : '1px solid rgba(180,170,255,0.11)',
-          boxShadow: active ? 'inset 0 1px 0 rgba(255,255,255,0.90), 0 1px 3px rgba(79,70,229,0.14)' : 'none',
-          transition: 'background 0.22s ease, border-color 0.22s ease, box-shadow 0.22s ease',
+          width: 34,
+          height: 34,
+          background: active
+            ? 'rgba(255,255,255,0.22)'
+            : 'rgba(99,102,241,0.06)',
+          border: active
+            ? '1px solid rgba(255,255,255,0.30)'
+            : '1px solid rgba(99,102,241,0.09)',
+          boxShadow: active
+            ? 'inset 0 1px 0 rgba(255,255,255,0.25)'
+            : 'none',
+          transition: 'background 0.20s ease, border-color 0.20s ease, box-shadow 0.20s ease',
         }}
       >
-        <Icon style={{
-          width: 15, height: 15,
-          color: active ? '#4338CA' : 'rgba(180,170,255,0.42)',
-          transition: 'color 0.22s ease',
-        }} />
+        <Icon
+          style={{
+            width: 15,
+            height: 15,
+            color: active ? '#ffffff' : 'rgba(99,102,241,0.40)',
+            transition: 'color 0.20s ease',
+          }}
+        />
         {compact && <Badge count={(item as any).badge} compact />}
       </span>
 
+      {/* Labels */}
       {!compact && (
         <span className="min-w-0 flex-1">
-          <span className="block truncate" style={{
-            fontSize: '13px', fontWeight: active ? 600 : 500,
-            color: active ? '#1E1B4B' : 'rgba(190,182,255,0.68)',
-            fontFamily: "'DM Sans', system-ui, sans-serif",
-            letterSpacing: active ? '-0.25px' : '0',
-            transition: 'color 0.22s ease',
-          }}>
+          <span
+            className="block truncate"
+            style={{
+              fontSize: '13px',
+              fontWeight: active ? 600 : 500,
+              color: active ? '#ffffff' : '#6B7280',
+              fontFamily: "'DM Sans', sans-serif",
+              letterSpacing: active ? '-0.20px' : '0',
+              transition: 'color 0.20s ease',
+            }}
+          >
             {item.label}
           </span>
-          <span className="block truncate" style={{
-            fontSize: '11px',
-            color: active ? '#6366F1' : 'rgba(140,130,220,0.48)',
-            fontFamily: "'DM Sans', system-ui, sans-serif",
-            transition: 'color 0.22s ease',
-          }}>
+          <span
+            className="block truncate"
+            style={{
+              fontSize: '11px',
+              color: active ? 'rgba(255,255,255,0.65)' : '#9CA3AF',
+              fontFamily: "'DM Sans', sans-serif",
+              transition: 'color 0.20s ease',
+            }}
+          >
             {item.description}
           </span>
         </span>
@@ -195,9 +253,16 @@ function NavButton({
   )
 }
 
+// ─── SidebarPanel ─────────────────────────────────────────────────────────────
+
 function SidebarPanel({
-  appName, items, activeSection, onSectionChange,
-  collapsed = false, mobile = false, onRequestClose,
+  appName,
+  items,
+  activeSection,
+  onSectionChange,
+  collapsed = false,
+  mobile = false,
+  onRequestClose,
 }: Omit<SidebarProps, 'mobileOpen' | 'onCloseMobile'> & {
   mobile?: boolean
   onRequestClose?: () => void
@@ -214,28 +279,15 @@ function SidebarPanel({
     return () => clearTimeout(t)
   }, [])
 
-  function getOffsetTopRelativeTo(el: HTMLElement, ancestor: HTMLElement): number {
-  let top = 0
-  let current: HTMLElement | null = el
-  while (current && current !== ancestor) {
-    top += current.offsetTop
-    current = current.offsetParent as HTMLElement | null
-  }
-  return top
-}
-
-  // Calcula posição do pill relativa ao <nav>
   useEffect(() => {
-  const btn = btnRefs.current.get(activeSection)
-  const nav = navRef.current
-  if (!btn || !nav) return
-
-  const btnRect = btn.getBoundingClientRect()
-  const navRect = nav.getBoundingClientRect()
-
-  setPillY(btnRect.top - navRect.top + nav.scrollTop)
-  setPillH(btnRect.height)
-}, [activeSection, loading, compact])
+    const btn = btnRefs.current.get(activeSection)
+    const nav = navRef.current
+    if (!btn || !nav) return
+    const btnRect = btn.getBoundingClientRect()
+    const navRect = nav.getBoundingClientRect()
+    setPillY(btnRect.top - navRect.top + nav.scrollTop)
+    setPillH(btnRect.height)
+  }, [activeSection, loading, compact])
 
   const setRef = (id: string) => (el: HTMLButtonElement | null) => {
     if (el) btnRefs.current.set(id, el)
@@ -254,32 +306,68 @@ function SidebarPanel({
     <div
       className="relative flex h-full w-full flex-col overflow-hidden"
       style={{
-        background: 'linear-gradient(170deg, #130f58 0%, #0e0950 48%, #09063d 100%)',
+        background: '#f8f7ff',
         fontFamily: "'DM Sans', system-ui, sans-serif",
       }}
     >
-      <div className="pointer-events-none absolute inset-0 z-0" aria-hidden style={{
-        background: [
-          'radial-gradient(ellipse 90% 45% at 50% -8%, rgba(50,38,175,0.45), transparent)',
-          'radial-gradient(ellipse 60% 40% at 110% 95%, rgba(28,18,140,0.34), transparent)',
-          'radial-gradient(ellipse 45% 35% at -8% 55%, rgba(88,75,195,0.15), transparent)',
-          'radial-gradient(ellipse 70% 12% at 50% 62%, rgba(150,140,245,0.06), transparent)',
-        ].join(','),
-      }} />
+      {/* ── Camadas de textura / profundidade ── */}
 
-      <div className="pointer-events-none absolute inset-0 z-0" aria-hidden style={{
-        backgroundImage: `linear-gradient(rgba(180,170,255,1) 1px, transparent 1px), linear-gradient(90deg, rgba(180,170,255,1) 1px, transparent 1px)`,
-        backgroundSize: '32px 32px', opacity: 0.018,
-      }} />
+      {/* Borda direita com gradiente sutil */}
+      <div
+        className="pointer-events-none absolute inset-y-0 right-0 z-0 w-px"
+        aria-hidden
+        style={{
+          background: 'linear-gradient(to bottom, rgba(99,102,241,0.08) 0%, rgba(99,102,241,0.18) 40%, rgba(99,102,241,0.08) 100%)',
+        }}
+      />
+
+      {/* Brilho topo */}
+      <div
+        className="pointer-events-none absolute inset-x-0 top-0 z-0 h-48"
+        aria-hidden
+        style={{
+          background: 'radial-gradient(ellipse 100% 100% at 50% 0%, rgba(224,231,255,0.70) 0%, transparent 100%)',
+        }}
+      />
+
+      {/* Brilho bottom suave */}
+      <div
+        className="pointer-events-none absolute inset-x-0 bottom-0 z-0 h-32"
+        aria-hidden
+        style={{
+          background: 'radial-gradient(ellipse 80% 80% at 50% 100%, rgba(238,242,255,0.60) 0%, transparent 100%)',
+        }}
+      />
+
+      {/* Grid pontilhado finíssimo */}
+      <div
+        className="pointer-events-none absolute inset-0 z-0"
+        aria-hidden
+        style={{
+          backgroundImage:
+            'radial-gradient(circle, rgba(99,102,241,0.20) 1px, transparent 1px)',
+          backgroundSize: '28px 28px',
+          opacity: 0.30,
+        }}
+      />
 
       {/* ── Header ── */}
       <motion.div
         className="relative z-10 px-4 py-4"
-        style={{ borderBottom: '1px solid rgba(180,170,255,0.12)' }}
-        initial={{ opacity: 0, y: -10 }}
+        style={{ borderBottom: '1px solid rgba(99,102,241,0.10)' }}
+        initial={{ opacity: 0, y: -8 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.42, ease: [0.16, 1, 0.3, 1] }}
+        transition={{ duration: 0.38, ease: [0.16, 1, 0.3, 1] }}
       >
+        {/* Linha de acento topo */}
+        <div
+          className="absolute left-0 right-0 top-0 h-0.5"
+          style={{
+            background: 'linear-gradient(90deg, #6366f1 0%, #8b5cf6 50%, #a855f7 100%)',
+            borderRadius: '0 0 2px 2px',
+          }}
+        />
+
         <div className={cn('flex items-center', compact ? 'justify-center' : 'justify-between')}>
           <button
             type="button"
@@ -290,39 +378,72 @@ function SidebarPanel({
             <motion.div
               className="relative grid shrink-0 place-items-center rounded-xl"
               style={{
-                width: 38, height: 38,
-                background: 'linear-gradient(135deg, #4038c8 0%, #6a60f0 55%, #9d92ff 100%)',
-                border: '1px solid rgba(200,195,255,0.35)',
-                boxShadow: '0 0 22px rgba(106,96,240,0.60), 0 4px 14px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.22)',
-                fontSize: 12, fontWeight: 800, color: '#fff',
-                fontFamily: "'DM Mono', monospace", letterSpacing: '0.04em',
+                width: 38,
+                height: 38,
+                background: 'linear-gradient(135deg, #4f46e5 0%, #6366f1 55%, #818cf8 100%)',
+                border: '1px solid rgba(99,102,241,0.30)',
+                boxShadow:
+                  '0 1px 0 rgba(255,255,255,0.90) inset, 0 2px 8px rgba(79,70,229,0.22)',
+                fontSize: 12,
+                fontWeight: 800,
+                color: '#fff',
+                fontFamily: "'DM Sans', sans-serif",
+                letterSpacing: '0.04em',
               }}
-              whileHover={{ scale: 1.06, boxShadow: '0 0 32px rgba(157,146,255,0.75), 0 4px 18px rgba(0,0,0,0.50), inset 0 1px 0 rgba(255,255,255,0.25)' }}
-              transition={{ type: 'spring', stiffness: 380, damping: 20 }}
+              whileHover={{
+                scale: 1.05,
+                boxShadow:
+                  '0 1px 0 rgba(255,255,255,0.95) inset, 0 4px 14px rgba(79,70,229,0.32)',
+              }}
+              transition={{ type: 'spring', stiffness: 380, damping: 22 }}
             >
               {appName.slice(0, 2).toUpperCase()}
-              <span className="absolute -right-0.5 -top-0.5 block rounded-full" style={{
-                width: 7, height: 7, background: '#f0c860',
-                border: '1.5px solid #09063d',
-                boxShadow: '0 0 8px rgba(240,200,96,0.95)',
-                animation: 'sbGoldDot 2.4s ease-in-out infinite',
-              }} />
+              {/* Dot dourado */}
+              <span
+                className="absolute -right-0.5 -top-0.5 block rounded-full"
+                style={{
+                  width: 7,
+                  height: 7,
+                  background: '#f0c860',
+                  border: '1.5px solid #f8f7ff',
+                  boxShadow: '0 0 6px rgba(240,200,96,0.80)',
+                  animation: 'sbGoldDot 2.6s ease-in-out infinite',
+                }}
+              />
             </motion.div>
 
-            <div className={cn('min-w-0 transition-all duration-300', compact ? 'pointer-events-none w-0 overflow-hidden opacity-0' : 'opacity-100')}>
-              <p className="truncate text-white" style={{
-                fontSize: 14, fontWeight: 700, letterSpacing: '-0.2px',
-                fontFamily: "'Cormorant Garamond', Georgia, serif",
-              }}>
+            <div
+              className={cn(
+                'min-w-0 transition-all duration-300',
+                compact ? 'pointer-events-none w-0 overflow-hidden opacity-0' : 'opacity-100',
+              )}
+            >
+              <p
+                className="truncate"
+                style={{
+                  fontSize: 14,
+                  fontWeight: 700,
+                  letterSpacing: '-0.2px',
+                  color: '#1e1b4b',
+                  fontFamily: "'DM Sans', sans-serif",
+                }}
+              >
                 {appName}
               </p>
               <div className="mt-0.5 flex items-center gap-1.5">
-                <span className="inline-block rounded-sm px-1.5 py-px" style={{
-                  fontSize: '8px', fontWeight: 700, letterSpacing: '0.20em',
-                  textTransform: 'uppercase',
-                  background: 'rgba(240,200,96,0.11)', border: '1px solid rgba(240,200,96,0.26)',
-                  color: 'rgba(240,200,96,0.90)', fontFamily: "'DM Mono', monospace",
-                }}>
+                <span
+                  className="inline-block rounded-sm px-1.5 py-px"
+                  style={{
+                    fontSize: '8px',
+                    fontWeight: 700,
+                    letterSpacing: '0.18em',
+                    textTransform: 'uppercase',
+                    background: '#EEF2FF',
+                    border: '1px solid #C7D2FE',
+                    color: '#4338CA',
+                    fontFamily: "'DM Sans', sans-serif",
+                  }}
+                >
                   Operação Escolar
                 </span>
               </div>
@@ -331,15 +452,19 @@ function SidebarPanel({
 
           {mobile && onRequestClose && (
             <motion.button
-              type="button" onClick={onRequestClose}
+              type="button"
+              onClick={onRequestClose}
               className="grid place-items-center rounded-lg transition-colors"
               style={{
-                width: 32, height: 32,
-                border: '1px solid rgba(180,170,255,0.18)',
-                background: 'rgba(180,170,255,0.08)',
-                color: 'rgba(190,182,255,0.60)', flexShrink: 0,
+                width: 32,
+                height: 32,
+                border: '1px solid rgba(99,102,241,0.15)',
+                background: 'rgba(99,102,241,0.05)',
+                color: 'rgba(99,102,241,0.55)',
+                flexShrink: 0,
               }}
-              whileHover={{ color: '#fff' }} whileTap={{ scale: 0.92 }}
+              whileHover={{ color: '#4338ca', background: 'rgba(99,102,241,0.10)' }}
+              whileTap={{ scale: 0.92 }}
               aria-label="Fechar menu"
             >
               <X className="h-4 w-4" />
@@ -351,28 +476,32 @@ function SidebarPanel({
       {/* ── Nav ── */}
       <nav
         ref={navRef}
-        className={cn('relative z-10 flex-1 overflow-y-auto overflow-x-hidden py-2', compact ? 'px-2.5' : 'px-3')}
-        style={{ scrollbarWidth: 'thin', scrollbarColor: 'rgba(157,146,255,0.20) transparent' }}
+        className={cn(
+          'relative z-10 flex-1 overflow-y-auto overflow-x-hidden py-2',
+          compact ? 'px-2.5' : 'px-3',
+        )}
+        style={{ scrollbarWidth: 'thin', scrollbarColor: 'rgba(99,102,241,0.18) transparent' }}
       >
-        {/* Pill deslizante — UM único elemento fora dos botões */}
+        {/* Pill deslizante (active indicator) */}
         {!loading && pillY !== null && (
-        <motion.span
-          aria-hidden
-          className="pointer-events-none absolute rounded-xl"
-          style={{
-            top: 0,           // âncora fixa — y anima a partir daqui
-            left: compact ? 10 : 12,
-            right: compact ? 10 : 12,
-            height: pillH,
-            background: '#FFFFFF',
-            boxShadow: '0 1px 3px rgba(79,70,229,0.10), 0 4px 12px rgba(79,70,229,0.08)',
-            border: '1px solid #C7D2FE',
-            zIndex: 0,
-          }}
-          animate={{ y: pillY }}
-          transition={{ type: 'spring', stiffness: 420, damping: 38, mass: 0.6 }}
-        />
-      )}
+          <motion.span
+            aria-hidden
+            className="pointer-events-none absolute rounded-xl"
+            style={{
+              top: 0,
+              left: compact ? 10 : 12,
+              right: compact ? 10 : 12,
+              height: pillH,
+              background: 'linear-gradient(135deg, #4f46e5 0%, #6366f1 60%, #818cf8 100%)',
+              boxShadow:
+                '0 2px 8px rgba(79,70,229,0.28), 0 6px 20px rgba(79,70,229,0.18), inset 0 1px 0 rgba(255,255,255,0.18)',
+              border: '1px solid rgba(99,102,241,0.40)',
+              zIndex: 0,
+            }}
+            animate={{ y: pillY }}
+            transition={{ type: 'spring', stiffness: 420, damping: 38, mass: 0.6 }}
+          />
+        )}
 
         {loading ? (
           <div>
@@ -405,34 +534,64 @@ function SidebarPanel({
       {/* ── Footer ── */}
       <motion.div
         className="relative z-10 px-3 pb-4 pt-2"
-        style={{ borderTop: '1px solid rgba(180,170,255,0.09)' }}
+        style={{ borderTop: '1px solid rgba(99,102,241,0.08)' }}
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.55, duration: 0.38 }}
+        transition={{ delay: 0.50, duration: 0.36 }}
       >
         <div
-          className={cn('flex items-center gap-3 rounded-xl transition-all duration-200', compact ? 'justify-center px-0 py-2.5' : 'px-3 py-3')}
+          className={cn(
+            'flex items-center gap-3 rounded-xl transition-all duration-200',
+            compact ? 'justify-center px-0 py-2.5' : 'px-3 py-3',
+          )}
           style={{
-            background: 'linear-gradient(110deg, rgba(5,150,105,0.13), rgba(6,95,70,0.06))',
-            border: '1px solid rgba(52,211,153,0.26)',
+            background: 'linear-gradient(110deg, rgba(5,150,105,0.07), rgba(6,95,70,0.04))',
+            border: '1px solid rgba(52,211,153,0.22)',
           }}
         >
-          <span className="relative grid shrink-0 place-items-center rounded-lg" style={{
-            width: 30, height: 30, background: 'rgba(52,211,153,0.11)', border: '1px solid rgba(52,211,153,0.26)',
-          }} aria-hidden>
-            <Wifi style={{ width: 13, height: 13, color: '#34d399' }} />
-            <span className="absolute -right-0.5 -top-0.5 block rounded-full" style={{
-              width: 7, height: 7, background: '#10b981',
-              border: '1.5px solid #09063d',
-              boxShadow: '0 0 6px rgba(16,185,129,0.85)',
-              animation: 'sbPulse 2.4s ease-in-out infinite',
-            }} />
+          <span
+            className="relative grid shrink-0 place-items-center rounded-lg"
+            style={{
+              width: 30,
+              height: 30,
+              background: 'rgba(52,211,153,0.08)',
+              border: '1px solid rgba(52,211,153,0.22)',
+            }}
+            aria-hidden
+          >
+            <Wifi style={{ width: 13, height: 13, color: '#059669' }} />
+            <span
+              className="absolute -right-0.5 -top-0.5 block rounded-full"
+              style={{
+                width: 7,
+                height: 7,
+                background: '#10b981',
+                border: '1.5px solid #f8f7ff',
+                boxShadow: '0 0 5px rgba(16,185,129,0.70)',
+                animation: 'sbPulse 2.4s ease-in-out infinite',
+              }}
+            />
           </span>
           <div className={cn('min-w-0', compact && 'hidden')}>
-            <p style={{ fontSize: '12px', fontWeight: 600, color: '#34d399', fontFamily: "'DM Sans', sans-serif" }}>
+            <p
+              style={{
+                fontSize: '12px',
+                fontWeight: 600,
+                color: '#065f46',
+                fontFamily: "'DM Sans', sans-serif",
+              }}
+            >
               Rede sincronizada
             </p>
-            <p style={{ fontSize: '10.5px', fontWeight: 400, color: 'rgba(52,211,153,0.50)', fontFamily: "'DM Sans', sans-serif", marginTop: 1 }}>
+            <p
+              style={{
+                fontSize: '10.5px',
+                fontWeight: 400,
+                color: '#6ee7b7',
+                fontFamily: "'DM Sans', sans-serif",
+                marginTop: 1,
+              }}
+            >
               API escolar ativa
             </p>
           </div>
@@ -440,29 +599,47 @@ function SidebarPanel({
       </motion.div>
 
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600;700&family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@500;700&display=swap');
-        @keyframes sbPulse { 0%,100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.45); opacity: 0.5; } }
-        @keyframes sbGoldDot { 0%,100% { box-shadow: 0 0 5px rgba(240,200,96,0.72); } 50% { box-shadow: 0 0 12px rgba(240,200,96,1); } }
+        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');
+        @keyframes sbPulse {
+          0%, 100% { transform: scale(1); opacity: 1; }
+          50% { transform: scale(1.50); opacity: 0.45; }
+        }
+        @keyframes sbGoldDot {
+          0%, 100% { box-shadow: 0 0 4px rgba(240,200,96,0.65); }
+          50% { box-shadow: 0 0 10px rgba(240,200,96,0.95); }
+        }
         nav::-webkit-scrollbar { width: 2px; }
-        nav::-webkit-scrollbar-thumb { background: rgba(157,146,255,0.20); border-radius: 4px; }
+        nav::-webkit-scrollbar-thumb {
+          background: rgba(99,102,241,0.18);
+          border-radius: 4px;
+        }
       `}</style>
     </div>
   )
 }
 
+// ─── Sidebar (export) ─────────────────────────────────────────────────────────
+
 export function Sidebar({
-  appName, items, activeSection, mobileOpen, collapsed, onSectionChange, onCloseMobile,
+  appName,
+  items,
+  activeSection,
+  mobileOpen,
+  collapsed,
+  onSectionChange,
+  onCloseMobile,
 }: SidebarProps) {
   return (
     <>
+      {/* Desktop */}
       <aside
         className={cn(
           'hidden h-screen flex-shrink-0 transition-[width] duration-300 ease-out lg:sticky lg:top-0 lg:flex',
           collapsed ? 'w-[72px]' : 'w-[264px]',
         )}
         style={{
-          borderRight: '1px solid rgba(180,170,255,0.10)',
-          boxShadow: '1px 0 0 rgba(106,96,240,0.18)',
+          borderRight: '1px solid rgba(99,102,241,0.12)',
+          boxShadow: '1px 0 0 rgba(99,102,241,0.06), 4px 0 16px rgba(99,102,241,0.04)',
         }}
       >
         <SidebarPanel
@@ -474,29 +651,43 @@ export function Sidebar({
         />
       </aside>
 
-      {mobileOpen && (
-        <motion.div
-          className="fixed inset-0 z-40 lg:hidden"
-          style={{ background: 'rgba(5,3,30,0.82)', backdropFilter: 'blur(5px)' }}
-          initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-          transition={{ duration: 0.22 }}
-          onClick={onCloseMobile}
-        >
-          <motion.aside
-            className="h-full w-[280px] max-w-[88vw]"
-            style={{ boxShadow: '8px 0 48px rgba(0,0,0,0.65), 1px 0 0 rgba(106,96,240,0.20)' }}
-            initial={{ x: '-100%' }} animate={{ x: 0 }} exit={{ x: '-100%' }}
-            transition={{ type: 'spring', damping: 28, stiffness: 220 }}
-            onClick={e => e.stopPropagation()}
+      {/* Mobile overlay */}
+      <AnimatePresence>
+        {mobileOpen && (
+          <motion.div
+            className="fixed inset-0 z-40 lg:hidden"
+            style={{ background: 'rgba(30,27,75,0.50)', backdropFilter: 'blur(4px)' }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.20 }}
+            onClick={onCloseMobile}
           >
-            <SidebarPanel
-              appName={appName} items={items} activeSection={activeSection}
-              collapsed={false} onSectionChange={onSectionChange}
-              mobile onRequestClose={onCloseMobile}
-            />
-          </motion.aside>
-        </motion.div>
-      )}
+            <motion.aside
+              className="h-full w-[280px] max-w-[88vw]"
+              style={{
+                boxShadow:
+                  '8px 0 40px rgba(79,70,229,0.14), 1px 0 0 rgba(99,102,241,0.12)',
+              }}
+              initial={{ x: '-100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '-100%' }}
+              transition={{ type: 'spring', damping: 28, stiffness: 220 }}
+              onClick={e => e.stopPropagation()}
+            >
+              <SidebarPanel
+                appName={appName}
+                items={items}
+                activeSection={activeSection}
+                collapsed={false}
+                onSectionChange={onSectionChange}
+                mobile
+                onRequestClose={onCloseMobile}
+              />
+            </motion.aside>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </>
   )
 }

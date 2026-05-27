@@ -236,7 +236,7 @@ export const DateInput = forwardRef<HTMLInputElement, DateInputProps>(function D
               className="flex items-baseline gap-1.5"
             >
               <span
-                className="text-[22px] font-black leading-none tabular-nums text-slate-900"
+                className="text-[16px] font-black leading-none tabular-nums text-slate-900"
                 style={{ fontFamily: "'Sora', system-ui, sans-serif", letterSpacing: '-0.04em' }}
               >
                 {displayDay}

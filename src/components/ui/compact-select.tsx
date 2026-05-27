@@ -291,7 +291,7 @@ export function CompactSelect<TValue extends string = string>({
           exit={{ opacity: 0, scaleY: 0.94, y: openAbove ? 6 : -6 }}
           transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
           className={cn(
-            'z-[1200] overflow-hidden rounded-2xl border border-slate-300/80 bg-white p-1.5',
+            'z-[1200] overflow-hidden rounded-lg border border-slate-300/80 bg-white p-1.5',
             'shadow-[0_20px_60px_rgba(15,23,42,0.14),0_4px_16px_rgba(15,23,42,0.08)]',
             dropdownClassName,
           )}

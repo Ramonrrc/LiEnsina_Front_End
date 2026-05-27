@@ -41,6 +41,15 @@ O front-end passa a preferir endpoints derivados da sessão:
 
 Endpoints globais como `/schools`, `/students`, `/classes`, `/exams`, `/users` e `/roles` devem existir apenas para perfis administrativos autorizados e ainda assim com ABAC explícito.
 
+## Dashboard administrativo filtrado
+
+- `GET /dashboard` deve aceitar `schoolId`, `classId`, `subject`, `period`, `alertPage` e `alertLimit`.
+- O back-end deve validar os filtros contra o escopo autenticado antes de consultar/montar indicadores.
+- `schoolId` e `classId` enviados pelo navegador sao apenas seletores; nunca devem ampliar o escopo vindo da sessao.
+- `period` deve usar allowlist (`week`, `month`, `year`, `all`) e filtros desconhecidos devem retornar `400`.
+- Filtros para escola/turma fora do escopo permitido devem retornar `403` ou `404`.
+- A resposta pode incluir `schools` e `classes` permitidas para alimentar os selects, sem misturar tenants.
+
 ## DTOs strict e mass assignment
 
 - Usar Zod, Joi, class-validator ou equivalente com schemas `strict`.

@@ -75,7 +75,7 @@ function SectionCard({
           </div>
           <div>
             <Eyebrow className="text-indigo-500">{label}</Eyebrow>
-            <p className="font-['Lora'] text-sm font-semibold text-stone-900 leading-snug mt-0.5">{title}</p>
+            <p className="font-DMSans text-sm font-semibold text-stone-900 leading-snug mt-0.5">{title}</p>
           </div>
         </div>
         {headerRight && <div>{headerRight}</div>}
@@ -325,7 +325,7 @@ export function RoomReservationsView({ model }: { model: RolePortalScreenModel }
               </div>
               <div>
                 <Eyebrow className="text-indigo-500">Professor</Eyebrow>
-                <p className="font-['Lora'] text-sm font-semibold text-stone-900 leading-snug mt-0.5">Reservas de Sala</p>
+                <p className="font-DMSans text-sm font-semibold text-stone-900 leading-snug mt-0.5">Reservas de Sala</p>
               </div>
             </div>
 
@@ -553,7 +553,7 @@ export function RoomReservationsView({ model }: { model: RolePortalScreenModel }
                             </div>
                             <div className="min-w-0">
                               <Eyebrow>Ambiente</Eyebrow>
-                              <p className="font-['Lora'] text-sm font-semibold text-stone-900 truncate leading-snug">{r.room}</p>
+                              <p className="font-DMSans text-sm font-semibold text-stone-900 truncate leading-snug">{r.room}</p>
                             </div>
                           </div>
                           <span className="inline-flex items-center gap-1 rounded-full border border-emerald-300 bg-emerald-50 px-2.5 py-1 text-[10px] font-semibold text-emerald-700 font-['DM_Sans']">
@@ -646,7 +646,7 @@ export function RoomReservationsView({ model }: { model: RolePortalScreenModel }
                     </div>
                     <div className="min-w-0">
                       <Eyebrow>Ambiente</Eyebrow>
-                      <p className="font-['Lora'] text-sm font-semibold text-stone-900">{selectedReservation.room}</p>
+                      <p className="font-DMSans text-sm font-semibold text-stone-900">{selectedReservation.room}</p>
                     </div>
                   </div>
 

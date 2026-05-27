@@ -410,7 +410,7 @@ export default function LoginView({ errorMessage, isSubmitting, onBackToLanding,
               <div style={{ width:40, height:40, borderRadius:12, background:'rgba(255,255,255,0.12)', border:'1px solid rgba(255,255,255,0.16)', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>
                 <GraduationCap size={20} color="white" />
               </div>
-              <span style={{ fontFamily:"'Cormorant Garamond','Lora',Georgia,serif", fontSize:'1.12rem', fontWeight:600, color:'rgba(255,255,255,0.95)' }}>{appName}</span>
+              <span className="font-DMSans">{appName}</span>
             </div>
 
             <h1 style={{ fontFamily:"'Cormorant Garamond','Lora',Georgia,serif", fontSize:'2.1rem', fontWeight:600, lineHeight:1.22, letterSpacing:'-.01em', color:'rgba(255,255,255,0.95)', marginBottom:8 }}>

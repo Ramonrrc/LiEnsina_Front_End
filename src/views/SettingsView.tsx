@@ -558,20 +558,24 @@ export default function SettingsView({ currentUser, profile, schools = [], asset
     const visualAction = removeAvatarPending || removeBannerPending
       ? { removeAvatar: removeAvatarPending, removeBanner: removeBannerPending }
       : undefined
-    await onSave(
-      {
-        name: parsed.name.trim(),
-        email: parsed.email.trim().toLowerCase(),
-        phone: onlyDigits(parsed.phone),
-        birthDate: parsed.birthDate.trim(),
-        cpf: onlyDigits(parsed.cpf),
-      },
-      removeAvatarPending ? null : avatarFile,
-      removeBannerPending ? null : bannerFile,
-      visualAction,
-    )
-    setSaving(false); setSaved(true)
-    setTimeout(() => setSaved(false), 3000)
+    try {
+      await onSave(
+        {
+          name: parsed.name.trim(),
+          email: parsed.email.trim().toLowerCase(),
+          phone: onlyDigits(parsed.phone),
+          birthDate: parsed.birthDate.trim(),
+          cpf: onlyDigits(parsed.cpf),
+        },
+        removeAvatarPending ? null : avatarFile,
+        removeBannerPending ? null : bannerFile,
+        visualAction,
+      )
+      setSaved(true)
+      setTimeout(() => setSaved(false), 3000)
+    } finally {
+      setSaving(false)
+    }
   }
 
   const hasChanges = !!(
@@ -750,7 +754,7 @@ export default function SettingsView({ currentUser, profile, schools = [], asset
                     </InputIconWrap>
                   </Field>
 
-                  <Field label="Data de nascimento" icon={Calendar} iconColor="text-rose-400" error={errors.birthDate} hint="Opcional: selecione sua data de nascimento.">
+                  <Field label="Data de nascimento" icon={Calendar} iconColor="text-sky-600" error={errors.birthDate} hint="Opcional: selecione sua data de nascimento.">
                     <DateInput
                       className={`${inputCls} ${errors.birthDate ? inputError : ''}`}
                       icon={<Calendar size={13} className="text-stone-400" />}

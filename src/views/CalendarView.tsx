@@ -1,16 +1,12 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
+import { FormEvent, useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { createCalendar, viewDay, viewList, viewMonthGrid, viewWeek } from '@schedule-x/calendar'
-import type { CalendarApp, CalendarEventExternal } from '@schedule-x/calendar'
-import '@schedule-x/theme-default/dist/index.css'
-import { Temporal } from 'temporal-polyfill'
 import { z } from 'zod'
 import {
   ChevronLeft, ChevronRight, Clock, MapPin,
   Plus, RefreshCcw, Check, Trash2, X, XCircle,
   School, Users, BookOpen, Flag, GraduationCap,
   Filter, SlidersHorizontal, CalendarDays, AlertTriangle,
-  Pen, Sparkles, CalendarCheck, CalendarClock,
+  Pen, CalendarCheck, CalendarClock,
   CheckCircle2, RotateCcw, Search,
 } from 'lucide-react'
 
@@ -32,65 +28,11 @@ import type {
 } from '../types'
 
 /* ─────────────────────────────────────────────
-   Schedule-X CSS overrides
+   Calendar setup
 ───────────────────────────────────────────── */
-const SCHEDULE_X_OVERRIDES = `
-  .cv-schedule-shell .sx__calendar {
-    border: none !important;
-    background: transparent !important;
-    font-family: 'DM Sans', system-ui, sans-serif !important;
-    --sx-border: 1px solid #d1d5db;
-    --sx-color-outline-variant: #d1d5db;
-  }
-  .cv-schedule-shell .sx__calendar-wrapper,
-  .cv-schedule-shell .sx__month-grid-wrapper {
-    min-height: 540px;
-  }
-  .cv-schedule-shell .sx__month-grid-week__week-number,
-  .cv-schedule-shell .sx__month-grid-week:first-child .sx__month-grid-week__week-number {
-    padding-top: 12px !important;
-  }
-  .cv-schedule-shell .sx__month-grid-day__header-date {
-    font-family: 'Lora', serif !important;
-  }
-  .cv-schedule-shell .sx__calendar-header {
-    border-bottom: 1px solid #e5e7eb !important;
-    background: #fafaf9 !important;
-  }
-  .cv-schedule-shell .sx__month-grid-day {
-    border-color: #e5e7eb !important;
-  }
-  .cv-schedule-shell .sx__view-selection-items {
-    min-width: 160px !important;
-    border: 1px solid #d1d5db !important;
-    border-radius: 12px !important;
-    background: #fff !important;
-    padding: 4px !important;
-    box-shadow: 0 20px 40px rgba(15,23,42,.12) !important;
-  }
-  .cv-schedule-shell .sx__view-selection-item {
-    border-radius: 8px !important;
-    color: #57534e !important;
-    font-size: 13px !important;
-    font-weight: 500 !important;
-    padding: 8px 10px !important;
-  }
-  .cv-schedule-shell .sx__view-selection-item:hover,
-  .cv-schedule-shell .sx__view-selection-item:focus {
-    background: #f5f5f4 !important;
-    color: #0f172a !important;
-  }
-  .cv-schedule-shell .sx__view-selection-item.is-selected {
-    background: #4f46e5 !important;
-    color: #fff !important;
-  }
-`
-
 /* ─────────────────────────────────────────────
    Types & Constants
 ───────────────────────────────────────────── */
-const TIMEZONE = 'America/Sao_Paulo'
-
 type VisualEventType = CalendarEventType | 'feriado' | 'simulado'
 type VisualEventSource = 'school' | 'holiday' | 'evaluation'
 
@@ -217,16 +159,35 @@ const calendarColors: Record<VisualEventType, { main: string; bg: string; text: 
   simulado:  { main: '#0d9488', bg: '#ccfbf1', text: '#0f766e' }, // teal-100
 }
 
-const scheduleCalendars = Object.fromEntries(
-  Object.entries(calendarColors).map(([key, c]) => [
-    key,
-    {
-      colorName: key,
-      label: visualTypeLabels[key as VisualEventType],
-      lightColors: { main: c.main, container: c.bg, onContainer: c.text },
-    },
-  ]),
-)
+type CalendarFilterKey = VisualEventType | 'hoje'
+
+type CalendarMonthCell = {
+  key: string
+  date: string
+  day: number
+  month: number
+  year: number
+  otherMonth: boolean
+}
+
+const calendarDayLabels = ['DOM', 'SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SAB']
+const calendarMonthLabels = [
+  'janeiro', 'fevereiro', 'marco', 'abril', 'maio', 'junho',
+  'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro',
+]
+const defaultCalendarFilterKeys: CalendarFilterKey[] = [
+  'hoje', 'evento', 'aula', 'reuniao', 'avaliacao', 'prazo', 'feriado', 'simulado',
+]
+const calendarFilterDefs: Array<{ key: CalendarFilterKey; label: string; color?: string; ring?: boolean }> = [
+  { key: 'hoje', label: 'hoje', ring: true },
+  { key: 'evento', label: visualTypeLabels.evento, color: calendarColors.evento.main },
+  { key: 'aula', label: visualTypeLabels.aula, color: calendarColors.aula.main },
+  { key: 'reuniao', label: visualTypeLabels.reuniao, color: calendarColors.reuniao.main },
+  { key: 'avaliacao', label: visualTypeLabels.avaliacao, color: calendarColors.avaliacao.main },
+  { key: 'prazo', label: visualTypeLabels.prazo, color: calendarColors.prazo.main },
+  { key: 'feriado', label: visualTypeLabels.feriado, color: calendarColors.feriado.main },
+  { key: 'simulado', label: visualTypeLabels.simulado, color: calendarColors.simulado.main },
+]
 
 /* ─────────────────────────────────────────────
    Utils
@@ -256,28 +217,69 @@ function splitDateTime(value: string, fallbackTime: string) {
   return { date: value.slice(0, 10), time: value.includes('T') ? value.slice(11, 16) : fallbackTime }
 }
 
-function toPlainDate(value: string) {
-  return Temporal.PlainDate.from(value.slice(0, 10))
+function padCalendarNumber(value: number) {
+  return String(value).padStart(2, '0')
 }
 
-function toZonedDateTime(value: string, fallbackTime = '00:00') {
-  const { date, time } = splitDateTime(value, fallbackTime)
-  return Temporal.ZonedDateTime.from(`${date}T${time || fallbackTime}:00[${TIMEZONE}]`)
+function calendarDateKey(year: number, month: number, day: number) {
+  return `${year}-${padCalendarNumber(month + 1)}-${padCalendarNumber(day)}`
 }
 
-function toScheduleEvent(event: VisualCalendarEvent): CalendarEventExternal {
-  return {
-    id: event.id,
-    title: event.title,
-    start: event.allDay ? toPlainDate(event.startsAt) : toZonedDateTime(event.startsAt),
-    end:   event.allDay ? toPlainDate(event.endsAt)   : toZonedDateTime(event.endsAt, '23:59'),
-    calendarId: event.type,
-    location: event.location,
-    description: event.description,
-    source: event.source,
-    sourceId: event.sourceId,
-    _options: { disableDND: true, disableResize: true },
+function todayCalendarKey() {
+  const today = new Date()
+  return calendarDateKey(today.getFullYear(), today.getMonth(), today.getDate())
+}
+
+function buildCalendarMonthCells(monthDate: Date): CalendarMonthCell[] {
+  const year = monthDate.getFullYear()
+  const month = monthDate.getMonth()
+  const firstWeekday = new Date(year, month, 1).getDay()
+  const daysInMonth = new Date(year, month + 1, 0).getDate()
+  const daysInPreviousMonth = new Date(year, month, 0).getDate()
+  const cells: CalendarMonthCell[] = []
+
+  for (let index = 0; index < firstWeekday; index += 1) {
+    const day = daysInPreviousMonth - firstWeekday + index + 1
+    const previousMonth = month - 1
+    const cellMonth = previousMonth < 0 ? 11 : previousMonth
+    const cellYear = previousMonth < 0 ? year - 1 : year
+    cells.push({
+      key: `prev-${cellYear}-${cellMonth}-${day}`,
+      date: calendarDateKey(cellYear, cellMonth, day),
+      day,
+      month: cellMonth,
+      year: cellYear,
+      otherMonth: true,
+    })
   }
+
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    cells.push({
+      key: `current-${year}-${month}-${day}`,
+      date: calendarDateKey(year, month, day),
+      day,
+      month,
+      year,
+      otherMonth: false,
+    })
+  }
+
+  while (cells.length % 7 !== 0) {
+    const day = cells.length - firstWeekday - daysInMonth + 1
+    const nextMonth = month + 1
+    const cellMonth = nextMonth > 11 ? 0 : nextMonth
+    const cellYear = nextMonth > 11 ? year + 1 : year
+    cells.push({
+      key: `next-${cellYear}-${cellMonth}-${day}`,
+      date: calendarDateKey(cellYear, cellMonth, day),
+      day,
+      month: cellMonth,
+      year: cellYear,
+      otherMonth: true,
+    })
+  }
+
+  return cells
 }
 
 function formatUpcomingDate(value: string) {
@@ -325,7 +327,7 @@ function eventDateRangeLabel(event: VisualCalendarEvent) {
 ───────────────────────────────────────────── */
 function Eyebrow({ children, className = '' }: { children: React.ReactNode; className?: string }) {
   return (
-    <p className={`text-[10px] font-semibold tracking-[.16em] uppercase text-stone-400 font-['DM_Sans'] ${className}`}>
+    <p className={`text-[10px] font-semibold tracking-[.16em] uppercase text-stone-400 font-DMSans ${className}`}>
       {children}
     </p>
   )
@@ -377,6 +379,215 @@ function SkeletonUpcoming() {
 /* ─────────────────────────────────────────────
    Metric card (file 2 style)
 ───────────────────────────────────────────── */
+type CronogramaCalendarProps = {
+  currentMonth: Date
+  activeFilters: Set<CalendarFilterKey>
+  canCreateEvent: boolean
+  showCreateEventActions: boolean
+  createEventHint: string
+  eventsForDate: (date: string) => VisualCalendarEvent[]
+  onPrevMonth: () => void
+  onNextMonth: () => void
+  onToggleFilter: (filter: CalendarFilterKey) => void
+  onCreateEvent: () => void
+  onDayClick: (date: string, events: VisualCalendarEvent[]) => void
+  onEventClick: (date: string, event: VisualCalendarEvent) => void
+}
+
+function CronogramaCalendar({
+  currentMonth,
+  activeFilters,
+  canCreateEvent,
+  showCreateEventActions,
+  createEventHint,
+  eventsForDate,
+  onPrevMonth,
+  onNextMonth,
+  onToggleFilter,
+  onCreateEvent,
+  onDayClick,
+  onEventClick,
+}: CronogramaCalendarProps) {
+  const todayKey = todayCalendarKey()
+  const monthCells = useMemo(() => buildCalendarMonthCells(currentMonth), [currentMonth])
+  const monthName = calendarMonthLabels[currentMonth.getMonth()]
+  const visibleYear = currentMonth.getFullYear()
+  const maxVisibleEvents = 4
+
+  return (
+    <div className="flex w-full max-w-full flex-col justify-center overflow-hidden rounded-xl border border-[#e2e0da] bg-[#f4f3ef] px-2.5 py-3 font-DMSans sm:rounded-2xl sm:px-7 sm:py-7">
+      <div className="mb-3 flex flex-col items-stretch gap-2.5 sm:mb-5 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+        <div className="min-w-0">
+          <h1 className="text-[24px] font-black leading-none tracking-normal text-[#1a1814] sm:text-[32px]">
+            <span className="rounded-md bg-[#5b4fe8] px-2 py-0.5 text-white">calen</span>dário
+          </h1>
+          <p className="mt-1 max-w-xl text-[11px] italic text-[#7a776e] sm:mt-1.5 sm:text-[12px]">
+            Clique em um dia para ver horario, progresso e onde a turma parou.
+          </p>
+        </div>
+        {showCreateEventActions && (
+          <button
+            type="button"
+            onClick={onCreateEvent}
+            disabled={!canCreateEvent}
+            title={createEventHint}
+            className="inline-flex h-8 w-full shrink-0 items-center justify-center gap-1.5 rounded-lg border border-indigo-500 bg-indigo-600 px-3 text-[12px] font-bold text-white shadow-sm transition hover:bg-indigo-700 active:scale-95 disabled:cursor-not-allowed disabled:border-[#d6d3cc] disabled:bg-white disabled:text-[#9d9a93] sm:w-auto"
+          >
+            <Plus size={14} /> Novo evento
+          </button>
+        )}
+      </div>
+
+      <div className="mb-2.5 flex items-center justify-center gap-2 sm:mb-3 sm:gap-4">
+        <button
+          type="button"
+          onClick={onPrevMonth}
+          aria-label="Mes anterior"
+          className="flex h-7 w-7 items-center justify-center rounded-lg border border-[#d6d3cc] text-[#5c5952] transition hover:bg-[#ebe9e3]"
+        >
+          <ChevronLeft size={14} />
+        </button>
+        <div className="text-[15px] font-bold tracking-normal text-[#1a1814] sm:text-[18px]">
+          <span className="mr-1 rounded-md bg-[#5b4fe8] px-2 py-0.5 font-black italic text-white sm:mr-1.5">
+            {monthName}
+          </span>
+          {visibleYear}
+        </div>
+        <button
+          type="button"
+          onClick={onNextMonth}
+          aria-label="Proximo mes"
+          className="flex h-7 w-7 items-center justify-center rounded-lg border border-[#d6d3cc] text-[#5c5952] transition hover:bg-[#ebe9e3]"
+        >
+          <ChevronRight size={14} />
+        </button>
+      </div>
+
+      <div className="mb-2.5 flex flex-wrap items-center gap-1 rounded-[10px] border border-[#e2e0da] bg-white px-2 py-1.5 sm:mb-3 sm:px-2.5">
+        {calendarFilterDefs.map((filter) => {
+          const isActive = activeFilters.has(filter.key)
+          return (
+            <button
+              key={filter.key}
+              type="button"
+              onClick={() => onToggleFilter(filter.key)}
+              className={`inline-flex select-none items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold transition
+                ${isActive
+                  ? 'border-[#bbb8b0] text-[#1a1814]'
+                  : 'border-[#e2e0da] text-[#6b6860] opacity-40 hover:opacity-70'}
+                bg-[#faf9f7] hover:border-[#c8c5be] hover:bg-[#ece9e3]`}
+            >
+              {filter.ring ? (
+                <span className="h-2 w-2 rounded-full border-2 border-[#5b4fe8]" />
+              ) : (
+                <span className="h-1.5 w-1.5 rounded-full" style={{ background: filter.color }} />
+              )}
+              {filter.label}
+            </button>
+          )
+        })}
+      </div>
+
+      <div className="w-full max-w-full overflow-hidden">
+        <div className="w-full min-w-0">
+          <div className="grid grid-cols-7">
+            {calendarDayLabels.map((day) => (
+              <div key={day} className="pb-1.5 text-center text-[9px] font-bold uppercase tracking-[0.08em] text-[#9d9a93] sm:pb-2 sm:text-[10px] sm:tracking-[0.12em]">
+                {day}
+              </div>
+            ))}
+          </div>
+
+          <div className="grid grid-cols-7 border-l border-t border-[#e2e0da]">
+            {monthCells.map((cell) => {
+              const dayEvents = eventsForDate(cell.date)
+              const visibleEvents = dayEvents.slice(0, maxVisibleEvents)
+              const hiddenCount = dayEvents.length - visibleEvents.length
+              const isToday = cell.date === todayKey && activeFilters.has('hoje')
+
+              return (
+                <div
+                key={cell.key}
+                role="button"
+                tabIndex={0}
+                onClick={() => onDayClick(cell.date, dayEvents)}
+                onKeyDown={(keyEvent) => {
+                  if (keyEvent.key === 'Enter' || keyEvent.key === ' ') {
+                    keyEvent.preventDefault()
+                    onDayClick(cell.date, dayEvents)
+                  }
+                }}
+                className={`relative min-h-[72px] cursor-pointer overflow-hidden border-b border-r border-[#e2e0da] p-0 text-left transition hover:bg-[#f0eeea] sm:min-h-[122px]
+                  ${cell.otherMonth ? 'bg-[#f6f3f7]' : 'bg-[#f9f7fa]'}`}
+              >
+                  <div className="relative flex h-full min-h-[72px] flex-col gap-1 px-1.5 py-1.5 sm:min-h-[112px] sm:gap-1 sm:px-2 sm:py-2">
+                    {isToday && (
+                    <span className="pointer-events-none absolute left-1/2 top-1/2 z-[2] aspect-square w-[min(calc(100%_-_8px),2.8rem)] -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-[#5b4fe8] sm:w-[min(calc(100%_-_14px),9.5rem)]" />
+                  )}
+                  <span
+                    className={`relative z-[5] mb-0.5 block font-['Lora',serif] text-[10px] leading-none sm:mb-1 sm:text-[11px]
+                      ${isToday ? 'font-extrabold text-[#5b4fe8]' : cell.otherMonth ? 'text-[#c5c2bb]' : 'text-[#8a877f]'}
+                      ${isToday ? 'font-extrabold' : 'font-semibold'}`}
+                  >
+                    {cell.day}
+                  </span>
+                  <span
+                    className={isToday
+                      ? "absolute left-1/2 top-1/2 z-[3] flex w-[min(calc(100%_-_12px),2.6rem)] -translate-x-1/2 -translate-y-1/2 flex-col items-stretch justify-center gap-[3px] overflow-hidden sm:w-[min(calc(100%_-_38px),7.75rem)] sm:gap-0.5"
+                      : "relative z-[3] flex flex-1 flex-col gap-[3px] overflow-hidden sm:gap-0.5"}
+                  >
+                    {isToday && visibleEvents.length === 0 && (
+                      <span className="pointer-events-none truncate text-center font-DMSans text-[8px] font-semibold uppercase tracking-[0.08em] text-black sm:text-[11px] sm:tracking-[0.14em]">
+                        Hoje
+                      </span>
+                    )}
+                    {visibleEvents.map((event) => {
+                      const color = calendarColors[event.type]
+                      return (
+                        <span
+                          key={event.id}
+                          role="button"
+                          tabIndex={0}
+                          title={event.title}
+                          aria-label={`${visualTypeLabels[event.type]}: ${event.title}`}
+                          onClick={(clickEvent) => {
+                            clickEvent.stopPropagation()
+                            onEventClick(cell.date, event)
+                          }}
+                          onKeyDown={(keyEvent) => {
+                            if (keyEvent.key === 'Enter' || keyEvent.key === ' ') {
+                              keyEvent.preventDefault()
+                              keyEvent.stopPropagation()
+                              onEventClick(cell.date, event)
+                            }
+                          }}
+                          className="flex h-2.5 w-full min-w-0 items-center overflow-hidden whitespace-nowrap rounded-[5px] border px-0.5 py-0 text-[0px] font-bold leading-none shadow-sm transition hover:opacity-85 sm:h-auto sm:gap-1.5 sm:rounded-md sm:px-2 sm:py-1.5 sm:text-[10px] sm:leading-tight"
+                          style={{ background: color.bg, color: color.text, borderColor: color.main }}
+                        >
+                          <span className="hidden h-2 w-2 flex-shrink-0 rounded-full opacity-90 sm:block" style={{ background: color.main }} />
+                          <span className="hidden min-w-0 flex-1 truncate sm:block">
+                            {visualTypeLabels[event.type]}: {event.title}
+                          </span>
+                        </span>
+                      )
+                    })}
+                    {hiddenCount > 0 && (
+                      <span className="relative truncate whitespace-nowrap px-0 text-center text-[8px] font-semibold leading-none text-[#9d9a93] sm:px-1 sm:py-0.5 sm:text-[9px]">
+                        +{hiddenCount} mais
+                      </span>
+                    )}
+                  </span>
+                </div>
+              </div>
+              )
+            })}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function MetricCard({
   label, value, sub, icon, iconBg, delay = 0,
 }: {
@@ -395,7 +606,7 @@ function MetricCard({
         </span>
       </div>
       <strong className="font-['Lora'] text-3xl font-bold text-stone-900 leading-none">{value}</strong>
-      <span className="text-[11px] text-stone-400 font-['DM_Sans']">{sub}</span>
+      <span className="text-[11px] text-stone-400 font-DMSans">{sub}</span>
     </div>
   )
 }
@@ -405,7 +616,7 @@ function MetricCard({
 ───────────────────────────────────────────── */
 function FilterGroup({ icon, children }: { icon: React.ReactNode; children: React.ReactNode }) {
   return (
-    <div className="flex min-h-[36px] items-center gap-2 bg-white border border-stone-300 rounded-xl px-3 py-1.5 transition-all hover:border-stone-400">
+    <div className="flex min-h-8 items-center gap-1.5 bg-white border border-stone-300 rounded-lg px-2.5 py-1 transition-all hover:border-stone-400">
       <span className="flex items-center text-stone-400 flex-shrink-0">{icon}</span>
       {children}
     </div>
@@ -417,7 +628,7 @@ function FilterGroup({ icon, children }: { icon: React.ReactNode; children: Reac
 ───────────────────────────────────────────── */
 function Toast({ message, type, onClose }: { message: string; type: 'success' | 'error'; onClose: () => void }) {
   return (
-    <div className={`flex items-start gap-3 rounded-xl border px-4 py-3.5 text-sm font-medium animate-in fade-in slide-in-from-top-2 duration-200 font-['DM_Sans'] shadow-sm
+    <div className={`flex items-start gap-3 rounded-xl border px-4 py-3.5 text-sm font-medium animate-in fade-in slide-in-from-top-2 duration-200 font-DMSans shadow-sm
       ${type === 'error'
         ? 'border-rose-400 bg-rose-50 text-rose-800'
         : 'border-emerald-400 bg-emerald-50 text-emerald-800'}`}>
@@ -463,9 +674,9 @@ function Modal({
         <div className="h-0.5 w-full bg-gradient-to-r from-indigo-500 via-violet-500 to-purple-500" />
         <div className={`sticky top-0 z-10 flex items-start justify-between gap-3 border-b border-stone-200 bg-white ${compact ? 'px-5 py-4' : 'px-6 py-5'}`}>
           <div>
-            <p className="text-[10px] font-semibold tracking-[.16em] uppercase text-indigo-500 font-['DM_Sans']">{subtitle}</p>
+            <p className="text-[10px] font-semibold tracking-[.16em] uppercase text-indigo-500 font-DMSans">{subtitle}</p>
             <h2 id={id} className={`font-['Lora'] font-bold text-stone-900 mt-0.5 ${compact ? 'text-lg' : 'text-xl'}`}>{title}</h2>
-            {description && <p className={`text-stone-400 mt-0.5 font-['DM_Sans'] ${compact ? 'text-xs' : 'text-sm'}`}>{description}</p>}
+            {description && <p className={`text-stone-400 mt-0.5 font-DMSans ${compact ? 'text-xs' : 'text-sm'}`}>{description}</p>}
           </div>
           <button
             type="button"
@@ -487,10 +698,22 @@ function Modal({
    Input / label classes (file 2 style)
 ───────────────────────────────────────────── */
 const inputCls =
-  'w-full bg-white border border-stone-300 rounded-xl px-3 py-2.5 text-sm font-medium text-stone-900 outline-none transition-all placeholder:text-stone-400 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 hover:border-stone-400 appearance-none font-[\'DM_Sans\']'
+  'w-full bg-white border border-stone-300 rounded-xl px-3 py-2.5 text-sm font-medium text-stone-900 outline-none transition-all placeholder:text-stone-400 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 hover:border-stone-400 appearance-none font-DMSans'
+
+const compactInputCls =
+  'w-full h-8 min-h-8 bg-white border border-stone-300 rounded-lg px-2.5 py-1 text-[12px] font-semibold text-stone-900 outline-none transition-all placeholder:text-stone-400 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 hover:border-stone-400 appearance-none font-DMSans'
+
+const compactSelectCls =
+  `${compactInputCls} !min-h-8 !px-2.5 !gap-1.5 !text-[12px] [&_span]:!text-[12px] [&_svg]:!h-3.5 [&_svg]:!w-3.5`
+
+const toolbarSelectCls =
+  'bg-transparent !min-h-7 !border-0 !shadow-none !px-0 !gap-1.5 outline-none text-[12px] font-semibold text-stone-900 cursor-pointer appearance-none disabled:cursor-not-allowed disabled:text-stone-400 font-DMSans [&_span]:!text-[12px] [&_svg]:!h-3.5 [&_svg]:!w-3.5'
+
+const compactSelectOptionCls =
+  '!rounded-lg !px-2.5 !py-1.5'
 
 const labelCls =
-  'text-[10px] font-semibold tracking-[.16em] uppercase text-stone-400 font-[\'DM_Sans\']'
+  'text-[10px] font-semibold tracking-[.16em] uppercase text-stone-400 font-DMSans'
 
 /* ─────────────────────────────────────────────
    Component
@@ -557,40 +780,23 @@ export default function CalendarView({
   const [deletingEventId, setDeletingEventId] = useState<string | null>(null)
   const [schoolFilter, setSchoolFilter] = useState(defaultSchoolFilter)
   const [classFilter, setClassFilter] = useState('all')
-  const [typeFilter, setTypeFilter] = useState<VisualEventType | 'all'>('all')
   const [year, setYear] = useState(new Date().getFullYear())
+  const [currentMonth, setCurrentMonth] = useState(() => {
+    const today = new Date()
+    return new Date(today.getFullYear(), today.getMonth(), 1)
+  })
+  const [activeCalendarFilters, setActiveCalendarFilters] = useState<Set<CalendarFilterKey>>(
+    () => new Set(defaultCalendarFilterKeys),
+  )
   const [holidays, setHolidays] = useState<BrazilHoliday[]>([])
   const [isLoadingHolidays, setIsLoadingHolidays] = useState(false)
   const [holidayError, setHolidayError] = useState<string | null>(null)
   const [formError, setFormError] = useState<string | null>(null)
   const [formFieldErrors, setFormFieldErrors] = useState<FieldErrors<CalendarFormField>>({})
   const [isEventModalOpen, setIsEventModalOpen] = useState(false)
-  const [isCompactCalendar, setIsCompactCalendar] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
 
-  const calendarContainerRef = useRef<HTMLDivElement | null>(null)
-  const calendarAppRef = useRef<CalendarApp | null>(null)
-  const scheduleClickRef = useRef<(event: CalendarEventExternal) => void>(() => undefined)
-  const scheduleDateClickRef = useRef<(date: { toString: () => string }, event?: UIEvent) => void>(() => undefined)
-
   useEffect(() => { const t = setTimeout(() => setLoading(false), 800); return () => clearTimeout(t) }, [])
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return
-    const query = window.matchMedia('(max-width: 767px)')
-    const update = () => setIsCompactCalendar(query.matches)
-    update()
-    query.addEventListener('change', update)
-    return () => query.removeEventListener('change', update)
-  }, [])
-
-  useEffect(() => {
-    const styleId = 'sx-overrides'
-    if (document.getElementById(styleId)) return
-    const el = document.createElement('style')
-    el.id = styleId; el.textContent = SCHEDULE_X_OVERRIDES
-    document.head.appendChild(el)
-  }, [])
 
   useEffect(() => {
     if (!isProfessorAccess) return
@@ -632,6 +838,11 @@ export default function CalendarView({
     })
     if (classFilter !== 'all' && !ok) setClassFilter('all')
   }, [classFilter, classes, isProfessorAccess, linkedProfessorClassIds, schoolFilter])
+
+  useEffect(() => {
+    const visibleYear = currentMonth.getFullYear()
+    if (year !== visibleYear) setYear(visibleYear)
+  }, [currentMonth, year])
 
   useEffect(() => {
     let cancelled = false
@@ -689,16 +900,10 @@ export default function CalendarView({
         ev.source === 'holiday' ||
         ev.classId === classFilter ||
         (ev.schoolId === schoolFilter && !ev.classId)
-      const matchesType = typeFilter === 'all' || ev.type === typeFilter
+      const matchesType = activeCalendarFilters.has(ev.type)
       return matchesSchool && matchesClass && matchesType
     }),
-    [accessibleVisualEvents, classFilter, schoolFilter, typeFilter],
-  )
-
-  const scheduleEvents = useMemo(() => filteredVisualEvents.map(toScheduleEvent), [filteredVisualEvents])
-  const scheduleDataRevision = useMemo(
-    () => visualEvents.map((ev) => [ev.id, ev.title, ev.type, ev.startsAt, ev.endsAt, ev.schoolId ?? '', ev.classId ?? '', ev.location ?? ''].join(':')).join('|'),
-    [visualEvents],
+    [accessibleVisualEvents, activeCalendarFilters, classFilter, schoolFilter],
   )
 
   const visibleSchoolEventCount = useMemo(() => accessibleVisualEvents.filter((ev) => ev.source === 'school').length, [accessibleVisualEvents])
@@ -773,13 +978,6 @@ export default function CalendarView({
       })),
     ]
   }, [classesAvailableForSelectedSchool, isProfessorAccess, schoolFilter])
-
-  const typeFilterOptions = useMemo<Array<CompactSelectOption<VisualEventType | 'all'>>>(() => [
-    { value: 'all', label: 'Todos os tipos' },
-    { value: 'feriado',   label: 'Feriados',   swatch: calendarColors.feriado.main },
-    { value: 'simulado',  label: 'Simulados',  swatch: calendarColors.simulado.main },
-    ...eventTypes.map((t) => ({ value: t.value, label: t.label, swatch: calendarColors[t.value].main })),
-  ], [])
 
   const eventTypeOptions = useMemo<Array<CompactSelectOption<CalendarEventType>>>(
     () => eventTypes.map((t) => ({ value: t.value, label: t.label, swatch: calendarColors[t.value].main })),
@@ -951,53 +1149,42 @@ export default function CalendarView({
     resetForm()
   }
 
-  function handleScheduleEventClick(event: CalendarEventExternal) {
-    const selected = visualEvents.find((item) => item.id === event.id)
-    if (!selected) return
-    openDetailModal(selected.startsAt.slice(0, 10), [selected])
+  function moveCalendarMonth(delta: number) {
+    setCurrentMonth((current) => new Date(current.getFullYear(), current.getMonth() + delta, 1))
   }
 
-  function handleScheduleDateClick(date: { toString: () => string }, event?: UIEvent) {
-    const target = event?.target
-    if (target instanceof HTMLElement && target.closest('.sx__event')) return
-    const dateString = date.toString().slice(0, 10)
-    openDetailModal(dateString, getEventsForDate(dateString))
+  function setCalendarVisibleYear(nextYear: number) {
+    const safeYear = Number.isFinite(nextYear) ? nextYear : new Date().getFullYear()
+    setCurrentMonth((current) => new Date(safeYear, current.getMonth(), 1))
   }
 
-  scheduleClickRef.current = handleScheduleEventClick
-  scheduleDateClickRef.current = handleScheduleDateClick
+  function moveCalendarYear(delta: number) {
+    setCurrentMonth((current) => new Date(current.getFullYear() + delta, current.getMonth(), 1))
+  }
 
-  /* ── Schedule-X init ── */
-  useEffect(() => {
-    if (loading || isCompactCalendar || !calendarContainerRef.current) return undefined
-    const calendar = createCalendar({
-      defaultView: 'month-grid',
-      views: [viewMonthGrid, viewWeek, viewDay, viewList],
-      events: scheduleEvents,
-      calendars: scheduleCalendars,
-      locale: 'pt-BR',
-      firstDayOfWeek: 1,
-      selectedDate: Temporal.PlainDate.from(toDateInput()),
-      timezone: TIMEZONE,
-      monthGridOptions: { nEventsPerDay: 4 },
-      callbacks: {
-        onEventClick: (ev) => scheduleClickRef.current(ev),
-        onClickDate: (date, ev) => scheduleDateClickRef.current(date, ev),
-        onClickDateTime: (dateTime, ev) => scheduleDateClickRef.current(dateTime, ev),
-        onClickAgendaDate: (date, ev) => scheduleDateClickRef.current(date, ev),
-        onClickPlusEvents: (date, ev) => scheduleDateClickRef.current(date, ev),
-      },
+  function resetCalendarToToday() {
+    const today = new Date()
+    setCurrentMonth(new Date(today.getFullYear(), today.getMonth(), 1))
+  }
+
+  function toggleCalendarFilter(filter: CalendarFilterKey) {
+    setActiveCalendarFilters((current) => {
+      const next = new Set(current)
+      if (next.has(filter)) next.delete(filter)
+      else next.add(filter)
+      return next
     })
-    calendar.render(calendarContainerRef.current)
-    calendarAppRef.current = calendar
-    return () => { calendar.destroy(); calendarAppRef.current = null }
-  }, [isCompactCalendar, loading, scheduleDataRevision])
+  }
 
-  useEffect(() => {
-    if (isCompactCalendar) return
-    calendarAppRef.current?.events.set(scheduleEvents)
-  }, [isCompactCalendar, scheduleEvents])
+  function handleCalendarDayClick(date: string, events: VisualCalendarEvent[]) {
+    openDetailModal(date, events)
+  }
 
+  function handleCalendarEventClick(date: string, event: VisualCalendarEvent) {
+    openDetailModal(date, [event])
+  }
+
+  /* ── Render setup ── */
   /* ── Render ── */
   return (
     <>
@@ -1023,8 +1210,8 @@ export default function CalendarView({
         }
 
         @media (max-width: 767px) {
-          .cv-desktop-calendar { display: none !important; }
-          .cv-mobile-agenda { display: block !important; }
+          .cv-desktop-calendar { display: block !important; }
+          .cv-mobile-agenda { display: none !important; }
           .cv-metrics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
           .cv-header-actions { flex-direction: column; width: 100%; }
           .cv-filter-bar { flex-direction: column; width: 100%; }
@@ -1035,7 +1222,7 @@ export default function CalendarView({
         .cv-mobile-agenda { display: none; }
       `}</style>
 
-      <div className="cv-page font-['DM_Sans',system-ui,sans-serif] text-stone-900 bg-stone-100 min-h-screen">
+      <div className="cv-page font-DMSans text-stone-900 bg-stone-100 min-h-screen">
 
         {/* ══ HEADER ══ */}
         <div className="px-[clamp(16px,3vw,40px)] pt-5">
@@ -1048,23 +1235,23 @@ export default function CalendarView({
                 <div className="cv-header-actions flex items-center gap-2 flex-wrap">
                   {/* Year nav */}
                   <div className="flex items-center bg-white border border-stone-300 rounded-xl overflow-hidden shadow-sm">
-                    <button type="button" onClick={() => setYear((y) => y - 1)} aria-label="Ano anterior"
+                    <button type="button" onClick={() => moveCalendarYear(-1)} aria-label="Ano anterior"
                       className="w-9 h-9 flex items-center justify-center text-stone-500 hover:bg-stone-50 hover:text-stone-900 transition-colors">
                       <ChevronLeft size={15} />
                     </button>
                     <input
                       type="number"
                       value={year}
-                      onChange={(e) => setYear(Number(e.target.value) || new Date().getFullYear())}
+                      onChange={(e) => setCalendarVisibleYear(Number(e.target.value) || new Date().getFullYear())}
                       className="w-16 h-9 border-x border-stone-300 bg-white text-center text-[13px] font-bold text-stone-900 outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none font-['Lora']"
                     />
-                    <button type="button" onClick={() => setYear((y) => y + 1)} aria-label="Próximo ano"
+                    <button type="button" onClick={() => moveCalendarYear(1)} aria-label="Próximo ano"
                       className="w-9 h-9 flex items-center justify-center text-stone-500 hover:bg-stone-50 hover:text-stone-900 transition-colors">
                       <ChevronRight size={15} />
                     </button>
                   </div>
 
-                  <button type="button" onClick={() => setYear(new Date().getFullYear())}
+                  <button type="button" onClick={resetCalendarToToday}
                     className="inline-flex items-center gap-1.5 bg-white text-stone-500 border border-stone-300 text-[13px] font-semibold px-3 py-2 rounded-xl hover:border-stone-400 hover:text-stone-900 transition-all shadow-sm">
                     <RefreshCcw size={13} /> Hoje
                   </button>
@@ -1188,47 +1375,22 @@ export default function CalendarView({
           )}
 
           {/* ══ CALLOUT BAR ══ */}
-          {showCreateEventActions && (
-            <div className="animate-in fade-in slide-in-from-bottom-2 duration-500 delay-300 fill-mode-both overflow-hidden rounded-2xl border border-stone-300 bg-white shadow-sm">
-              <div className="h-0.5 bg-gradient-to-r from-indigo-500 via-violet-500 to-purple-500" />
-              <div className="flex items-center justify-between gap-4 flex-wrap px-5 py-4">
-                <div className="flex items-center gap-4 min-w-0">
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-600 shadow-sm">
-                    <Sparkles size={18} className="text-white" />
-                  </div>
-                  <div>
-                    <Eyebrow className="text-indigo-500">Evento escolar</Eyebrow>
-                    <h3 className="font-['Lora'] text-base font-semibold text-stone-900 mt-0.5">Adicionar ao calendário</h3>
-                    <p className="text-[12px] text-stone-400 mt-0.5">{createEventHint}</p>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={openCreateModal}
-                  disabled={!canCreateEvent}
-                  className="inline-flex items-center gap-2 bg-indigo-600 text-white text-sm font-semibold px-5 py-2.5 rounded-xl shadow-sm transition hover:bg-indigo-700 active:scale-95 disabled:cursor-not-allowed disabled:bg-stone-200 disabled:text-stone-400"
-                >
-                  <Plus size={15} /> Novo evento
-                </button>
-              </div>
-            </div>
-          )}
-
           {/* ══ CALENDAR PANEL ══ */}
           <section className="animate-in fade-in slide-in-from-bottom-2 duration-500 delay-[350ms] fill-mode-both overflow-hidden rounded-2xl border border-stone-300 bg-white shadow-sm">
+            <div className="h-0.5 bg-gradient-to-r from-indigo-500 via-violet-500 to-purple-500" />
             {/* Panel header */}
-            <div className="px-5 py-4 border-b border-stone-200 bg-stone-50 flex items-center justify-between gap-3 flex-wrap">
+            <div className="px-3 py-3 border-b border-stone-200 bg-stone-50 flex items-center justify-between gap-3 flex-wrap sm:px-5 sm:py-4">
               <div className="flex items-center gap-3">
-                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-violet-600 shadow-sm">
+                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-500 shadow-sm sm:h-9 sm:w-9 sm:rounded-xl">
                   <CalendarDays size={16} className="text-white" />
                 </div>
                 <div>
                   <Eyebrow className="text-indigo-500">Agenda visual</Eyebrow>
-                  <p className="font-['Lora'] text-sm font-semibold text-stone-900 leading-snug mt-0.5">Calendário escolar</p>
+                  <p className="font-DMSans text-sm font-semibold text-stone-900 leading-snug mt-0.5">Calendário escolar</p>
                 </div>
               </div>
 
-              <div className="cv-filter-bar flex items-center gap-2 flex-wrap">
+              <div className="cv-filter-bar flex items-center gap-1.5 flex-wrap">
                 <FilterGroup icon={<School size={13} />}>
                   <CompactSelect
                     id="cv-school-filter"
@@ -1236,9 +1398,12 @@ export default function CalendarView({
                     onChange={(id) => { setSchoolFilter(id); setClassFilter('all') }}
                     options={schoolFilterOptions}
                     disabled={isProfessorAccess && accessibleSchools.length <= 1}
-                    wrapperClassName="flex self-stretch items-center"
-                    className="bg-transparent border-none outline-none text-[13px] font-semibold text-stone-900 cursor-pointer appearance-none pr-1 disabled:cursor-not-allowed disabled:text-stone-400 font-['DM_Sans']"
+                    wrapperClassName="flex min-w-0 max-w-[185px] self-stretch items-center"
+                    className={toolbarSelectCls}
                     dropdownAnchor="parent"
+                    dropdownOffset={4}
+                    dropdownMinWidth={200}
+                    optionClassName={compactSelectOptionCls}
                   />
                 </FilterGroup>
 
@@ -1249,60 +1414,40 @@ export default function CalendarView({
                     onChange={setClassFilter}
                     options={classFilterOptions}
                     disabled={!schoolFilter || schoolFilter === 'all' || (isProfessorAccess && classesAvailableForSelectedSchool.length === 0)}
-                    wrapperClassName="flex self-stretch items-center"
-                    className="bg-transparent border-none outline-none text-[13px] font-semibold text-stone-900 cursor-pointer appearance-none pr-1 disabled:cursor-not-allowed disabled:text-stone-400 font-['DM_Sans']"
+                    wrapperClassName="flex min-w-0 max-w-[175px] self-stretch items-center"
+                    className={toolbarSelectCls}
                     dropdownAnchor="parent"
-                    dropdownMinWidth={240}
+                    dropdownOffset={4}
+                    dropdownMinWidth={200}
+                    optionClassName={compactSelectOptionCls}
                   />
                 </FilterGroup>
 
-                <FilterGroup icon={<SlidersHorizontal size={13} />}>
-                  <CompactSelect<VisualEventType | 'all'>
-                    id="cv-type-filter"
-                    value={typeFilter}
-                    onChange={setTypeFilter}
-                    options={typeFilterOptions}
-                    wrapperClassName="flex self-stretch items-center"
-                    className="bg-transparent border-none outline-none text-[13px] font-semibold text-stone-900 cursor-pointer appearance-none pr-1 font-['DM_Sans']"
-                    dropdownAnchor="parent"
-                  />
-                </FilterGroup>
               </div>
             </div>
 
-            {/* Legend */}
-            <div className="flex flex-wrap gap-x-5 gap-y-2 px-5 py-3 border-b border-stone-200 bg-white overflow-x-auto scrollbar-none">
-              {(Object.keys(calendarColors) as VisualEventType[]).map((type) => (
-                <button
-                  key={type}
-                  type="button"
-                  onClick={() => setTypeFilter(typeFilter === type ? 'all' : type)}
-                  className={`flex items-center gap-1.5 text-[11px] font-semibold transition-all rounded-full px-2.5 py-1 border
-                    ${typeFilter === type
-                      ? 'text-white border-transparent shadow-sm'
-                      : 'text-stone-600 border-stone-300 hover:border-stone-400 hover:bg-stone-50'}`}
-                  style={typeFilter === type ? { background: calendarColors[type].main } : {}}
-                >
-                  <span
-                    className="w-2 h-2 rounded-full flex-shrink-0 shrink-0"
-                    style={{
-                      background: typeFilter === type ? 'rgba(255,255,255,0.7)' : calendarColors[type].main,
-                    }}
-                  />
-                  {visualTypeLabels[type]}
-                </button>
-              ))}
-            </div>
-
-            {/* Schedule-X mount */}
+            {/* Cronograma */}
             {loading ? (
               <div className="p-5">
                 <Bone className="w-full h-[480px]"/>
               </div>
             ) : (
               <>
-                <div className="cv-desktop-calendar">
-                  {!isCompactCalendar && <div className="cv-schedule-shell p-2" ref={calendarContainerRef} />}
+                <div className="cv-desktop-calendar bg-[#ebe9e3] p-2 sm:p-5">
+                  <CronogramaCalendar
+                    currentMonth={currentMonth}
+                    activeFilters={activeCalendarFilters}
+                    canCreateEvent={canCreateEvent}
+                    showCreateEventActions={showCreateEventActions}
+                    createEventHint={createEventHint}
+                    eventsForDate={getEventsForDate}
+                    onPrevMonth={() => moveCalendarMonth(-1)}
+                    onNextMonth={() => moveCalendarMonth(1)}
+                    onToggleFilter={toggleCalendarFilter}
+                    onCreateEvent={openCreateModal}
+                    onDayClick={handleCalendarDayClick}
+                    onEventClick={handleCalendarEventClick}
+                  />
                 </div>
 
                 {/* Mobile agenda */}
@@ -1319,7 +1464,7 @@ export default function CalendarView({
 
                   {mobileAgendaGroups.length === 0 ? (
                     <div className="px-4 py-10 text-center">
-                      <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-xl border border-dashed border-stone-300 bg-stone-50 text-stone-400">
+                      <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-xl border border-dashed border-stone-300 bg-stone-50 text-stone-400">
                         <CalendarDays size={20} />
                       </div>
                       <p className="text-[13px] font-semibold text-stone-500">Nenhum item encontrado.</p>
@@ -1428,8 +1573,8 @@ export default function CalendarView({
                         <span className="text-[10px] font-semibold uppercase tracking-widest text-stone-400 mt-0.5">{mon}</span>
                       </span>
                       <span className="flex-1 min-w-0">
-                        <strong className="block text-[13px] font-semibold text-stone-900 truncate font-['DM_Sans']">{ev.title}</strong>
-                        <span className="block text-[11px] text-stone-400 mt-0.5 font-['DM_Sans']">{visualTypeLabels[ev.type]} · {timeLabel(ev)}</span>
+                        <strong className="block text-[13px] font-semibold text-stone-900 truncate font-DMSans">{ev.title}</strong>
+                        <span className="block text-[11px] text-stone-400 mt-0.5 font-DMSans">{visualTypeLabels[ev.type]} · {timeLabel(ev)}</span>
                       </span>
                       <span className="w-2.5 h-2.5 rounded-full flex-shrink-0 shadow-sm" style={{ background: calendarColors[ev.type].main }} />
                     </button>
@@ -1538,7 +1683,7 @@ export default function CalendarView({
             onClose={resetForm}
           >
             <form onSubmit={handleSubmit} noValidate>
-              <div className="px-6 py-5 flex flex-col gap-4">
+              <div className="px-5 py-4 flex flex-col gap-2.5">
                 {formError && (
                   <div className="flex items-center gap-2 px-3.5 py-3 bg-rose-50 border border-rose-300 rounded-xl text-[13px] text-rose-700 font-semibold">
                     <AlertTriangle size={14} className="shrink-0" />
@@ -1546,70 +1691,73 @@ export default function CalendarView({
                   </div>
                 )}
 
-                <div className="grid grid-cols-2 gap-4 max-[560px]:grid-cols-1">
+                <div className="grid grid-cols-2 gap-2.5 max-[560px]:grid-cols-1">
 
                   {/* Title */}
-                  <div className="col-span-2 max-[560px]:col-span-1 flex flex-col gap-1.5">
-                    <label className={labelCls} htmlFor="cv-title">Título</label>
+                  <div className="flex flex-col gap-1">
+                    <label className={labelCls} htmlFor="cv-title">Evento</label>
                     <input
                       id="cv-title"
-                      className={`${inputCls} ${fieldStateClass(formFieldErrors.title)}`}
+                      className={`${compactInputCls} ${fieldStateClass(formFieldErrors.title)}`}
                       value={draft.title}
                       onChange={(e) => updateDraftField('title', e.target.value)}
                       placeholder="Nome do evento"
                       aria-invalid={Boolean(formFieldErrors.title) || undefined}
                       required
                     />
-                    <FieldMessage hint="Digite um nome curto para identificar o evento na agenda." error={formFieldErrors.title} />
+                    <FieldMessage error={formFieldErrors.title} />
                   </div>
 
                   {/* Type */}
-                  <div className="flex flex-col gap-1.5">
+                  <div className="flex flex-col gap-1">
                     <label className={labelCls} htmlFor="cv-type">Tipo</label>
                     <CompactSelect<CalendarEventType>
                       id="cv-type"
-                      className={`${inputCls} ${fieldStateClass(formFieldErrors.type)}`}
+                      className={`${compactSelectCls} ${fieldStateClass(formFieldErrors.type)}`}
                       value={draft.type}
                       onChange={(type) => updateDraftField('type', type)}
                       options={eventTypeOptions}
-                      hint="Escolha a categoria que melhor descreve o evento."
                       error={formFieldErrors.type}
-                      dropdownMinWidth={190}
+                      dropdownOffset={4}
+                      dropdownMinWidth={170}
+                      optionClassName={compactSelectOptionCls}
                     />
                   </div>
 
                   {/* School */}
-                  <div className="flex flex-col gap-1.5">
-                    <label className={labelCls} htmlFor="cv-school">Escola</label>
+                  <div className="flex flex-col gap-1">
+                    <label className={labelCls} htmlFor="cv-school">Escola vinculada</label>
                     <CompactSelect
                       id="cv-school"
-                      className={`${inputCls} ${fieldStateClass(formFieldErrors.schoolId)}`}
+                      className={`${compactSelectCls} ${fieldStateClass(formFieldErrors.schoolId)}`}
                       value={draft.schoolId}
                       onChange={(schoolId) => {
                         setFormFieldErrors((c) => ({ ...c, schoolId: undefined, classId: undefined }))
                         setDraft({ ...draft, schoolId, classId: '' })
                       }}
                       options={schoolOptions}
-                      hint="Selecione a escola responsável por este evento."
                       error={formFieldErrors.schoolId}
                       disabled={isProfessorAccess && accessibleSchools.length <= 1}
-                      dropdownMinWidth={260}
+                      dropdownOffset={4}
+                      dropdownMinWidth={200}
+                      optionClassName={compactSelectOptionCls}
                     />
                   </div>
 
                   {/* Class */}
-                  <div className="col-span-2 max-[560px]:col-span-1 flex flex-col gap-1.5">
+                  <div className="flex flex-col gap-1">
                     <label className={labelCls} htmlFor="cv-class">Turma</label>
                     <CompactSelect
                       id="cv-class"
-                      className={`${inputCls} ${fieldStateClass(formFieldErrors.classId)}`}
+                      className={`${compactSelectCls} ${fieldStateClass(formFieldErrors.classId)}`}
                       value={draft.classId}
                       onChange={(classId) => updateDraftField('classId', classId)}
                       options={classOptions}
-                      hint={isProfessorAccess ? 'Opcional: deixe sem turma para publicar para toda a escola.' : 'Opcional: limite o evento a uma turma específica.'}
                       error={formFieldErrors.classId}
                       disabled={!draft.schoolId}
-                      dropdownMinWidth={260}
+                      dropdownOffset={4}
+                      dropdownMinWidth={200}
+                      optionClassName={compactSelectOptionCls}
                     />
                     {!draft.schoolId && (
                       <p className="text-[11px] font-medium text-stone-400">Selecione uma escola para habilitar as turmas.</p>

@@ -62,6 +62,7 @@ import { FieldMessage, fieldStateClass, zodFieldErrors, type FieldErrors } from 
 import { getAcademicSubjectLabel } from '../components/role-portal/portal-components'
 import { formatClassGrade, normalizeClassGradeValue } from '../class-grade-options'
 import { DEFAULT_OMR_CARD_VERSION, getAnswerCardEvaluationId, OMR_CARD_VERSION_OPTIONS } from '../lib/evaluation-omr'
+import { MAX_EVALUATION_QUESTIONS, clampEvaluationQuestionCount, evaluationQuestionLimitMessage } from '../lib/evaluation-limits'
 import {
   getQuestionDescriptorKeys,
   getQuestionSkillKeys,
@@ -193,7 +194,14 @@ const evaluationFormSchema = z.object({
   questions: z.coerce.number().int('Informe um número inteiro de questões.').min(1, 'A prova precisa ter pelo menos 1 questão.'),
   omrCardVersion: requiredEvaluationText('Selecione o modelo do cartao OMR.'),
   scheduledAt: requiredEvaluationText('Selecione a data de aplicação.').pipe(z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Informe uma data válida.')),
-  questionIds: z.array(z.string()).max(120, 'Selecione no maximo 120 questoes.'),
+  questionIds: z.array(z.string()).max(MAX_EVALUATION_QUESTIONS, evaluationQuestionLimitMessage()),
+}).superRefine((value, ctx) => {
+  if (Number(value.questions) > MAX_EVALUATION_QUESTIONS) {
+    ctx.addIssue({ code: 'custom', path: ['questions'], message: evaluationQuestionLimitMessage() })
+  }
+  if (value.questionIds.length > MAX_EVALUATION_QUESTIONS) {
+    ctx.addIssue({ code: 'custom', path: ['questionIds'], message: evaluationQuestionLimitMessage() })
+  }
 })
 
 const teacherQuestionStep1Schema = z.object({
@@ -879,11 +887,11 @@ function CompositionPanel({ draft, selectedQuestions, selectedSkillCodes, select
               </div>
               <div>
                 <Eyebrow className="!text-indigo-500">Composição da Prova</Eyebrow>
-                <p className="font-['Lora',Georgia,serif] text-sm font-semibold text-slate-900 mt-0.5">{selectedQuestions.length} quest{selectedQuestions.length !== 1 ? 'ões' : 'ão'} selecionada{selectedQuestions.length !== 1 ? 's' : ''}</p>
+                <p className="font-DMSans text-sm font-semibold text-slate-900 mt-0.5">{selectedQuestions.length} quest{selectedQuestions.length !== 1 ? 'ões' : 'ão'} selecionada{selectedQuestions.length !== 1 ? 's' : ''}</p>
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <button type="button" onClick={onOpenRegisteredEvaluations} className="inline-flex items-center gap-2 rounded-xl border-2 border-indigo-300 bg-white px-3 py-2 text-xs font-bold text-indigo-700 transition hover:bg-indigo-50">
+              <button type="button" onClick={onOpenRegisteredEvaluations} className="inline-flex items-center gap-2 rounded-xl font-DMSans border-2 border-indigo-300 bg-white px-3 py-2 text-xs font-bold text-indigo-700 transition hover:bg-indigo-50">
                 <ClipboardList className="h-3.5 w-3.5" />Provas cadastradas
                 <span className="rounded-full bg-indigo-500 px-2 py-0.5 text-[10px] font-black text-white">{registeredEvaluationsCount}</span>
               </button>
@@ -1304,7 +1312,23 @@ export default function EvaluationsView({
     setDeletingQuestionId(deleteQuestionTarget.id)
     try { await onDeleteQuestion(deleteQuestionTarget.id); setSelectedQuestionIds((c) => c.filter((id) => id !== deleteQuestionTarget.id)); setEvaluationFieldErrors((c) => ({ ...c, questionIds: undefined })); setFormNotice('Questão excluída do banco.'); setDeleteQuestionTarget(null) } finally { setDeletingQuestionId(null) }
   }
-  function toggleQuestion(id: string) { setSelectedQuestionIds(c => c.includes(id) ? c.filter(x => x !== id) : [...c, id]); setEvaluationFieldErrors((c) => ({ ...c, questionIds: undefined })); setBuildMode(c => c === 'automatic_bank' ? 'mixed' : c); setFormNotice(null) }
+  function toggleQuestion(id: string) {
+    if (selectedQuestionIds.includes(id)) {
+      setSelectedQuestionIds(c => c.filter(x => x !== id))
+      setEvaluationFieldErrors((c) => ({ ...c, questionIds: undefined }))
+      setFormNotice(null)
+      return
+    }
+    if (selectedQuestionIds.length >= MAX_EVALUATION_QUESTIONS) {
+      setEvaluationFieldErrors((c) => ({ ...c, questionIds: evaluationQuestionLimitMessage() }))
+      setFormNotice(evaluationQuestionLimitMessage())
+      return
+    }
+    setSelectedQuestionIds(c => [...c, id])
+    setEvaluationFieldErrors((c) => ({ ...c, questionIds: undefined }))
+    setBuildMode(c => c === 'automatic_bank' ? 'mixed' : c)
+    setFormNotice(null)
+  }
   function clearEvaluationError(field: EvaluationFormField) { setEvaluationFieldErrors((c) => ({ ...c, [field]: undefined })) }
   function scrollToEvaluationError(errors: FieldErrors<EvaluationFormField>) {
     const fieldOrder: EvaluationFormField[] = ['title', 'classId', 'subject', 'questions', 'omrCardVersion', 'scheduledAt', 'questionIds']
@@ -1322,7 +1346,8 @@ export default function EvaluationsView({
   }
 
   async function handleAutoSelect() {
-    const target = Math.max(1, Number(draft.questions ?? 1))
+    const target = clampEvaluationQuestionCount(draft.questions, 1)
+    if (Number(draft.questions ?? target) > MAX_EVALUATION_QUESTIONS) setDraft(c => ({ ...c, questions: target }))
     const registeredSubject = canonicalEvaluationSubjectLabel(draft.subject, activeSkills) || allowedEvaluationSubjects[0] || SCHOOL_EVALUATION_SUBJECTS[3]
     if (!allowedEvaluationSubjectKeys.has(normalizeAcademicText(registeredSubject))) {
       const errors: FieldErrors<EvaluationFormField> = { subject: 'Selecione uma disciplina vinculada ao professor ou à turma.' }
@@ -1358,7 +1383,7 @@ export default function EvaluationsView({
     e.preventDefault()
     const validation = evaluationFormSchema.safeParse({ ...draft, questionIds: selectedQuestionIds })
     if (!validation.success) { const errors = zodFieldErrors<EvaluationFormField>(validation.error); setEvaluationFieldErrors(errors); setFormNotice(Object.values(errors)[0] ?? 'Revise os campos da prova.'); scrollToEvaluationError(errors); return }
-    if (Number(validation.data.questions) > 120 || selectedQuestionIds.length > 120) { const errors: FieldErrors<EvaluationFormField> = { questions: 'A prova pode ter no maximo 120 questoes.' }; setEvaluationFieldErrors(errors); setFormNotice(errors.questions ?? 'Revise os campos.'); scrollToEvaluationError(errors); return }
+    if (Number(validation.data.questions) > MAX_EVALUATION_QUESTIONS || selectedQuestionIds.length > MAX_EVALUATION_QUESTIONS) { const errors: FieldErrors<EvaluationFormField> = { questions: evaluationQuestionLimitMessage() }; setEvaluationFieldErrors(errors); setFormNotice(errors.questions ?? 'Revise os campos.'); scrollToEvaluationError(errors); return }
     const validatedSubject = canonicalEvaluationSubjectLabel(validation.data.subject, activeSkills)
     if (!allowedEvaluationSubjectKeys.has(normalizeAcademicText(validatedSubject))) { const errors: FieldErrors<EvaluationFormField> = { subject: 'Selecione uma disciplina vinculada ao professor ou à turma.' }; setEvaluationFieldErrors(errors); setFormNotice(errors.subject ?? 'Revise os campos.'); scrollToEvaluationError(errors); return }
     if (buildMode !== 'teacher_created' && selectedQuestionIds.length === 0) { const errors: FieldErrors<EvaluationFormField> = { questionIds: 'Selecione questões ou use a geração automática.' }; setEvaluationFieldErrors(errors); setFormNotice(errors.questionIds ?? 'Revise os campos.'); scrollToEvaluationError(errors); return }
@@ -1374,6 +1399,7 @@ export default function EvaluationsView({
     e.preventDefault()
     const validation = teacherQuestionFormSchema.safeParse(teacherQuestionValues())
     if (!validation.success) { const errors = zodFieldErrors<TeacherQuestionFormField>(validation.error); setQuestionFieldErrors(errors); setQuestionFormError(Object.values(errors)[0] ?? 'Revise os campos.'); if (errors.title || errors.gradeLevel || errors.skillId || errors.descriptorId || errors.estimatedTimeSeconds || errors.sourceName) setCreateStep(1); else if (errors.statement || errors.context || errors.explanation || errors.keywords) setCreateStep(2); else setCreateStep(3); return }
+    if (selectedQuestionIds.length >= MAX_EVALUATION_QUESTIONS) { setQuestionFormError(evaluationQuestionLimitMessage()); setEvaluationFieldErrors((c) => ({ ...c, questionIds: evaluationQuestionLimitMessage() })); return }
     setQuestionFieldErrors({})
     const cleanTitle = sanitizeText(teacherQuestionDraft.title); const cleanStatement = sanitizeText(teacherQuestionDraft.statement); const cleanOptions = optionLabels.map((label, i) => ({ label, text: sanitizeText(teacherQuestionDraft.options[label]), order: i + 1, isCorrect: label === teacherQuestionDraft.correctOption }))
     if (cleanTitle.length > 160 || cleanStatement.length > 3000 || cleanOptions.some(o => o.text.length > 1000)) { setQuestionFormError('Reduza o tamanho dos textos da questao antes de salvar.'); return }
@@ -1446,7 +1472,7 @@ export default function EvaluationsView({
               </div>
               <div>
                 <Eyebrow className="!text-indigo-500">Avaliação inteligente</Eyebrow>
-                <p className="font-['Lora',Georgia,serif] text-lg font-bold text-slate-900 leading-tight mt-0.5">Provas &amp; Simulados</p>
+                <p className="font-DMSans text-lg font-bold text-slate-900 leading-tight mt-0.5">Provas &amp; Simulados</p>
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-4 divide-x divide-slate-200">
@@ -1508,7 +1534,7 @@ export default function EvaluationsView({
                   <div className="grid h-7 w-7 place-items-center rounded-lg bg-indigo-100 text-indigo-600"><FileText className="h-3.5 w-3.5" /></div>
                   <div>
                     <Eyebrow className="!text-indigo-500">Passo 1</Eyebrow>
-                    <p className="font-['Lora',Georgia,serif] text-sm font-semibold text-slate-800 leading-tight mt-0.5">Identificação da Prova</p>
+                    <p className="font-DMSans text-sm font-semibold text-slate-800 leading-tight mt-0.5">Identificação da Prova</p>
                   </div>
                 </div>
 
@@ -1533,7 +1559,7 @@ export default function EvaluationsView({
                     <span className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 uppercase tracking-wider"><Hash className="h-3 w-3 text-violet-500" />Nº de Questões</span>
                     <div className="relative">
                       <Hash className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
-                      <input className={`${inp} pl-9 ${fieldStateClass(evaluationFieldErrors.questions)}`} type="input" min={1} value={draft.questions ?? 10} onChange={e => { clearEvaluationError('questions'); setDraft({ ...draft, questions: Number(e.target.value) }) }} required aria-invalid={Boolean(evaluationFieldErrors.questions) || undefined} />
+                      <input className={`${inp} pl-9 ${fieldStateClass(evaluationFieldErrors.questions)}`} type="number" min={1} max={MAX_EVALUATION_QUESTIONS} value={draft.questions ?? 10} onChange={e => { clearEvaluationError('questions'); setDraft({ ...draft, questions: clampEvaluationQuestionCount(e.target.value, 1) }) }} required aria-invalid={Boolean(evaluationFieldErrors.questions) || undefined} />
                     </div>
                     <FieldMessage hint="Quantidade de questões da prova." error={evaluationFieldErrors.questions} />
                   </label>
@@ -1606,7 +1632,7 @@ export default function EvaluationsView({
                         </div>
                       </div>
                       <button type="button" onClick={handleAutoSelect} disabled={isGeneratingQuestions} className="ev-save-btn inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-xl bg-violet-500 px-5 py-2.5 text-sm font-bold text-white shadow-lg shadow-violet-200 disabled:cursor-wait disabled:opacity-70 sm:w-auto">
-                        {isGeneratingQuestions ? <><span className="ev-spinner" />Gerando…</> : <><Sparkles className="h-4 w-4" />Gerar {draft.questions ?? 10} questões</>}
+                        {isGeneratingQuestions ? <><span className="ev-spinner" />Gerando…</> : <><Sparkles className="h-4 w-4" />Gerar {clampEvaluationQuestionCount(draft.questions, 10)} questões</>}
                       </button>
                     </div>
 
@@ -1652,7 +1678,7 @@ export default function EvaluationsView({
                   <div className="grid h-7 w-7 place-items-center rounded-lg bg-cyan-100 text-cyan-600"><ListChecks className="h-3.5 w-3.5" /></div>
                   <div>
                     <Eyebrow className="!text-cyan-500">Passo 3</Eyebrow>
-                    <p className="font-['Lora',Georgia,serif] text-sm font-semibold text-slate-800 leading-tight mt-0.5">Questões &amp; Composição</p>
+                    <p className="font-DMSans text-sm font-semibold text-slate-800 leading-tight mt-0.5">Questões &amp; Composição</p>
                   </div>
                 </div>
 
@@ -1962,7 +1988,7 @@ export default function EvaluationsView({
                   <div className="grid h-10 w-10 place-items-center rounded-2xl bg-slate-800 text-white shadow-lg"><ClipboardList className="h-4 w-4" /></div>
                   <div>
                     <Eyebrow>Histórico</Eyebrow>
-                    <h2 id="evaluations-modal-title" className="font-['Lora',Georgia,serif] text-base font-bold text-slate-900 leading-tight mt-0.5">Provas cadastradas</h2>
+                    <h2 id="evaluations-modal-title" className="font-DMSans text-base font-bold text-slate-900 leading-tight mt-0.5">Provas cadastradas</h2>
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">

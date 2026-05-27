@@ -46,6 +46,7 @@ import type {
   AuditEvent,
   ClassRoom,
   DashboardAlertsPagePayload,
+  DashboardFiltersQuery,
   DashboardPayload,
   Evaluation,
   RoleCode,
@@ -132,6 +133,55 @@ const ALERT_CONFIG = {
 } as const
 
 /* ─── Global Styles ──────────────────────────────────────────────────────── */
+
+function normalizeDashboardFilterText(value?: string | null) {
+  return String(value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+}
+
+function dashboardSubjectAliases(value?: string | null) {
+  const key = normalizeDashboardFilterText(value)
+  const compact = key.replace(/\s+/g, '')
+  const aliases = new Set<string>()
+  const add = (...items: string[]) => {
+    items.map(normalizeDashboardFilterText).filter(Boolean).forEach((item) => {
+      aliases.add(item)
+      aliases.add(item.replace(/\s+/g, ''))
+    })
+  }
+
+  if (key) add(key)
+  if (!compact) return aliases
+
+  if (compact.includes('linguaportuguesa') || compact.includes('portugues') || compact === 'lp') add('Lingua Portuguesa', 'Portugues')
+  if (compact.includes('matematica') || compact === 'mat') add('Matematica')
+  if (compact.includes('ciencias') || compact.includes('biologia') || compact.includes('fisica') || compact.includes('quimica')) add('Ciencias', 'Biologia', 'Fisica', 'Quimica')
+  if (compact.includes('humanas') || compact.includes('historia') || compact.includes('geografia')) add('Humanas', 'Historia', 'Geografia')
+  if (compact.includes('linguagens') || compact.includes('ingles') || compact.includes('arte')) add('Linguagens', 'Ingles', 'Arte', 'Portugues', 'Lingua Portuguesa')
+  if (compact.includes('educacaofisica')) add('Educacao Fisica')
+
+  return aliases
+}
+
+function dashboardSubjectMatchesFilter(value?: string | null, filter?: string | null) {
+  const filterAliases = dashboardSubjectAliases(filter)
+  if (!filterAliases.size) return true
+
+  const valueAliases = dashboardSubjectAliases(value)
+  if (!valueAliases.size) return false
+
+  for (const valueKey of valueAliases) {
+    for (const filterKey of filterAliases) {
+      if (valueKey === filterKey || valueKey.includes(filterKey) || filterKey.includes(valueKey)) return true
+    }
+  }
+
+  return false
+}
 
 const styles = `
   @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Bricolage+Grotesque:wght@400;500;600;700;800&display=swap');
@@ -992,7 +1042,8 @@ interface DashboardViewProps {
   schools?: SchoolType[]
   classes?: ClassRoom[]
   loading?: boolean
-  onLoadAlertsPage?: (params: { page: number; limit: number }) => Promise<DashboardAlertsPagePayload>
+  onApplyFilters?: (filters: Partial<DashboardFiltersQuery>) => Promise<void>
+  onLoadAlertsPage?: (params: { page: number; limit: number; filters: Partial<DashboardFiltersQuery> }) => Promise<DashboardAlertsPagePayload>
 }
 
 export default function DashboardView({
@@ -1004,6 +1055,7 @@ export default function DashboardView({
   schools = [],
   classes = [],
   loading = false,
+  onApplyFilters,
   onLoadAlertsPage,
 }: DashboardViewProps) {
   const isSchoolDashboard = profile === 'DIRETOR'
@@ -1013,7 +1065,7 @@ export default function DashboardView({
   const [schoolFilter,   setSchoolFilter]   = useState(isSchoolDashboard ? directorSchoolValue : 'all')
   const [classFilter,    setClassFilter]    = useState('all')
   const [subjectFilter,  setSubjectFilter]  = useState('all')
-  const [periodFilter,   setPeriodFilter]   = useState('month')
+  const [periodFilter,   setPeriodFilter]   = useState<NonNullable<DashboardFiltersQuery['period']>>('month')
 
   const [alertPage,        setAlertPage]        = useState(dashboard.alertsPagination?.page  ?? 1)
   const [alertLimit,       setAlertLimit]       = useState(dashboard.alertsPagination?.limit ?? DEFAULT_PAGE_SIZE)
@@ -1021,7 +1073,10 @@ export default function DashboardView({
   const [alertPageLoading, setAlertPageLoading] = useState(false)
   const [alertPageSource,  setAlertPageSource]  = useState<'backend' | 'local'>(onLoadAlertsPage ? 'backend' : 'local')
   const [selectedAlertStudentId, setSelectedAlertStudentId] = useState<string | null>(null)
+  const [filterLoading, setFilterLoading] = useState(false)
+  const [filterError, setFilterError] = useState('')
   const [mounted, setMounted] = useState(false)
+  const didMountFilters = useRef(false)
 
   useEffect(() => { const t = setTimeout(() => setMounted(true), 50); return () => clearTimeout(t) }, [])
 
@@ -1030,7 +1085,36 @@ export default function DashboardView({
     setSchoolFilter(directorSchoolValue)
   }, [directorSchoolValue, isSchoolDashboard])
 
-  const activeEvaluations = evaluations.filter((e) => e.status !== 'concluido')
+  useEffect(() => {
+    if (classFilter === 'all') return
+    const selectedClass = classes.find((classRoom) => classRoom.id === classFilter)
+    if (!selectedClass || (schoolFilter !== 'all' && selectedClass.schoolId !== schoolFilter)) {
+      setClassFilter('all')
+    }
+  }, [classFilter, classes, schoolFilter])
+
+  const dashboardFilters = useMemo<Partial<DashboardFiltersQuery>>(() => ({
+    schoolId: schoolFilter !== 'all' ? schoolFilter : undefined,
+    classId: classFilter !== 'all' ? classFilter : undefined,
+    subject: subjectFilter !== 'all' ? subjectFilter : undefined,
+    period: periodFilter,
+  }), [classFilter, periodFilter, schoolFilter, subjectFilter])
+  const dashboardFilterKey = useMemo(() => JSON.stringify(dashboardFilters), [dashboardFilters])
+  const isDashboardLoading = loading || filterLoading
+
+  const classById = useMemo(() => new Map(classes.map((classRoom) => [classRoom.id, classRoom])), [classes])
+  const filteredEvaluations = useMemo(
+    () => evaluations.filter((evaluation) => {
+      const classRoom = classById.get(evaluation.classId)
+      const evaluationSchoolId = evaluation.schoolId ?? classRoom?.schoolId
+      if (schoolFilter !== 'all' && evaluationSchoolId !== schoolFilter) return false
+      if (classFilter !== 'all' && evaluation.classId !== classFilter) return false
+      if (subjectFilter !== 'all' && !dashboardSubjectMatchesFilter(evaluation.subject, subjectFilter)) return false
+      return true
+    }),
+    [classById, classFilter, evaluations, schoolFilter, subjectFilter],
+  )
+  const activeEvaluations = filteredEvaluations.filter((e) => e.status !== 'concluido')
   const canViewAudit = profile === 'SUPERADMIN'
 
   const dashboardTitle =
@@ -1044,9 +1128,10 @@ export default function DashboardView({
       ...Array.from(new Set([
         ...dashboard.subjectRadar.map((i) => getAcademicSubjectLabel(i.subject)),
         ...evaluations.map((e) => getAcademicSubjectLabel(e.subject)),
+        ...classes.flatMap((classRoom) => (classRoom.bnccFocus ?? []).map((subject) => getAcademicSubjectLabel(subject))),
       ])).filter(Boolean).map((s) => ({ value: s, label: s })),
     ],
-    [dashboard.subjectRadar, evaluations],
+    [classes, dashboard.subjectRadar, evaluations],
   )
 
   const schoolOptions = useMemo<CompactSelectOption[]>(
@@ -1067,6 +1152,51 @@ export default function DashboardView({
     [classes, schoolFilter],
   )
 
+  const visibleAttendanceByClass = useMemo(() => {
+    if (schoolFilter === 'all' && classFilter === 'all') return dashboard.attendanceByClass
+
+    const allowedClassNames = new Set(
+      classes
+        .filter((classRoom) => {
+          if (schoolFilter !== 'all' && classRoom.schoolId !== schoolFilter) return false
+          if (classFilter !== 'all' && classRoom.id !== classFilter) return false
+          return true
+        })
+        .map((classRoom) => classRoom.name),
+    )
+
+    if (!allowedClassNames.size) return dashboard.attendanceByClass
+    return dashboard.attendanceByClass.filter((item) => allowedClassNames.has(item.className))
+  }, [classFilter, classes, dashboard.attendanceByClass, schoolFilter])
+
+  const visibleSubjectRadar = useMemo(
+    () => subjectFilter === 'all'
+      ? dashboard.subjectRadar
+      : dashboard.subjectRadar.filter((item) => dashboardSubjectMatchesFilter(item.subject, subjectFilter)),
+    [dashboard.subjectRadar, subjectFilter],
+  )
+
+  function handleSchoolFilterChange(value: string) {
+    setSchoolFilter(value)
+    setClassFilter('all')
+    setAlertPage(1)
+  }
+
+  function handleClassFilterChange(value: string) {
+    setClassFilter(value)
+    setAlertPage(1)
+  }
+
+  function handleSubjectFilterChange(value: string) {
+    setSubjectFilter(value)
+    setAlertPage(1)
+  }
+
+  function handlePeriodFilterChange(value: NonNullable<DashboardFiltersQuery['period']>) {
+    setPeriodFilter(value)
+    setAlertPage(1)
+  }
+
   const proficiencyTotal = dashboard.proficiencyDistribution.reduce((s, e) => s + e.alunos, 0)
   const alertCounts = useMemo(
     () =>
@@ -1078,10 +1208,10 @@ export default function DashboardView({
   )
 
   const topSubjects = useMemo(
-    () => dashboard.subjectRadar
+    () => visibleSubjectRadar
       .map((item) => ({ ...item, subject: getAcademicSubjectLabel(item.subject) }))
       .sort((a, b) => b.acertos - a.acertos),
-    [dashboard.subjectRadar],
+    [visibleSubjectRadar],
   )
 
   const localAlertsPage    = useMemo(() => paginateLocal(dashboard.alerts, alertPage, alertLimit), [alertLimit, alertPage, dashboard.alerts])
@@ -1108,10 +1238,33 @@ export default function DashboardView({
   }
 
   useEffect(() => {
+    if (!onApplyFilters) return
+    if (!didMountFilters.current) {
+      didMountFilters.current = true
+      return
+    }
+
+    let cancelled = false
+    setFilterLoading(true)
+    setFilterError('')
+    setAlertPageData(null)
+    onApplyFilters({ ...dashboardFilters, alertPage: 1, alertLimit })
+      .catch((error) => {
+        if (cancelled) return
+        setFilterError(error instanceof Error ? error.message : 'Nao foi possivel aplicar os filtros.')
+      })
+      .finally(() => {
+        if (!cancelled) setFilterLoading(false)
+      })
+
+    return () => { cancelled = true }
+  }, [alertLimit, dashboardFilterKey, onApplyFilters])
+
+  useEffect(() => {
     if (!onLoadAlertsPage) { setAlertPageData(null); setAlertPageSource('local'); return }
     let cancelled = false
     setAlertPageLoading(true)
-    onLoadAlertsPage({ page: alertPage, limit: alertLimit })
+    onLoadAlertsPage({ page: alertPage, limit: alertLimit, filters: dashboardFilters })
       .then((data) => {
         if (cancelled) return
         setAlertPageData(data)
@@ -1122,7 +1275,7 @@ export default function DashboardView({
       .catch(() => { if (!cancelled) { setAlertPageData(null); setAlertPageSource('local') } })
       .finally(() => { if (!cancelled) setAlertPageLoading(false) })
     return () => { cancelled = true }
-  }, [alertLimit, alertPage, onLoadAlertsPage])
+  }, [alertLimit, alertPage, dashboardFilterKey, onLoadAlertsPage])
 
   function exportDashboard(format: 'pdf' | 'excel') {
     if (format === 'pdf') { window.print(); return }
@@ -1181,7 +1334,7 @@ export default function DashboardView({
                   <CompactSelect
                     value={schoolFilter}
                     options={schoolOptions}
-                    onChange={setSchoolFilter}
+                    onChange={handleSchoolFilterChange}
                     dropdownWidth="trigger"
                     disabled={isSchoolDashboard}
                     className={`${selectCls} ${isSchoolDashboard ? 'opacity-50 cursor-not-allowed' : ''}`}
@@ -1191,13 +1344,13 @@ export default function DashboardView({
                   <span className="flex items-center gap-1 text-[9px] font-semibold uppercase tracking-wider text-slate-400">
                     <GraduationCap size={9} />Turma
                   </span>
-                  <CompactSelect value={classFilter} options={classOptions} onChange={setClassFilter} dropdownWidth="trigger" className={selectCls} />
+                  <CompactSelect value={classFilter} options={classOptions} onChange={handleClassFilterChange} dropdownWidth="trigger" className={selectCls} />
                 </div>
                 <div className="flex flex-col gap-1">
                   <span className="flex items-center gap-1 text-[9px] font-semibold uppercase tracking-wider text-slate-400">
                     <BookOpen size={9} />Disciplina
                   </span>
-                  <CompactSelect value={subjectFilter} options={subjectOptions} onChange={setSubjectFilter} dropdownWidth="trigger" className={selectCls} />
+                  <CompactSelect value={subjectFilter} options={subjectOptions} onChange={handleSubjectFilterChange} dropdownWidth="trigger" className={selectCls} />
                 </div>
                 <div className="flex flex-col gap-1">
                   <span className="flex items-center gap-1 text-[9px] font-semibold uppercase tracking-wider text-slate-400">
@@ -1210,13 +1363,16 @@ export default function DashboardView({
                       { value: 'month', label: 'Este mês' },
                       { value: 'year',  label: 'Este ano' },
                     ]}
-                    onChange={setPeriodFilter}
+                    onChange={handlePeriodFilterChange}
                     dropdownWidth="trigger"
                     className={selectCls}
                   />
                 </div>
               </div>
               <div className="flex items-center gap-2 ml-auto">
+                {filterLoading && (
+                  <span className="text-[11px] font-semibold text-indigo-600">Atualizando...</span>
+                )}
                 <button
                   type="button"
                   onClick={() => exportDashboard('pdf')}
@@ -1232,6 +1388,11 @@ export default function DashboardView({
                   <Table2 size={13} />CSV
                 </button>
               </div>
+              {filterError && (
+                <p className="basis-full rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">
+                  {filterError}
+                </p>
+              )}
             </div>
           </Card>
 
@@ -1239,7 +1400,7 @@ export default function DashboardView({
           <section>
             <SectionHeader label="Indicadores principais" icon={BarChart2} />
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-              {loading
+              {isDashboardLoading
                 ? Array.from({ length: 4 }).map((_, i) => <MetricSkeleton key={i} />)
                 : dashboard.metrics.map((metric, idx) => {
                     const cfg = METRIC_CONFIGS[idx % METRIC_CONFIGS.length]
@@ -1297,7 +1458,7 @@ export default function DashboardView({
           <section>
             <SectionHeader label="Frequência e proficiência" icon={PieChart} />
             <div className="grid gap-5 xl:grid-cols-[1fr_340px]">
-              {loading ? <PanelSkeleton rows={6} /> : (
+              {isDashboardLoading ? <PanelSkeleton rows={6} /> : (
                 <Card delay={100}>
                   <CardHeader
                     label="Turmas"
@@ -1306,7 +1467,7 @@ export default function DashboardView({
                     accentColor="#10b981"
                     badge={
                       <span className="px-3 py-1.5 rounded-full bg-slate-100 text-[11px] font-semibold text-slate-600">
-                        {dashboard.attendanceByClass.length} turmas
+                        {visibleAttendanceByClass.length} turmas
                       </span>
                     }
                   />
@@ -1322,7 +1483,7 @@ export default function DashboardView({
                     </span>
                   </div>
                   <div className="overflow-y-auto" style={{ maxHeight: 480 }}>
-                    {dashboard.attendanceByClass.map((item) => {
+                    {visibleAttendanceByClass.map((item) => {
                       const perf = Math.max(0, Math.min(100, item.media <= 10 ? item.media * 10 : item.media))
                       return <ClassBarRow key={item.className} label={item.className} freq={item.frequencia} perf={perf} />
                     })}
@@ -1330,7 +1491,7 @@ export default function DashboardView({
                 </Card>
               )}
 
-              {loading ? <PanelSkeleton rows={4} /> : (
+              {isDashboardLoading ? <PanelSkeleton rows={4} /> : (
                 <Card delay={160}>
                   <CardHeader
                     label="TRI / Proficiência"
@@ -1347,7 +1508,7 @@ export default function DashboardView({
           </section>
 
           {/* ── Subject Performance ── */}
-          {loading ? <PanelSkeleton rows={3} /> : (
+          {isDashboardLoading ? <PanelSkeleton rows={3} /> : (
             <Card delay={200}>
               <CardHeader
                 label="Disciplinas"
@@ -1365,7 +1526,7 @@ export default function DashboardView({
                   {/* Bar chart */}
                   <div className="flex-1 overflow-x-auto">
                     <div className="flex items-end gap-3 px-2" style={{ minHeight: 140 }}>
-                      {dashboard.subjectRadar.map((s, i) => (
+                      {visibleSubjectRadar.map((s, i) => (
                         <SubjectColumn
                           key={s.subject}
                           name={getAcademicSubjectLabel(s.subject)}
@@ -1608,7 +1769,7 @@ export default function DashboardView({
                   </tr>
                 </thead>
                 <tbody>
-                  {loading ? (
+                  {isDashboardLoading ? (
                     Array.from({ length: 4 }).map((_, i) => (
                       <tr key={i} className="border-b border-slate-100">
                         {Array.from({ length: 6 }).map((_, j) => (

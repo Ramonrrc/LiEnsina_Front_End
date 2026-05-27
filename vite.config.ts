@@ -18,6 +18,11 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
           secure: false,
         },
+        '/uploads': {
+          target: devApiProxyTarget,
+          changeOrigin: true,
+          secure: false,
+        },
       },
       watch: {
         usePolling: true,

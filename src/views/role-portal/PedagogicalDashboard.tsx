@@ -1,4 +1,10 @@
-import { useEffect, useState, type CSSProperties, type ReactNode } from 'react'
+import {
+  useEffect,
+  useState,
+  useRef,
+  type CSSProperties,
+  type ReactNode,
+} from 'react'
 import { createPortal } from 'react-dom'
 import {
   Activity,
@@ -16,13 +22,14 @@ import {
   Flame,
   GraduationCap,
   Layers,
-  LayoutDashboardIcon,
+  LayoutDashboard,
   Lightbulb,
   ListChecks,
   Percent,
   School,
   Target,
   TrendingDown,
+  TrendingUp,
   UserRound,
   Users,
   X,
@@ -32,6 +39,14 @@ import {
   Sparkles,
   ShieldAlert,
   BookOpenCheck,
+  ArrowUpRight,
+  Eye,
+  FileText,
+  Hash,
+  Info,
+  AlertOctagon,
+  CheckSquare,
+  BookMarked as BookMarkedIcon,
 } from 'lucide-react'
 import {
   Bar,
@@ -55,17 +70,32 @@ import {
 
 /* ─── Types ──────────────────────────────────────────────────────────────── */
 type ClassRoom = {
-  id: string; name: string; grade: string; shift: string
-  teacherId?: string; teacherIds?: string[]
+  id: string
+  name: string
+  grade: string
+  shift: string
+  teacherId?: string
+  teacherIds?: string[]
 }
 type Student = {
-  id: string; name: string; classId: string
-  attendanceRate: number; averageScore: number
+  id: string
+  name: string
+  classId: string
+  attendanceRate: number
+  averageScore: number
 }
 type Teacher = { id: string; name: string }
 type LessonRecord = {
-  id: string; classId: string; date: string; time: string; subject: string
-  content: string; plan: string; resources: string; activity: string; notes: string
+  id: string
+  classId: string
+  date: string
+  time: string
+  subject: string
+  content: string
+  plan: string
+  resources: string
+  activity: string
+  notes: string
   attendance?: Record<string, boolean>
 }
 
@@ -76,71 +106,182 @@ type PedagogicalDashboardProps = {
   lessonRecords: LessonRecord[]
 }
 
-/* ─── Design tokens — alinhados com o sistema stone/indigo ───────────────── */
-const CHART_COLORS = ['#4f46e5', '#059669', '#d97706', '#e11d48', '#0891b2', '#7c3aed']
-
-const STATUS_COLORS: Record<string, string> = {
-  'Estáveis':   '#059669',
-  'Em atenção': '#d97706',
-  'Sem dados':  '#a8a29e',
-}
+/* ─── Design tokens ──────────────────────────────────────────────────────── */
+const CHART_PALETTE = ['#4f46e5', '#059669', '#d97706', '#e11d48', '#0891b2', '#7c3aed']
 
 /* ─── Helpers ────────────────────────────────────────────────────────────── */
-function getClassStudents(students: Student[], classId: string) {
-  return students.filter(s => s.classId === classId)
-}
-function getAverage(students: Student[]) {
-  if (!students.length) return 0
-  return students.reduce((s, st) => s + (st.averageScore ?? 0), 0) / students.length
+function getAvg(arr: number[]) {
+  return arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0
 }
 function fmt(v: unknown) {
   if (typeof v !== 'number') return String(v ?? '')
-  return Number.isInteger(v) ? v.toLocaleString('pt-BR') : v.toLocaleString('pt-BR', { maximumFractionDigits: 1 })
+  return Number.isInteger(v)
+    ? v.toLocaleString('pt-BR')
+    : v.toLocaleString('pt-BR', { maximumFractionDigits: 1 })
 }
-function fmtPct(v: unknown) { const s = fmt(v); return s ? `${s}%` : '' }
+function fmtPct(v: unknown) {
+  const s = fmt(v)
+  return s ? `${s}%` : ''
+}
 
-/* ─── Eyebrow — idêntico ao sistema ─────────────────────────────────────── */
-function Eyebrow({ children, className = '' }: { children: ReactNode; className?: string }) {
+/* ─── Font import ────────────────────────────────────────────────────────── */
+const GLOBAL_STYLES = `
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,700;1,9..144,400&display=swap');
+
+@keyframes shimmer {
+  0% { transform: translateX(-100%) }
+  100% { transform: translateX(200%) }
+}
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(16px) }
+  to   { opacity: 1; transform: translateY(0) }
+}
+@keyframes scale-in {
+  from { opacity: 0; transform: scale(0.95) translateY(12px) }
+  to   { opacity: 1; transform: scale(1) translateY(0) }
+}
+@keyframes ring-fill {
+  from { stroke-dashoffset: var(--circ) }
+}
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1 }
+  50%       { opacity: 0.4 }
+}
+@keyframes count-up {
+  from { opacity: 0; transform: translateY(8px) }
+  to   { opacity: 1; transform: translateY(0) }
+}
+`
+
+/* ─── Primitives ─────────────────────────────────────────────────────────── */
+
+function Label({ children, className = '' }: { children: ReactNode; className?: string }) {
   return (
-    <p className={`text-[10px] font-semibold tracking-[.16em] uppercase text-stone-400 font-['DM_Sans'] ${className}`}>
+    <p
+      className={`text-[10px] font-semibold tracking-[.15em] uppercase font-['Outfit'] text-stone-400 ${className}`}
+    >
       {children}
     </p>
   )
 }
 
-/* ─── Skeleton bone ──────────────────────────────────────────────────────── */
-function Bone({ className }: { className: string }) {
+function Bone({ className = '' }: { className?: string }) {
   return (
-    <div className={`relative overflow-hidden rounded-lg bg-stone-200 ${className}`}>
-      <div className="absolute inset-0 -translate-x-full animate-[shimmer_1.5s_infinite] bg-gradient-to-r from-transparent via-white/50 to-transparent" />
+    <div className={`relative overflow-hidden rounded-xl bg-stone-100 ${className}`}>
+      <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/70 to-transparent animate-[shimmer_1.6s_ease-in-out_infinite]" />
     </div>
   )
 }
 
-/* ─── AnimatedNumber ─────────────────────────────────────────────────────── */
-function AnimatedNumber({ value, duration = 900 }: { value: number; duration?: number }) {
-  const [display, setDisplay] = useState(0)
+/* ─── AnimatedCounter ────────────────────────────────────────────────────── */
+function Counter({ to, suffix = '', prefix = '', duration = 1000 }: {
+  to: number; suffix?: string; prefix?: string; duration?: number
+}) {
+  const [val, setVal] = useState(0)
+  const [started, setStarted] = useState(false)
+  const ref = useRef<HTMLSpanElement>(null)
+
   useEffect(() => {
+    const obs = new IntersectionObserver(
+      ([e]) => { if (e.isIntersecting) setStarted(true) },
+      { threshold: 0.3 }
+    )
+    if (ref.current) obs.observe(ref.current)
+    return () => obs.disconnect()
+  }, [])
+
+  useEffect(() => {
+    if (!started) return
     let start: number | null = null
     const raf = requestAnimationFrame(function step(ts) {
       if (!start) start = ts
       const p = Math.min((ts - start) / duration, 1)
-      const eased = 1 - Math.pow(1 - p, 3)
-      setDisplay(Math.floor(value * eased))
+      const ease = 1 - Math.pow(1 - p, 4)
+      setVal(Math.floor(to * ease))
       if (p < 1) requestAnimationFrame(step)
-      else setDisplay(value)
+      else setVal(to)
     })
     return () => cancelAnimationFrame(raf)
-  }, [value, duration])
-  return <>{display.toLocaleString('pt-BR')}</>
+  }, [to, duration, started])
+
+  return (
+    <span ref={ref}>
+      {prefix}
+      {val.toLocaleString('pt-BR')}
+      {suffix}
+    </span>
+  )
 }
 
-/* ─── FadeUp entry ───────────────────────────────────────────────────────── */
+/* ─── Ring ───────────────────────────────────────────────────────────────── */
+function Ring({
+  value,
+  size = 76,
+  stroke = 6,
+  color,
+  bg = '#f5f5f4',
+  label,
+  sub,
+}: {
+  value: number
+  size?: number
+  stroke?: number
+  color: string
+  bg?: string
+  label: string
+  sub?: string
+}) {
+  const r = (size - stroke) / 2
+  const circ = 2 * Math.PI * r
+  const pct = Math.min(100, Math.max(0, value))
+  const [dash, setDash] = useState(circ)
+
+  useEffect(() => {
+    const t = setTimeout(() => setDash(circ - (pct / 100) * circ), 100)
+    return () => clearTimeout(t)
+  }, [pct, circ])
+
+  return (
+    <div className="relative inline-flex items-center justify-center">
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={bg} strokeWidth={stroke} />
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={r}
+          fill="none"
+          stroke={color}
+          strokeWidth={stroke}
+          strokeLinecap="round"
+          strokeDasharray={circ}
+          strokeDashoffset={dash}
+          transform={`rotate(-90 ${size / 2} ${size / 2})`}
+          style={{ transition: 'stroke-dashoffset 1.2s cubic-bezier(.16,1,.3,1)' }}
+        />
+      </svg>
+      <div className="absolute inset-0 flex flex-col items-center justify-center">
+        <span className="text-sm font-bold text-stone-900 leading-none font-['Fraunces']">{label}</span>
+        {sub && <span className="text-[9px] font-semibold text-stone-400 uppercase tracking-wider mt-0.5 font-['Outfit']">{sub}</span>}
+      </div>
+    </div>
+  )
+}
+
+/* ─── FadeUp ─────────────────────────────────────────────────────────────── */
 function FadeUp({
-  children, delay = 0, className = '',
-}: { children: ReactNode; delay?: number; className?: string }) {
+  children,
+  delay = 0,
+  className = '',
+}: {
+  children: ReactNode
+  delay?: number
+  className?: string
+}) {
   const [on, setOn] = useState(false)
-  useEffect(() => { const t = setTimeout(() => setOn(true), delay); return () => clearTimeout(t) }, [delay])
+  useEffect(() => {
+    const t = setTimeout(() => setOn(true), delay)
+    return () => clearTimeout(t)
+  }, [delay])
   return (
     <div
       className={className}
@@ -155,78 +296,99 @@ function FadeUp({
   )
 }
 
-/* ─── Ring progress ──────────────────────────────────────────────────────── */
-function Ring({
-  value, size = 72, sw = 6, color, label, sub, delay = 0,
-}: { value: number; size?: number; sw?: number; color: string; label: string; sub?: string; delay?: number }) {
-  const [on, setOn] = useState(false)
-  useEffect(() => { const t = setTimeout(() => setOn(true), delay + 150); return () => clearTimeout(t) }, [delay])
-  const r = (size - sw) / 2
-  const circ = 2 * Math.PI * r
-  const pct = Math.min(100, Math.max(0, value))
-  const offset = circ - (on ? pct / 100 : 0) * circ
-  return (
-    <div className="relative inline-flex items-center justify-center">
-      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#e7e5e4" strokeWidth={sw} />
-        <circle
-          cx={size / 2} cy={size / 2} r={r} fill="none" stroke={color}
-          strokeWidth={sw} strokeLinecap="round"
-          strokeDasharray={circ} strokeDashoffset={offset}
-          transform={`rotate(-90 ${size / 2} ${size / 2})`}
-          style={{ transition: 'stroke-dashoffset 1.1s cubic-bezier(.16,1,.3,1)', filter: `drop-shadow(0 0 5px ${color}44)` }}
-        />
-      </svg>
-      <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <span className="text-sm font-black text-stone-900 leading-none font-['Lora']">{label}</span>
-        {sub && <span className="text-[9px] font-bold text-stone-400 uppercase tracking-wider mt-0.5 font-['DM_Sans']">{sub}</span>}
-      </div>
-    </div>
-  )
+/* ─── KPI Card ───────────────────────────────────────────────────────────── */
+type Tone = 'indigo' | 'emerald' | 'amber' | 'rose'
+
+const TONE_MAP = {
+  indigo: {
+    strip: 'from-indigo-500 to-violet-600',
+    iconBg: 'bg-indigo-50',
+    iconColor: 'text-indigo-600',
+    ring: '#4f46e5',
+    border: 'border-indigo-300',
+    valColor: 'text-indigo-700',
+  },
+  emerald: {
+    strip: 'from-emerald-400 to-teal-500',
+    iconBg: 'bg-emerald-50',
+    iconColor: 'text-emerald-600',
+    ring: '#059669',
+    border: 'border-emerald-300',
+    valColor: 'text-emerald-700',
+  },
+  amber: {
+    strip: 'from-amber-400 to-orange-500',
+    iconBg: 'bg-amber-50',
+    iconColor: 'text-amber-600',
+    ring: '#d97706',
+    border: 'border-amber-300',
+    valColor: 'text-amber-700',
+  },
+  rose: {
+    strip: 'from-rose-500 to-pink-600',
+    iconBg: 'bg-rose-50',
+    iconColor: 'text-rose-600',
+    ring: '#e11d48',
+    border: 'border-rose-300',
+    valColor: 'text-rose-700',
+  },
 }
 
-/* ─── KPI Card — padrão do sistema ──────────────────────────────────────── */
 function KpiCard({
-  label, value, sub, icon, tone, ring, delay = 0, onClick,
+  label,
+  value,
+  numericValue,
+  sub,
+  icon,
+  tone,
+  ring,
+  delay = 0,
+  onClick,
 }: {
-  label: string; value: string | number; sub: string; icon: ReactNode
-  tone: 'indigo' | 'emerald' | 'amber' | 'rose'; ring?: number; delay?: number; onClick?: () => void
+  label: string
+  value: string
+  numericValue?: number
+  sub: string
+  icon: ReactNode
+  tone: Tone
+  ring?: number
+  delay?: number
+  onClick?: () => void
 }) {
-  const cfg = {
-    indigo:  { strip: 'from-indigo-500 to-violet-500',  icon: 'bg-indigo-100 text-indigo-600',  ring: '#4f46e5', border: 'border-indigo-200' },
-    emerald: { strip: 'from-emerald-400 to-teal-500',   icon: 'bg-emerald-100 text-emerald-700', ring: '#059669', border: 'border-emerald-200' },
-    amber:   { strip: 'from-amber-400 to-orange-400',   icon: 'bg-amber-100 text-amber-700',    ring: '#d97706', border: 'border-amber-200' },
-    rose:    { strip: 'from-rose-500 to-pink-500',      icon: 'bg-rose-100 text-rose-700',      ring: '#e11d48', border: 'border-rose-200' },
-  }[tone]
-
+  const cfg = TONE_MAP[tone]
   return (
     <FadeUp delay={delay}>
       <article
         onClick={onClick}
-        className={`relative overflow-hidden rounded-2xl border ${cfg.border} bg-white shadow-sm transition-all duration-300 hover:shadow-md ${onClick ? 'cursor-pointer hover:-translate-y-0.5' : ''}`}
+        className={`group relative overflow-hidden rounded-2xl border-2 ${cfg.border} bg-white shadow-sm transition-all duration-300 hover:shadow-lg hover:-translate-y-1 ${onClick ? 'cursor-pointer' : ''}`}
       >
-        {/* Top gradient strip — same as system modal header */}
-        <div className={`h-0.5 w-full bg-gradient-to-r ${cfg.strip}`} />
+        {/* Colored top strip */}
+        <div className={`h-1 w-full bg-gradient-to-r ${cfg.strip}`} />
         <div className="p-5">
           <div className="flex items-start justify-between gap-3">
             <div className="flex-1 min-w-0">
-              <Eyebrow className="mb-2 text-stone-400">{label}</Eyebrow>
+              <Label className="mb-3">{label}</Label>
               {ring !== undefined ? (
-                <div className="flex items-center gap-3 mt-1">
-                  <Ring value={ring} size={62} sw={5} color={cfg.ring} label={String(value)} delay={delay} />
-                  <p className="text-[11px] text-stone-500 font-semibold leading-relaxed font-['DM_Sans']">{sub}</p>
+                <div className="flex items-center gap-4">
+                  <Ring value={ring} color={cfg.ring} label={value} size={72} stroke={6} />
+                  <p className="text-[11px] text-stone-500 font-semibold leading-relaxed font-['Outfit']">{sub}</p>
                 </div>
               ) : (
                 <>
-                  <p className="text-4xl font-bold tracking-tighter text-stone-900 leading-none font-['Lora']">
-                    <AnimatedNumber value={typeof value === 'number' ? value : parseInt(String(value)) || 0} />
-                    {typeof value === 'string' && value.includes('%') ? '%' : ''}
+                  <p className={`text-4xl font-bold tracking-tight leading-none font-['Fraunces'] ${cfg.valColor}`}>
+                    {numericValue !== undefined ? (
+                      <Counter to={numericValue} />
+                    ) : (
+                      value
+                    )}
                   </p>
-                  <p className="text-[11px] text-stone-500 font-semibold mt-2 font-['DM_Sans']">{sub}</p>
+                  <p className="text-[11px] text-stone-500 font-medium mt-2 font-['Outfit']">{sub}</p>
                 </>
               )}
             </div>
-            <div className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl ${cfg.icon} shadow-inner`}>
+            <div
+              className={`grid h-11 w-11 shrink-0 place-items-center rounded-2xl ${cfg.iconBg} ${cfg.iconColor} border border-current/10`}
+            >
               {icon}
             </div>
           </div>
@@ -236,53 +398,51 @@ function KpiCard({
   )
 }
 
-/* ─── Panel — idêntico aos cards do sistema ──────────────────────────────── */
-function Panel({ children, delay = 0 }: { children: ReactNode; delay?: number }) {
+/* ─── Panel ──────────────────────────────────────────────────────────────── */
+function Panel({ children, delay = 0, className = '' }: {
+  children: ReactNode; delay?: number; className?: string
+}) {
   return (
-    <FadeUp
-      delay={delay}
-      className="overflow-hidden rounded-2xl border border-stone-300 bg-white shadow-sm hover:shadow-md transition-shadow duration-300"
-    >
+    <FadeUp delay={delay} className={`overflow-hidden rounded-2xl border-2 border-stone-200 bg-white shadow-sm hover:shadow-md transition-shadow duration-300 ${className}`}>
       {children}
     </FadeUp>
   )
 }
 
-/* ─── Panel Header ───────────────────────────────────────────────────────── */
+/* ─── Panel Head ─────────────────────────────────────────────────────────── */
+type PanelTone = 'stone' | 'indigo' | 'emerald' | 'rose' | 'amber' | 'violet'
+
 function PanelHead({
-  icon, title, sub, actions, tone = 'stone',
-}: { icon: ReactNode; title: string; sub?: string; actions?: ReactNode; tone?: 'stone' | 'indigo' | 'emerald' | 'rose' | 'amber' | 'violet' }) {
-  const bg = {
-    stone:   'bg-stone-50 border-stone-200',
-    indigo:  'bg-indigo-50/60 border-indigo-100',
-    emerald: 'bg-emerald-50/60 border-emerald-100',
-    rose:    'bg-rose-50/60 border-rose-100',
-    amber:   'bg-amber-50/60 border-amber-100',
-    violet:  'bg-violet-50/60 border-violet-100',
+  icon,
+  title,
+  sub,
+  actions,
+  tone = 'stone',
+}: {
+  icon: ReactNode
+  title: string
+  sub?: string
+  actions?: ReactNode
+  tone?: PanelTone
+}) {
+  const cfg = {
+    stone: { bg: 'bg-stone-50 border-stone-200', icon: 'bg-white border-stone-300 text-stone-600', sub: 'text-stone-400' },
+    indigo: { bg: 'bg-indigo-50 border-indigo-200', icon: 'bg-white border-indigo-300 text-indigo-600', sub: 'text-indigo-400' },
+    emerald: { bg: 'bg-emerald-50 border-emerald-200', icon: 'bg-white border-emerald-300 text-emerald-600', sub: 'text-emerald-500' },
+    rose: { bg: 'bg-rose-50 border-rose-200', icon: 'bg-white border-rose-300 text-rose-600', sub: 'text-rose-400' },
+    amber: { bg: 'bg-amber-50 border-amber-200', icon: 'bg-white border-amber-300 text-amber-600', sub: 'text-amber-500' },
+    violet: { bg: 'bg-violet-50 border-violet-200', icon: 'bg-white border-violet-300 text-violet-600', sub: 'text-violet-400' },
   }[tone]
-  const ic = {
-    stone:   'bg-stone-200 text-stone-600',
-    indigo:  'bg-indigo-100 text-indigo-600',
-    emerald: 'bg-emerald-100 text-emerald-700',
-    rose:    'bg-rose-100 text-rose-600',
-    amber:   'bg-amber-100 text-amber-700',
-    violet:  'bg-violet-100 text-violet-600',
-  }[tone]
-  const tc = {
-    stone:   'text-stone-500',
-    indigo:  'text-indigo-500',
-    emerald: 'text-emerald-600',
-    rose:    'text-rose-500',
-    amber:   'text-amber-600',
-    violet:  'text-violet-600',
-  }[tone]
+
   return (
-    <div className={`border-b ${bg} px-5 py-4 flex items-center justify-between gap-3`}>
+    <div className={`border-b-2 ${cfg.bg} px-5 py-4 flex items-center justify-between gap-3`}>
       <div className="flex items-center gap-3 min-w-0">
-        <div className={`grid h-8 w-8 shrink-0 place-items-center rounded-xl ${ic}`}>{icon}</div>
+        <div className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl border-2 ${cfg.icon}`}>
+          {icon}
+        </div>
         <div className="min-w-0">
-          <p className={`text-sm font-semibold text-stone-900 leading-tight font-['Lora']`}>{title}</p>
-          {sub && <Eyebrow className={`mt-0.5 ${tc}`}>{sub}</Eyebrow>}
+          <p className="text-sm font-semibold text-stone-900 leading-tight font-['Fraunces']">{title}</p>
+          {sub && <Label className={`mt-0.5 ${cfg.sub}`}>{sub}</Label>}
         </div>
       </div>
       {actions && <div className="flex items-center gap-2 shrink-0">{actions}</div>}
@@ -290,96 +450,134 @@ function PanelHead({
   )
 }
 
-/* ─── Section divider — sutil, igual ao padrão editorial do sistema ──────── */
-function SectionLabel({ label, icon }: { label: string; icon: ReactNode }) {
+/* ─── Section Divider ────────────────────────────────────────────────────── */
+function SectionDivider({ label, icon }: { label: string; icon: ReactNode }) {
   return (
-    <div className="flex items-center gap-3 py-1">
+    <div className="flex items-center gap-3 py-1 mt-2">
       <div className="flex items-center gap-2">
-        <span className="text-stone-400">{icon}</span>
-        <Eyebrow className="text-stone-500">{label}</Eyebrow>
+        <span className="text-indigo-400">{icon}</span>
+        <Label className="text-indigo-500">{label}</Label>
       </div>
-      <div className="flex-1 h-px bg-stone-200" />
+      <div className="flex-1 h-px bg-gradient-to-r from-indigo-200 to-transparent" />
     </div>
   )
 }
 
-/* ─── Inline badge ───────────────────────────────────────────────────────── */
+/* ─── Status Badge ───────────────────────────────────────────────────────── */
 function StatusBadge({ status }: { status: string }) {
   if (status === 'Estavel')
     return (
-      <span className="inline-flex items-center gap-1 rounded-full border border-emerald-300 bg-emerald-50 px-2.5 py-0.5 text-[9px] font-semibold text-emerald-700 font-['DM_Sans']">
-        <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />Estável
+      <span className="inline-flex items-center gap-1.5 rounded-full border-2 border-emerald-300 bg-emerald-50 px-2.5 py-0.5 text-[9px] font-bold text-emerald-700 font-['Outfit'] uppercase tracking-wider">
+        <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+        Estável
       </span>
     )
   if (status === 'Sem dados')
     return (
-      <span className="inline-flex items-center gap-1 rounded-full border border-stone-200 bg-stone-50 px-2.5 py-0.5 text-[9px] font-semibold text-stone-500 font-['DM_Sans']">
-        <span className="h-1.5 w-1.5 rounded-full bg-stone-400" />Sem dados
+      <span className="inline-flex items-center gap-1.5 rounded-full border-2 border-stone-300 bg-stone-50 px-2.5 py-0.5 text-[9px] font-bold text-stone-500 font-['Outfit'] uppercase tracking-wider">
+        <span className="h-1.5 w-1.5 rounded-full bg-stone-400" />
+        Sem dados
       </span>
     )
   return (
-    <span className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-50 px-2.5 py-0.5 text-[9px] font-semibold text-amber-700 font-['DM_Sans']">
-      <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />Atenção
+    <span className="inline-flex items-center gap-1.5 rounded-full border-2 border-amber-400 bg-amber-50 px-2.5 py-0.5 text-[9px] font-bold text-amber-700 font-['Outfit'] uppercase tracking-wider">
+      <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-[pulse-dot_1.5s_ease-in-out_infinite]" />
+      Atenção
     </span>
   )
 }
 
-/* ─── Metric pill ────────────────────────────────────────────────────────── */
+/* ─── Metric Pill ────────────────────────────────────────────────────────── */
 function MetricPill({
-  value, label, variant = 'neutral',
-}: { value: string | number; label: string; variant?: 'neutral' | 'good' | 'bad' }) {
-  const cls = variant === 'bad'
-    ? 'bg-rose-50 border-rose-200 text-rose-700'
-    : variant === 'good'
-      ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
-      : 'bg-stone-50 border-stone-200 text-stone-600'
+  value,
+  label,
+  variant = 'neutral',
+}: {
+  value: string | number
+  label: string
+  variant?: 'neutral' | 'good' | 'bad'
+}) {
+  const cls =
+    variant === 'bad'
+      ? 'bg-rose-50 border-2 border-rose-300 text-rose-700'
+      : variant === 'good'
+        ? 'bg-emerald-50 border-2 border-emerald-300 text-emerald-700'
+        : 'bg-stone-50 border-2 border-stone-200 text-stone-600'
   return (
-    <div className={`rounded-xl border px-2 py-2 text-center ${cls}`}>
-      <Eyebrow className="mb-0.5">{label}</Eyebrow>
-      <p className={`text-sm font-bold leading-none font-['Lora'] ${variant === 'bad' ? 'text-rose-700' : variant === 'good' ? 'text-emerald-700' : 'text-stone-700'}`}>{value}</p>
+    <div className={`rounded-xl px-2 py-2 text-center ${cls}`}>
+      <Label className="mb-0.5">{label}</Label>
+      <p className="text-[13px] font-bold leading-none font-['Fraunces']">{value}</p>
     </div>
   )
 }
 
 /* ─── Class Card ─────────────────────────────────────────────────────────── */
-function ClassCard({ summary, onOpenRecords, index }: {
-  summary: {
-    classRoom: ClassRoom; studentsCount: number; lowAttendanceCount: number
-    lowScoreCount: number; alertCount: number; score: number | null
-    attendance: number | null; teacherName: string; intervention: string; status: string
-  }
+type ClassSummary = {
+  classRoom: ClassRoom
+  studentsCount: number
+  lowAttendanceCount: number
+  lowScoreCount: number
+  alertCount: number
+  score: number | null
+  attendance: number | null
+  teacherName: string
+  intervention: string
+  status: string
+}
+
+function ClassCard({
+  summary,
+  onOpenRecords,
+  index,
+}: {
+  summary: ClassSummary
   onOpenRecords: () => void
   index: number
 }) {
   const [on, setOn] = useState(false)
-  useEffect(() => { const t = setTimeout(() => setOn(true), index * 60 + 100); return () => clearTimeout(t) }, [index])
+  useEffect(() => {
+    const t = setTimeout(() => setOn(true), index * 70 + 120)
+    return () => clearTimeout(t)
+  }, [index])
+
   const hasAlerts = summary.alertCount > 0
 
   return (
     <article
       style={{
         opacity: on ? 1 : 0,
-        transform: on ? 'translateY(0)' : 'translateY(12px)',
-        transition: 'opacity .45s cubic-bezier(.16,1,.3,1), transform .45s cubic-bezier(.16,1,.3,1)',
+        transform: on ? 'translateY(0)' : 'translateY(16px)',
+        transition: 'opacity .5s cubic-bezier(.16,1,.3,1), transform .5s cubic-bezier(.16,1,.3,1)',
       }}
-      className={`group relative flex flex-col overflow-hidden rounded-xl border bg-white shadow-sm transition-all duration-200 hover:shadow-md hover:-translate-y-0.5 ${hasAlerts ? 'border-amber-300' : 'border-stone-300'}`}
+      className={`group relative flex flex-col overflow-hidden rounded-2xl border-2 bg-white shadow-sm transition-all duration-200 hover:shadow-lg hover:-translate-y-1 ${
+        hasAlerts ? 'border-amber-400' : 'border-stone-300'
+      }`}
     >
-      {/* Accent strip — same as SubjectCard in system */}
-      <div className={`absolute left-0 top-0 h-full w-[3px] ${hasAlerts ? 'bg-gradient-to-b from-amber-400 to-orange-400' : 'bg-gradient-to-b from-indigo-500 to-violet-500'}`} />
+      {/* Left accent bar */}
+      <div
+        className={`absolute left-0 top-0 h-full w-[4px] ${
+          hasAlerts
+            ? 'bg-gradient-to-b from-amber-400 to-orange-500'
+            : 'bg-gradient-to-b from-indigo-500 to-violet-600'
+        }`}
+      />
 
       <div className="flex flex-col gap-3.5 p-4 pl-5">
         <div className="flex items-start justify-between gap-2">
           <div>
-            <strong className="block text-sm font-semibold text-stone-900 font-['Lora'] leading-tight">{summary.classRoom.name}</strong>
-            <p className="text-[10px] text-stone-400 font-semibold mt-0.5 font-['DM_Sans']">
+            <strong className="block text-sm font-semibold text-stone-900 font-['Fraunces'] leading-tight">
+              {summary.classRoom.name}
+            </strong>
+            <p className="text-[10px] text-stone-400 font-bold mt-0.5 font-['Outfit'] uppercase tracking-wider">
               {summary.classRoom.grade} · {summary.classRoom.shift}
             </p>
-            <p className="text-[10px] text-stone-500 font-medium truncate max-w-[160px] font-['DM_Sans']">{summary.teacherName}</p>
+            <p className="text-[11px] text-stone-500 font-medium truncate max-w-[160px] mt-0.5 font-['Outfit']">
+              {summary.teacherName}
+            </p>
           </div>
           <StatusBadge status={summary.status} />
         </div>
 
-        {/* Metric grid */}
         <div className="grid grid-cols-4 gap-1.5">
           <MetricPill label="Alunos" value={summary.studentsCount} variant="neutral" />
           <MetricPill
@@ -399,18 +597,18 @@ function ClassCard({ summary, onOpenRecords, index }: {
           />
         </div>
 
-        {/* Intervention footer */}
-        <div className="rounded-lg border border-indigo-100 bg-indigo-50 px-3 py-2 flex items-center justify-between gap-2">
-          <p className="flex items-center gap-1.5 text-[10px] font-semibold text-indigo-700 min-w-0 font-['DM_Sans']">
+        <div className="rounded-xl border-2 border-indigo-200 bg-indigo-50 px-3 py-2 flex items-center justify-between gap-2">
+          <p className="flex items-center gap-1.5 text-[10px] font-semibold text-indigo-700 min-w-0 font-['Outfit']">
             <Target size={10} className="shrink-0 text-indigo-400" />
             <span className="truncate">{summary.intervention}</span>
           </p>
           <button
             type="button"
             onClick={onOpenRecords}
-            className="shrink-0 flex items-center gap-1 text-[10px] font-semibold text-indigo-500 hover:text-indigo-700 transition-colors whitespace-nowrap font-['DM_Sans']"
+            className="shrink-0 flex items-center gap-1.5 text-[10px] font-bold text-indigo-600 hover:text-indigo-800 transition-colors whitespace-nowrap font-['Outfit'] border border-indigo-300 rounded-lg px-2 py-1 bg-white hover:bg-indigo-100"
           >
-            <ClipboardList size={10} />Registros
+            <ClipboardList size={10} />
+            Registros
           </button>
         </div>
       </div>
@@ -419,8 +617,16 @@ function ClassCard({ summary, onOpenRecords, index }: {
 }
 
 /* ─── Alert Student Card ─────────────────────────────────────────────────── */
-function AlertCard({ student, className, delay, onOpen }: {
-  student: Student; className: string; delay: number; onOpen: () => void
+function AlertCard({
+  student,
+  className,
+  delay,
+  onOpen,
+}: {
+  student: Student
+  className: string
+  delay: number
+  onOpen: () => void
 }) {
   const low = student.attendanceRate < 75
   const lowScore = student.averageScore < 6
@@ -431,46 +637,67 @@ function AlertCard({ student, className, delay, onOpen }: {
       <button
         type="button"
         onClick={onOpen}
-        className={`group flex w-full items-center gap-3.5 rounded-xl border bg-white p-4 text-left transition-all duration-200 hover:shadow-md hover:-translate-y-0.5 shadow-sm ${
-          critical ? 'border-rose-300 hover:border-rose-400' : 'border-amber-200 hover:border-amber-300'
+        className={`group flex w-full items-center gap-3.5 rounded-2xl border-2 bg-white p-4 text-left transition-all duration-200 hover:shadow-lg hover:-translate-y-0.5 shadow-sm ${
+          critical ? 'border-rose-400 hover:border-rose-500' : 'border-amber-300 hover:border-amber-400'
         }`}
       >
         <div className="relative shrink-0">
-          <div className={`grid h-10 w-10 place-items-center rounded-xl ${critical ? 'bg-rose-100' : 'bg-amber-50'}`}>
-            <UserRound size={16} className={critical ? 'text-rose-600' : 'text-amber-600'} />
+          <div
+            className={`grid h-11 w-11 place-items-center rounded-2xl border-2 ${
+              critical ? 'bg-rose-50 border-rose-300' : 'bg-amber-50 border-amber-300'
+            }`}
+          >
+            <UserRound size={18} className={critical ? 'text-rose-600' : 'text-amber-600'} />
           </div>
-          {critical && <span className="absolute -top-1 -right-1 h-3 w-3 rounded-full bg-rose-500 border-2 border-white" />}
+          {critical && (
+            <span className="absolute -top-1 -right-1 h-3.5 w-3.5 rounded-full bg-rose-500 border-2 border-white animate-[pulse-dot_1.5s_ease-in-out_infinite]" />
+          )}
         </div>
         <div className="min-w-0 flex-1">
-          <strong className="block text-xs font-semibold text-stone-900 font-['Lora']">{student.name}</strong>
-          <span className="text-[10px] text-stone-400 font-semibold font-['DM_Sans']">{className}</span>
+          <strong className="block text-xs font-semibold text-stone-900 font-['Fraunces']">
+            {student.name}
+          </strong>
+          <span className="text-[10px] text-stone-400 font-semibold font-['Outfit']">{className}</span>
           <div className="mt-2 flex gap-1.5">
-            <span className={`inline-flex items-center rounded-lg border px-2 py-0.5 text-[10px] font-semibold font-['DM_Sans'] ${
-              lowScore ? 'bg-rose-50 border-rose-200 text-rose-700' : 'bg-emerald-50 border-emerald-200 text-emerald-700'
-            }`}>★ {student.averageScore?.toFixed(1) ?? '—'}</span>
-            <span className={`inline-flex items-center rounded-lg border px-2 py-0.5 text-[10px] font-semibold font-['DM_Sans'] ${
-              low ? 'bg-rose-50 border-rose-200 text-rose-700' : 'bg-emerald-50 border-emerald-200 text-emerald-700'
-            }`}>{student.attendanceRate}%</span>
+            <span
+              className={`inline-flex items-center rounded-lg border-2 px-2 py-0.5 text-[10px] font-bold font-['Outfit'] ${
+                lowScore ? 'bg-rose-50 border-rose-300 text-rose-700' : 'bg-emerald-50 border-emerald-300 text-emerald-700'
+              }`}
+            >
+              ★ {student.averageScore?.toFixed(1) ?? '—'}
+            </span>
+            <span
+              className={`inline-flex items-center rounded-lg border-2 px-2 py-0.5 text-[10px] font-bold font-['Outfit'] ${
+                low ? 'bg-rose-50 border-rose-300 text-rose-700' : 'bg-emerald-50 border-emerald-300 text-emerald-700'
+              }`}
+            >
+              {student.attendanceRate}%
+            </span>
           </div>
         </div>
-        <ChevronRight size={14} className="shrink-0 text-stone-300 group-hover:text-stone-500 transition-colors" />
+        <ChevronRight
+          size={16}
+          className="shrink-0 text-stone-300 group-hover:text-stone-600 group-hover:translate-x-0.5 transition-all"
+        />
       </button>
     </FadeUp>
   )
 }
 
-/* ─── Custom Tooltip ─────────────────────────────────────────────────────── */
+/* ─── Tooltip ────────────────────────────────────────────────────────────── */
 const ChartTooltip = ({ active, payload, label }: any) => {
   if (!active || !payload?.length) return null
   return (
-    <div className="rounded-xl border border-stone-200 bg-white p-3 shadow-xl text-xs font-['DM_Sans'] min-w-[140px]">
-      <p className="font-semibold text-stone-800 mb-2 border-b border-stone-100 pb-2 font-['Lora']">{label}</p>
+    <div className="rounded-2xl border-2 border-stone-200 bg-white p-3 shadow-xl text-xs font-['Outfit'] min-w-[150px]">
+      <p className="font-bold text-stone-800 mb-2 border-b-2 border-stone-100 pb-2 font-['Fraunces'] text-sm">
+        {label}
+      </p>
       {payload.map((p: any) => (
         <div key={p.dataKey} className="flex items-center gap-2 py-0.5">
-          <span className="h-2 w-2 rounded-full" style={{ backgroundColor: p.fill || p.color }} />
+          <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: p.fill || p.color }} />
           <span className="text-stone-500">{p.name}:</span>
           <span className="font-bold text-stone-800 ml-auto">
-            {(p.dataKey === 'frequencia' || p.dataKey === 'desempenho') ? `${p.value}%` : p.value}
+            {p.dataKey === 'frequencia' || p.dataKey === 'desempenho' ? `${p.value}%` : p.value}
           </span>
         </div>
       ))}
@@ -478,49 +705,141 @@ const ChartTooltip = ({ active, payload, label }: any) => {
   )
 }
 
-/* ─── Pie label ──────────────────────────────────────────────────────────── */
+/* ─── Pie Custom Label ───────────────────────────────────────────────────── */
 const PieLabel = ({ cx, cy, midAngle, outerRadius, name, value }: any) => {
   const RAD = Math.PI / 180
-  const r = outerRadius + 22
+  const r = outerRadius + 24
   const x = cx + r * Math.cos(-midAngle * RAD)
   const y = cy + r * Math.sin(-midAngle * RAD)
   return (
-    <text x={x} y={y} fill="#78716c" textAnchor={x > cx ? 'start' : 'end'} dominantBaseline="central"
-      style={{ fontSize: 10, fontWeight: 700, fontFamily: 'DM Sans, sans-serif' }}>
+    <text
+      x={x}
+      y={y}
+      fill="#78716c"
+      textAnchor={x > cx ? 'start' : 'end'}
+      dominantBaseline="central"
+      style={{ fontSize: 10, fontWeight: 700, fontFamily: 'Outfit, sans-serif' }}
+    >
       {name} ({value})
     </text>
   )
 }
 
+/* ─── Horizontal Difficulty Bar ──────────────────────────────────────────── */
+function DiffBar({
+  label,
+  value,
+  color,
+  delay = 0,
+}: {
+  label: string
+  value: number
+  color: string
+  delay?: number
+}) {
+  const [on, setOn] = useState(false)
+  useEffect(() => {
+    const t = setTimeout(() => setOn(true), delay + 150)
+    return () => clearTimeout(t)
+  }, [delay])
+
+  return (
+    <div className="flex items-center gap-3">
+      <span className="w-24 shrink-0 text-right text-[11px] font-semibold text-stone-600 font-['Outfit']">
+        {label}
+      </span>
+      <div className="flex-1 h-6 rounded-full bg-stone-100 border-2 border-stone-200 overflow-hidden relative">
+        <div
+          className="h-full rounded-full flex items-center justify-end pr-2.5 transition-all duration-1000"
+          style={{
+            width: on ? `${value}%` : '0%',
+            backgroundColor: color,
+            transitionTimingFunction: 'cubic-bezier(.16,1,.3,1)',
+          }}
+        >
+          {on && value > 15 && (
+            <span className="text-[9px] font-bold text-white font-['Outfit']">{value}%</span>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/* ─── Action Button ──────────────────────────────────────────────────────── */
+function ActionBtn({
+  children,
+  onClick,
+  tone = 'indigo',
+  size = 'sm',
+  icon,
+}: {
+  children: ReactNode
+  onClick?: () => void
+  tone?: 'indigo' | 'rose' | 'stone'
+  size?: 'sm' | 'xs'
+  icon?: ReactNode
+}) {
+  const cfg = {
+    indigo: 'border-2 border-indigo-300 bg-white text-indigo-600 hover:bg-indigo-50 hover:border-indigo-400',
+    rose: 'border-2 border-rose-300 bg-white text-rose-600 hover:bg-rose-50 hover:border-rose-400',
+    stone: 'border-2 border-stone-300 bg-white text-stone-600 hover:bg-stone-50 hover:border-stone-400',
+  }[tone]
+  const sz = size === 'xs' ? 'px-2.5 py-1.5 text-[10px]' : 'px-3 py-2 text-[11px]'
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`inline-flex items-center gap-1.5 rounded-xl font-bold shadow-sm transition-all font-['Outfit'] ${cfg} ${sz}`}
+    >
+      {icon}
+      {children}
+    </button>
+  )
+}
+
 /* ─── Alert Students Modal ───────────────────────────────────────────────── */
-function AlertModal({ students, selectedId, onSelect, onClose, getClass }: {
+function AlertModal({
+  students,
+  selectedId,
+  onSelect,
+  onClose,
+  getClass,
+}: {
   students: Student[]
   selectedId: string | null
   onSelect: (id: string) => void
   onClose: () => void
   getClass: (classId: string) => string
 }) {
-  if (typeof document === 'undefined') return null
-  const selected = students.find(s => s.id === selectedId) ?? students[0]
+  const selected = students.find((s) => s.id === selectedId) ?? students[0]
   const [animIn, setAnimIn] = useState(false)
-  useEffect(() => { const t = setTimeout(() => setAnimIn(true), 20); return () => clearTimeout(t) }, [])
+
+  useEffect(() => {
+    const t = setTimeout(() => setAnimIn(true), 20)
+    return () => clearTimeout(t)
+  }, [])
   useEffect(() => {
     const prev = document.body.style.overflow
     document.body.style.overflow = 'hidden'
-    return () => { document.body.style.overflow = prev }
+    return () => {
+      document.body.style.overflow = prev
+    }
   }, [])
 
   const lowAtt = (selected?.attendanceRate ?? 100) < 75
   const lowScore = (selected?.averageScore ?? 10) < 6
   const critical = lowAtt && lowScore
 
+  if (typeof document === 'undefined') return null
   return createPortal(
     <div
       role="presentation"
       onMouseDown={onClose}
       className="fixed inset-0 z-50 flex items-end justify-center sm:items-center p-4 py-6"
       style={{
-        background: animIn ? 'rgba(15,23,42,0.25)' : 'rgba(15,23,42,0)',
+        background: animIn ? 'rgba(28,25,23,0.4)' : 'rgba(28,25,23,0)',
         backdropFilter: animIn ? 'blur(8px)' : 'blur(0)',
         transition: 'background .3s, backdrop-filter .3s',
       }}
@@ -528,61 +847,67 @@ function AlertModal({ students, selectedId, onSelect, onClose, getClass }: {
       <div
         role="dialog"
         aria-modal="true"
-        onMouseDown={e => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
         style={{
           opacity: animIn ? 1 : 0,
-          transform: animIn ? 'translateY(0) scale(1)' : 'translateY(20px) scale(0.97)',
-          transition: 'opacity .35s cubic-bezier(.16,1,.3,1), transform .35s cubic-bezier(.16,1,.3,1)',
+          transform: animIn ? 'translateY(0) scale(1)' : 'translateY(24px) scale(0.97)',
+          transition: 'opacity .4s cubic-bezier(.16,1,.3,1), transform .4s cubic-bezier(.16,1,.3,1)',
         }}
-        className="flex max-h-[calc(100dvh-3rem)] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-stone-300 bg-white shadow-2xl"
+        className="flex max-h-[calc(100dvh-3rem)] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border-2 border-stone-300 bg-white shadow-2xl"
       >
-        {/* System gradient strip */}
-        <div className="h-0.5 w-full shrink-0 bg-gradient-to-r from-rose-500 via-pink-500 to-purple-500" />
+        {/* Gradient strip */}
+        <div className="h-1.5 w-full shrink-0 bg-gradient-to-r from-rose-500 via-pink-500 to-purple-600" />
 
         {/* Header */}
-        <div className="flex items-center justify-between gap-4 border-b border-stone-200 bg-stone-50 px-5 py-4 shrink-0">
+        <div className="flex items-center justify-between gap-4 border-b-2 border-stone-200 bg-stone-50 px-6 py-4 shrink-0">
           <div className="flex items-center gap-3 min-w-0">
-            <div className="relative grid h-10 w-10 place-items-center rounded-xl bg-rose-600 text-white shadow-sm">
-              <Users size={16} />
-              <span className="absolute -right-1.5 -top-1.5 flex h-5 min-w-[20px] items-center justify-center rounded-full bg-stone-900 px-1 text-[9px] font-black text-white border-2 border-white">
+            <div className="relative grid h-11 w-11 place-items-center rounded-2xl bg-rose-600 text-white border-2 border-rose-700 shadow-sm">
+              <Users size={18} />
+              <span className="absolute -right-2 -top-2 flex h-5 min-w-[20px] items-center justify-center rounded-full bg-stone-900 px-1 text-[9px] font-black text-white border-2 border-white">
                 {students.length}
               </span>
             </div>
             <div>
-              <Eyebrow className="mb-0.5 text-rose-500">Painel de acompanhamento</Eyebrow>
-              <h2 className="text-base font-semibold text-stone-900 leading-tight font-['Lora']">Alunos em alerta</h2>
+              <Label className="mb-0.5 text-rose-500">Painel de acompanhamento</Label>
+              <h2 className="text-lg font-bold text-stone-900 leading-tight font-['Fraunces']">
+                Alunos em alerta
+              </h2>
             </div>
           </div>
           <div className="flex items-center gap-3">
-            <div className="hidden sm:flex items-center gap-3 rounded-xl border border-stone-200 bg-white px-3 py-1.5">
-              <span className="flex items-center gap-1.5 text-[10px] font-semibold text-rose-700 font-['DM_Sans']">
-                <span className="h-2 w-2 rounded-full bg-rose-500" />{students.filter(s => s.attendanceRate < 75 && s.averageScore < 6).length} críticos
+            <div className="hidden sm:flex items-center gap-3 rounded-xl border-2 border-stone-200 bg-white px-3 py-2">
+              <span className="flex items-center gap-1.5 text-[10px] font-bold text-rose-700 font-['Outfit']">
+                <span className="h-2 w-2 rounded-full bg-rose-500" />
+                {students.filter((s) => s.attendanceRate < 75 && s.averageScore < 6).length} críticos
               </span>
-              <span className="w-px h-3 bg-stone-200" />
-              <span className="flex items-center gap-1.5 text-[10px] font-semibold text-amber-700 font-['DM_Sans']">
-                <span className="h-2 w-2 rounded-full bg-amber-400" />{students.filter(s => !(s.attendanceRate < 75 && s.averageScore < 6)).length} atenção
+              <span className="w-px h-4 bg-stone-200" />
+              <span className="flex items-center gap-1.5 text-[10px] font-bold text-amber-700 font-['Outfit']">
+                <span className="h-2 w-2 rounded-full bg-amber-400" />
+                {students.filter((s) => !(s.attendanceRate < 75 && s.averageScore < 6)).length} atenção
               </span>
             </div>
             <button
               type="button"
               onClick={onClose}
-              className="grid h-8 w-8 place-items-center rounded-lg border border-stone-300 bg-white text-stone-400 transition hover:border-rose-300 hover:bg-rose-50 hover:text-rose-500"
+              className="grid h-9 w-9 place-items-center rounded-xl border-2 border-stone-300 bg-white text-stone-400 transition-all hover:border-rose-400 hover:bg-rose-50 hover:text-rose-500"
               aria-label="Fechar"
             >
-              <X size={14} />
+              <X size={15} />
             </button>
           </div>
         </div>
 
         {/* Body */}
-        <div className="grid min-h-0 flex-1 overflow-hidden lg:grid-cols-[270px_1fr]">
+        <div className="grid min-h-0 flex-1 overflow-hidden lg:grid-cols-[280px_1fr]">
           {/* Sidebar */}
-          <aside className="flex min-h-0 flex-col border-r border-stone-100 bg-stone-50/50">
-            <div className="border-b border-stone-100 px-4 py-2.5">
-              <Eyebrow>{students.length} aluno{students.length !== 1 ? 's' : ''}</Eyebrow>
+          <aside className="flex min-h-0 flex-col border-r-2 border-stone-100 bg-stone-50">
+            <div className="border-b-2 border-stone-100 px-4 py-3">
+              <Label>
+                {students.length} aluno{students.length !== 1 ? 's' : ''}
+              </Label>
             </div>
-            <div className="flex-1 overflow-y-auto p-3 space-y-1.5" style={{ maxHeight: 400 }}>
-              {students.map(st => {
+            <div className="flex-1 overflow-y-auto p-3 space-y-2" style={{ maxHeight: 440 }}>
+              {students.map((st) => {
                 const active = st.id === selected?.id
                 const isCrit = st.attendanceRate < 75 && st.averageScore < 6
                 return (
@@ -590,23 +915,51 @@ function AlertModal({ students, selectedId, onSelect, onClose, getClass }: {
                     key={st.id}
                     type="button"
                     onClick={() => onSelect(st.id)}
-                    className={`w-full rounded-xl border p-3 text-left transition-all ${
-                      active ? 'border-rose-200 bg-white shadow-sm' : 'border-transparent bg-white/60 hover:bg-white hover:border-stone-200'
+                    className={`w-full rounded-xl border-2 p-3 text-left transition-all ${
+                      active
+                        ? 'border-rose-300 bg-white shadow-sm'
+                        : 'border-transparent bg-white/60 hover:bg-white hover:border-stone-200'
                     }`}
                   >
                     <div className="flex items-center gap-2.5">
-                      <div className={`relative grid h-8 w-8 shrink-0 place-items-center rounded-xl ${isCrit ? 'bg-rose-100' : 'bg-amber-50'}`}>
-                        <UserRound size={14} className={isCrit ? 'text-rose-600' : 'text-amber-600'} />
-                        <span className={`absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full border-2 border-white ${isCrit ? 'bg-rose-500' : 'bg-amber-400'}`} />
+                      <div
+                        className={`relative grid h-9 w-9 shrink-0 place-items-center rounded-xl border-2 ${
+                          isCrit ? 'bg-rose-50 border-rose-300' : 'bg-amber-50 border-amber-300'
+                        }`}
+                      >
+                        <UserRound size={15} className={isCrit ? 'text-rose-600' : 'text-amber-600'} />
+                        {isCrit && (
+                          <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full border-2 border-white bg-rose-500 animate-[pulse-dot_1.5s_ease-in-out_infinite]" />
+                        )}
                       </div>
                       <div className="min-w-0 flex-1">
-                        <strong className="block truncate text-xs font-semibold text-stone-900 font-['Lora']">{st.name}</strong>
-                        <p className="truncate text-[10px] font-semibold text-stone-400 font-['DM_Sans']">{getClass(st.classId)}</p>
+                        <strong className="block truncate text-xs font-bold text-stone-900 font-['Fraunces']">
+                          {st.name}
+                        </strong>
+                        <p className="truncate text-[10px] font-semibold text-stone-400 font-['Outfit']">
+                          {getClass(st.classId)}
+                        </p>
                         <div className="mt-1 flex gap-2">
-                          <span className={`text-[9px] font-bold font-['DM_Sans'] ${st.averageScore < 5 ? 'text-rose-600' : st.averageScore < 6 ? 'text-amber-600' : 'text-emerald-600'}`}>
+                          <span
+                            className={`text-[9px] font-bold font-['Outfit'] ${
+                              st.averageScore < 5
+                                ? 'text-rose-600'
+                                : st.averageScore < 6
+                                  ? 'text-amber-600'
+                                  : 'text-emerald-600'
+                            }`}
+                          >
                             ★ {st.averageScore.toFixed(1)}
                           </span>
-                          <span className={`text-[9px] font-bold font-['DM_Sans'] ${st.attendanceRate < 65 ? 'text-rose-600' : st.attendanceRate < 75 ? 'text-amber-600' : 'text-emerald-600'}`}>
+                          <span
+                            className={`text-[9px] font-bold font-['Outfit'] ${
+                              st.attendanceRate < 65
+                                ? 'text-rose-600'
+                                : st.attendanceRate < 75
+                                  ? 'text-amber-600'
+                                  : 'text-emerald-600'
+                            }`}
+                          >
                             · {st.attendanceRate}%
                           </span>
                         </div>
@@ -621,105 +974,180 @@ function AlertModal({ students, selectedId, onSelect, onClose, getClass }: {
           {/* Detail panel */}
           {selected && (
             <section className="min-h-0 overflow-y-auto bg-white">
-              <div className="border-b border-stone-100 bg-stone-50/40 px-6 py-5">
+              {/* Student header */}
+              <div className="border-b-2 border-stone-100 bg-gradient-to-b from-stone-50 to-white px-6 py-6">
                 <div className="flex items-start justify-between gap-4">
-                  <div className="flex items-center gap-3">
-                    <div className={`grid h-14 w-14 shrink-0 place-items-center rounded-2xl ${critical ? 'bg-rose-100' : 'bg-amber-50'}`}>
-                      <UserRound size={24} className={critical ? 'text-rose-600' : 'text-amber-600'} />
+                  <div className="flex items-center gap-4">
+                    <div
+                      className={`grid h-16 w-16 shrink-0 place-items-center rounded-2xl border-2 ${
+                        critical ? 'bg-rose-50 border-rose-300' : 'bg-amber-50 border-amber-300'
+                      }`}
+                    >
+                      <UserRound size={28} className={critical ? 'text-rose-600' : 'text-amber-600'} />
                     </div>
                     <div>
-                      <Eyebrow className="mb-0.5 text-rose-500">Diagnóstico pedagógico</Eyebrow>
-                      <h3 className="text-xl font-semibold text-stone-900 font-['Lora']">{selected.name}</h3>
-                      <p className="text-xs font-semibold text-stone-400 font-['DM_Sans']">{getClass(selected.classId)}</p>
+                      <Label className="mb-1 text-rose-500">Diagnóstico pedagógico</Label>
+                      <h3 className="text-xl font-bold text-stone-900 font-['Fraunces']">{selected.name}</h3>
+                      <p className="text-xs font-semibold text-stone-400 font-['Outfit']">
+                        {getClass(selected.classId)}
+                      </p>
                     </div>
                   </div>
                   <div className="flex items-center gap-3">
                     <Ring
-                      value={selected.attendanceRate} size={62} sw={5}
-                      color={selected.attendanceRate < 65 ? '#e11d48' : selected.attendanceRate < 75 ? '#d97706' : '#059669'}
-                      label={`${selected.attendanceRate}%`} sub="Freq." delay={100}
+                      value={selected.attendanceRate}
+                      size={64}
+                      stroke={5}
+                      color={
+                        selected.attendanceRate < 65
+                          ? '#e11d48'
+                          : selected.attendanceRate < 75
+                            ? '#d97706'
+                            : '#059669'
+                      }
+                      label={`${selected.attendanceRate}%`}
+                      sub="Freq."
                     />
                     <Ring
-                      value={selected.averageScore * 10} size={62} sw={5}
-                      color={selected.averageScore < 5 ? '#e11d48' : selected.averageScore < 6 ? '#d97706' : '#059669'}
-                      label={selected.averageScore.toFixed(1)} sub="Média" delay={200}
+                      value={selected.averageScore * 10}
+                      size={64}
+                      stroke={5}
+                      color={
+                        selected.averageScore < 5
+                          ? '#e11d48'
+                          : selected.averageScore < 6
+                            ? '#d97706'
+                            : '#059669'
+                      }
+                      label={selected.averageScore.toFixed(1)}
+                      sub="Média"
                     />
-                    <span className={`self-start rounded-full border px-3 py-1 text-[10px] font-semibold font-['DM_Sans'] ${
-                      critical ? 'border-rose-300 bg-rose-50 text-rose-700' : 'border-amber-300 bg-amber-50 text-amber-700'
-                    }`}>
+                    <span
+                      className={`self-start rounded-full border-2 px-3 py-1 text-[10px] font-bold font-['Outfit'] uppercase tracking-wider ${
+                        critical
+                          ? 'border-rose-400 bg-rose-50 text-rose-700'
+                          : 'border-amber-400 bg-amber-50 text-amber-700'
+                      }`}
+                    >
                       {critical ? '⚠ Crítico' : '! Atenção'}
                     </span>
                   </div>
                 </div>
 
                 {/* Progress bars */}
-                <div className="mt-4 grid grid-cols-2 gap-2.5">
+                <div className="mt-5 grid grid-cols-2 gap-3">
                   {[
-                    { label: 'Frequência', value: selected.attendanceRate, color: selected.attendanceRate < 65 ? '#e11d48' : selected.attendanceRate < 75 ? '#d97706' : '#059669', meta: '75%' },
-                    { label: 'Desempenho', value: selected.averageScore * 10, color: selected.averageScore < 5 ? '#e11d48' : selected.averageScore < 6 ? '#d97706' : '#059669', meta: '60%' },
+                    {
+                      label: 'Frequência',
+                      value: selected.attendanceRate,
+                      color:
+                        selected.attendanceRate < 65
+                          ? '#e11d48'
+                          : selected.attendanceRate < 75
+                            ? '#d97706'
+                            : '#059669',
+                      meta: '75%',
+                    },
+                    {
+                      label: 'Desempenho',
+                      value: selected.averageScore * 10,
+                      color:
+                        selected.averageScore < 5
+                          ? '#e11d48'
+                          : selected.averageScore < 6
+                            ? '#d97706'
+                            : '#059669',
+                      meta: '60%',
+                    },
                   ].map(({ label, value, color, meta }) => (
-                    <div key={label} className="rounded-xl border border-stone-200 bg-white p-3.5">
+                    <div key={label} className="rounded-xl border-2 border-stone-200 bg-white p-4">
                       <div className="flex items-center justify-between mb-2">
-                        <span className="text-[11px] font-semibold text-stone-600 font-['DM_Sans']">{label}</span>
-                        <span className="text-[11px] font-bold font-['Lora']" style={{ color }}>{Math.round(value)}%</span>
+                        <span className="text-[11px] font-bold text-stone-600 font-['Outfit']">{label}</span>
+                        <span className="text-[13px] font-bold font-['Fraunces']" style={{ color }}>
+                          {Math.round(value)}%
+                        </span>
                       </div>
-                      <div className="h-2 w-full overflow-hidden rounded-full bg-stone-100">
-                        <div className="h-full rounded-full transition-all duration-1000" style={{ width: `${Math.min(100, value)}%`, backgroundColor: color }} />
+                      <div className="h-2.5 w-full overflow-hidden rounded-full bg-stone-100 border border-stone-200">
+                        <div
+                          className="h-full rounded-full transition-all duration-1000"
+                          style={{
+                            width: `${Math.min(100, value)}%`,
+                            backgroundColor: color,
+                            transitionTimingFunction: 'cubic-bezier(.16,1,.3,1)',
+                          }}
+                        />
                       </div>
-                      <p className="mt-1.5 text-[9px] font-semibold text-stone-400 font-['DM_Sans']">Meta: {meta}</p>
+                      <p className="mt-1.5 text-[9px] font-semibold text-stone-400 font-['Outfit']">
+                        Meta: {meta}
+                      </p>
                     </div>
                   ))}
                 </div>
               </div>
 
-              <div className="space-y-3 p-6">
+              <div className="space-y-4 p-6">
                 {/* Why alert */}
-                <div className="overflow-hidden rounded-xl border border-rose-200">
-                  <div className="flex items-center gap-2 border-b border-rose-100 bg-rose-50/60 px-4 py-2.5">
-                    <AlertTriangle size={12} className="text-rose-600" />
-                    <Eyebrow className="text-rose-700">Por que está em alerta</Eyebrow>
+                <div className="overflow-hidden rounded-2xl border-2 border-rose-300">
+                  <div className="flex items-center gap-2 border-b-2 border-rose-200 bg-rose-50 px-4 py-3">
+                    <AlertTriangle size={14} className="text-rose-600" />
+                    <Label className="text-rose-700">Por que está em alerta</Label>
                   </div>
-                  <div className="p-3.5 space-y-2">
+                  <div className="p-4 space-y-2.5">
                     {lowAtt && (
-                      <div className="flex items-start gap-3 rounded-xl bg-rose-50/40 border border-rose-100 p-3">
-                        <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-rose-400" />
-                        <p className="text-xs font-medium text-stone-700 font-['DM_Sans']">Frequência em {selected.attendanceRate}%, abaixo do limite de 75%.</p>
+                      <div className="flex items-start gap-3 rounded-xl bg-rose-50 border-2 border-rose-200 p-3.5">
+                        <AlertOctagon size={14} className="text-rose-500 mt-0.5 shrink-0" />
+                        <p className="text-xs font-medium text-stone-700 font-['Outfit']">
+                          Frequência em{' '}
+                          <strong className="font-bold text-rose-700">{selected.attendanceRate}%</strong>,
+                          abaixo do limite de 75%.
+                        </p>
                       </div>
                     )}
                     {lowScore && (
-                      <div className="flex items-start gap-3 rounded-xl bg-rose-50/40 border border-rose-100 p-3">
-                        <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-rose-400" />
-                        <p className="text-xs font-medium text-stone-700 font-['DM_Sans']">Média {selected.averageScore.toFixed(1)}, abaixo da referência de 6,0.</p>
+                      <div className="flex items-start gap-3 rounded-xl bg-rose-50 border-2 border-rose-200 p-3.5">
+                        <TrendingDown size={14} className="text-rose-500 mt-0.5 shrink-0" />
+                        <p className="text-xs font-medium text-stone-700 font-['Outfit']">
+                          Média{' '}
+                          <strong className="font-bold text-rose-700">{selected.averageScore.toFixed(1)}</strong>,
+                          abaixo da referência de 6,0.
+                        </p>
                       </div>
                     )}
                     {critical && (
-                      <div className="flex items-start gap-3 rounded-xl bg-rose-100/50 border border-rose-200 p-3">
-                        <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-rose-600" />
-                        <p className="text-xs font-semibold text-rose-900 font-['DM_Sans']">Alerta combinado: baixa presença e baixo desempenho.</p>
+                      <div className="flex items-start gap-3 rounded-xl bg-rose-100 border-2 border-rose-300 p-3.5">
+                        <ShieldAlert size={14} className="text-rose-600 mt-0.5 shrink-0" />
+                        <p className="text-xs font-bold text-rose-900 font-['Outfit']">
+                          Alerta combinado: baixa presença e baixo desempenho. Requer intervenção imediata.
+                        </p>
                       </div>
                     )}
                   </div>
                 </div>
 
                 {/* Actions */}
-                <div className="overflow-hidden rounded-xl border border-indigo-200">
-                  <div className="flex items-center gap-2 border-b border-indigo-100 bg-indigo-50/60 px-4 py-2.5">
-                    <Lightbulb size={12} className="text-indigo-600" />
-                    <Eyebrow className="text-indigo-700">Próximas ações</Eyebrow>
+                <div className="overflow-hidden rounded-2xl border-2 border-indigo-300">
+                  <div className="flex items-center gap-2 border-b-2 border-indigo-200 bg-indigo-50 px-4 py-3">
+                    <Lightbulb size={14} className="text-indigo-600" />
+                    <Label className="text-indigo-700">Próximas ações recomendadas</Label>
                   </div>
-                  <div className="p-3.5 space-y-2">
+                  <div className="p-4 space-y-2.5">
                     {[
                       lowAtt ? 'Iniciar busca ativa e registrar devolutiva da família.' : null,
-                      lowScore ? 'Planejar recuperação focalizada com verificação.' : null,
-                      'Cruzar o plano de aula com o desempenho.',
-                    ].filter(Boolean).map((action, i) => (
-                      <div key={String(action)} className="flex items-start gap-3 rounded-xl border border-indigo-100 bg-indigo-50/40 px-3.5 py-2.5">
-                        <div className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full bg-indigo-600 text-white">
-                          <span className="text-[9px] font-black">{i + 1}</span>
+                      lowScore ? 'Planejar recuperação focalizada com verificação de aprendizagem.' : null,
+                      'Cruzar o plano de aula com o desempenho individual.',
+                    ]
+                      .filter(Boolean)
+                      .map((action, i) => (
+                        <div
+                          key={String(action)}
+                          className="flex items-start gap-3 rounded-xl border-2 border-indigo-200 bg-indigo-50/60 px-4 py-3"
+                        >
+                          <div className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full bg-indigo-600 text-white">
+                            <span className="text-[9px] font-black">{i + 1}</span>
+                          </div>
+                          <p className="text-xs font-medium text-indigo-900 font-['Outfit']">{action}</p>
                         </div>
-                        <p className="text-xs font-medium text-indigo-900 font-['DM_Sans']">{action}</p>
-                      </div>
-                    ))}
+                      ))}
                   </div>
                 </div>
               </div>
@@ -732,42 +1160,67 @@ function AlertModal({ students, selectedId, onSelect, onClose, getClass }: {
   )
 }
 
-/* ─── Lesson Records Modal Skeleton ──────────────────────────────────────── */
+/* ─── Lesson Modal Skeleton ──────────────────────────────────────────────── */
 function LessonSkeleton() {
   return (
     <div className="space-y-4">
-      <div className="grid gap-3 sm:grid-cols-4">{[0,1,2,3].map(i => <Bone key={i} className="h-20 rounded-xl" />)}</div>
-      <Bone className="h-56 rounded-xl" />
-      <div className="grid gap-3 sm:grid-cols-2">
-        <Bone className="h-44 rounded-xl" />
-        <Bone className="h-44 rounded-xl" />
+      <div className="grid gap-3 sm:grid-cols-4">
+        {[0, 1, 2, 3].map((i) => (
+          <Bone key={i} className="h-24 rounded-2xl" />
+        ))}
       </div>
+      <Bone className="h-64 rounded-2xl" />
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Bone className="h-48 rounded-2xl" />
+        <Bone className="h-48 rounded-2xl" />
+      </div>
+      <Bone className="h-56 rounded-2xl" />
     </div>
   )
 }
 
-/* ─── Info card for modal KPIs ───────────────────────────────────────────── */
-function InfoKpi({ label, value, detail, icon, tone = 'indigo', delay = 0 }: {
-  label: string; value: string | number; detail: string; icon: ReactNode
-  tone?: 'indigo' | 'emerald' | 'amber' | 'rose'; delay?: number
+/* ─── Info KPI (modal) ───────────────────────────────────────────────────── */
+function InfoKpi({
+  label,
+  value,
+  detail,
+  icon,
+  tone = 'indigo',
+  delay = 0,
+}: {
+  label: string
+  value: number
+  detail: string
+  icon: ReactNode
+  tone?: Tone
+  delay?: number
 }) {
   const cfg = {
-    indigo:  { icon: 'bg-indigo-100 text-indigo-600',   val: 'text-indigo-700',  border: 'border-indigo-100' },
-    emerald: { icon: 'bg-emerald-100 text-emerald-700', val: 'text-emerald-700', border: 'border-emerald-100' },
-    amber:   { icon: 'bg-amber-100 text-amber-700',     val: 'text-amber-700',   border: 'border-amber-100' },
-    rose:    { icon: 'bg-rose-100 text-rose-700',       val: 'text-rose-700',    border: 'border-rose-100' },
+    indigo: 'bg-indigo-50 border-2 border-indigo-300 text-indigo-700',
+    emerald: 'bg-emerald-50 border-2 border-emerald-300 text-emerald-700',
+    amber: 'bg-amber-50 border-2 border-amber-300 text-amber-700',
+    rose: 'bg-rose-50 border-2 border-rose-300 text-rose-700',
   }[tone]
+  const iconCfg = {
+    indigo: 'bg-white border-2 border-indigo-300 text-indigo-600',
+    emerald: 'bg-white border-2 border-emerald-300 text-emerald-600',
+    amber: 'bg-white border-2 border-amber-300 text-amber-600',
+    rose: 'bg-white border-2 border-rose-300 text-rose-600',
+  }[tone]
+
   return (
     <FadeUp delay={delay}>
-      <article className={`rounded-xl border ${cfg.border} bg-white p-4 shadow-sm`}>
+      <article className={`rounded-2xl p-4 shadow-sm ${cfg}`}>
         <div className="flex items-center gap-3">
-          <div className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl ${cfg.icon}`}>{icon}</div>
+          <div className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl ${iconCfg}`}>
+            {icon}
+          </div>
           <div className="min-w-0">
-            <Eyebrow className="mb-0.5">{label}</Eyebrow>
-            <p className={`text-2xl font-bold leading-tight font-['Lora'] ${cfg.val}`}>
-              <AnimatedNumber value={typeof value === 'number' ? value : parseInt(String(value)) || 0} />
+            <Label className="mb-0.5">{label}</Label>
+            <p className="text-2xl font-bold leading-tight font-['Fraunces']">
+              <Counter to={value} />
             </p>
-            <p className="text-[10px] text-stone-400 font-semibold font-['DM_Sans']">{detail}</p>
+            <p className="text-[10px] font-semibold opacity-70 font-['Outfit']">{detail}</p>
           </div>
         </div>
       </article>
@@ -775,36 +1228,15 @@ function InfoKpi({ label, value, detail, icon, tone = 'indigo', delay = 0 }: {
   )
 }
 
-/* ─── Horizontal progress bar ────────────────────────────────────────────── */
-function DiffBar({ label, value, color, delay = 0 }: { label: string; value: number; color: string; delay?: number }) {
-  const [on, setOn] = useState(false)
-  useEffect(() => { const t = setTimeout(() => setOn(true), delay + 100); return () => clearTimeout(t) }, [delay])
-  return (
-    <div className="flex items-center gap-3 group">
-      <span className="w-24 shrink-0 text-right text-[11px] font-semibold text-stone-600 font-['DM_Sans']">{label}</span>
-      <div className="flex-1 h-5 rounded-full bg-stone-100 overflow-hidden relative">
-        <div
-          className="h-full rounded-full flex items-center justify-end pr-2.5"
-          style={{
-            width: on ? `${value}%` : '0%',
-            backgroundColor: color,
-            transition: 'width .9s cubic-bezier(.16,1,.3,1)',
-            boxShadow: `0 0 8px ${color}55`,
-          }}
-        >
-          {on && value > 15 && (
-            <span className="text-[9px] font-bold text-white font-['DM_Sans']">{value}%</span>
-          )}
-        </div>
-      </div>
-    </div>
-  )
-}
-
 /* ══════════════════════════════════════════════════════════════════════════ */
 /* ─── MAIN COMPONENT ─────────────────────────────────────────────────────── */
 /* ══════════════════════════════════════════════════════════════════════════ */
-export function PedagogicalDashboard({ classes, students, teachers, lessonRecords }: PedagogicalDashboardProps) {
+export function PedagogicalDashboard({
+  classes,
+  students,
+  teachers,
+  lessonRecords,
+}: PedagogicalDashboardProps) {
   const [tab, setTab] = useState<'general' | 'action'>('general')
   const [classFilter, setClassFilter] = useState('all')
   const [lessonModal, setLessonModal] = useState(false)
@@ -819,137 +1251,170 @@ export function PedagogicalDashboard({ classes, students, teachers, lessonRecord
   useEffect(() => {
     if (!lessonModal) return
     setLessonLoading(true)
-    const t = window.setTimeout(() => setLessonLoading(false), 700)
+    const t = window.setTimeout(() => setLessonLoading(false), 800)
     return () => window.clearTimeout(t)
   }, [lessonModal, lessonClassFilter])
 
-  const getClassName = (id: string) => classes.find(c => c.id === id)?.name ?? 'Turma não localizada'
-  const openLesson = (classId = 'all') => { setLessonClassFilter(classId); setLessonModal(true) }
+  const getClassName = (id: string) => classes.find((c) => c.id === id)?.name ?? 'Turma não localizada'
+  const openLesson = (classId = 'all') => {
+    setLessonClassFilter(classId)
+    setLessonModal(true)
+  }
 
   /* ── Scoped data ── */
-  const scopeClasses    = classFilter === 'all' ? classes : classes.filter(c => c.id === classFilter)
-  const scopeIds        = new Set(scopeClasses.map(c => c.id))
-  const scopeStudents   = classFilter === 'all' ? students : students.filter(s => scopeIds.has(s.classId))
+  const scopeClasses = classFilter === 'all' ? classes : classes.filter((c) => c.id === classFilter)
+  const scopeIds = new Set(scopeClasses.map((c) => c.id))
+  const scopeStudents = classFilter === 'all' ? students : students.filter((s) => scopeIds.has(s.classId))
 
-  const avgScore = (() => { if (!scopeStudents.length) return 0; return scopeStudents.reduce((a, s) => a + s.averageScore, 0) / scopeStudents.length })()
-  const avgAtt   = getAverageLessonAttendanceRate(scopeStudents, lessonRecords)
+  const avgScore = scopeStudents.length
+    ? scopeStudents.reduce((a, s) => a + s.averageScore, 0) / scopeStudents.length
+    : 0
+  const avgAtt = getAverageLessonAttendanceRate(scopeStudents, lessonRecords)
 
-  const lowAttScope   = scopeStudents.filter(s => getDerivedAtt(s) < 75)
-  const lowScoreScope = scopeStudents.filter(s => s.averageScore < 6)
+  const lowAttScope = scopeStudents.filter((s) => getDerivedAtt(s) < 75)
+  const lowScoreScope = scopeStudents.filter((s) => s.averageScore < 6)
 
   const alertStudents = [
-    ...students.filter(s => getDerivedAtt(s) < 75),
-    ...students.filter(s => s.averageScore < 6),
+    ...students.filter((s) => getDerivedAtt(s) < 75),
+    ...students.filter((s) => s.averageScore < 6),
   ]
-    .filter((s, i, a) => a.findIndex(x => x.id === s.id) === i)
+    .filter((s, i, a) => a.findIndex((x) => x.id === s.id) === i)
     .sort((a, b) => {
-      const aA = getDerivedAtt(a), bA = getDerivedAtt(b)
+      const aA = getDerivedAtt(a)
+      const bA = getDerivedAtt(b)
       const ac = aA < 75 && a.averageScore < 6 ? 1 : 0
       const bc = bA < 75 && b.averageScore < 6 ? 1 : 0
       return bc - ac || aA - bA || a.averageScore - b.averageScore
     })
 
   /* ── Class summaries ── */
-  const classSummaries = classes.map(cr => {
-    const cls     = students.filter(s => s.classId === cr.id)
-    const lowAtt  = cls.filter(s => getDerivedAtt(s) < 75).length
-    const lowSc   = cls.filter(s => s.averageScore < 6).length
-    const alerts  = new Set(cls.filter(s => getDerivedAtt(s) < 75 || s.averageScore < 6).map(s => s.id)).size
-    const score   = cls.length ? cls.reduce((a, s) => a + s.averageScore, 0) / cls.length : null
-    const att     = cls.length ? getAverageLessonAttendanceRate(cls, lessonRecords) : null
-    const teacher = teachers.find(t => t.id === cr.teacherId || (cr.teacherIds ?? []).includes(t.id))?.name ?? 'Professor pendente'
-    const intv    =
-      cls.length === 0       ? 'Aguardar alunos vinculados' :
-      lowAtt > 0 && lowSc > 0 ? 'Priorizar busca ativa e recuperação' :
-      lowAtt > 0              ? 'Busca ativa e contato familiar' :
-      lowSc > 0               ? 'Planejar recuperação e apoio' :
-                                'Sem intervenção imediata'
-    return {
-      classRoom: cr, studentsCount: cls.length, lowAttendanceCount: lowAtt,
-      lowScoreCount: lowSc, alertCount: alerts, score, attendance: att,
-      teacherName: teacher, intervention: intv,
-      status: cls.length === 0 ? 'Sem dados' : alerts > 0 ? 'Em atencao' : 'Estavel',
-    }
-  }).sort((a, b) => b.alertCount - a.alertCount || (a.attendance ?? 101) - (b.attendance ?? 101))
+  const classSummaries: ClassSummary[] = classes
+    .map((cr) => {
+      const cls = students.filter((s) => s.classId === cr.id)
+      const lowAtt = cls.filter((s) => getDerivedAtt(s) < 75).length
+      const lowSc = cls.filter((s) => s.averageScore < 6).length
+      const alerts = new Set(
+        cls.filter((s) => getDerivedAtt(s) < 75 || s.averageScore < 6).map((s) => s.id),
+      ).size
+      const score = cls.length ? cls.reduce((a, s) => a + s.averageScore, 0) / cls.length : null
+      const att = cls.length ? getAverageLessonAttendanceRate(cls, lessonRecords) : null
+      const teacher =
+        teachers.find((t) => t.id === cr.teacherId || (cr.teacherIds ?? []).includes(t.id))?.name ??
+        'Professor pendente'
+      const intv =
+        cls.length === 0
+          ? 'Aguardar alunos vinculados'
+          : lowAtt > 0 && lowSc > 0
+            ? 'Priorizar busca ativa e recuperação'
+            : lowAtt > 0
+              ? 'Busca ativa e contato familiar'
+              : lowSc > 0
+                ? 'Planejar recuperação e apoio'
+                : 'Sem intervenção imediata'
+      return {
+        classRoom: cr,
+        studentsCount: cls.length,
+        lowAttendanceCount: lowAtt,
+        lowScoreCount: lowSc,
+        alertCount: alerts,
+        score,
+        attendance: att,
+        teacherName: teacher,
+        intervention: intv,
+        status: cls.length === 0 ? 'Sem dados' : alerts > 0 ? 'Em atencao' : 'Estavel',
+      }
+    })
+    .sort((a, b) => b.alertCount - a.alertCount || (a.attendance ?? 101) - (b.attendance ?? 101))
 
-  const scopeSummaries = classFilter === 'all' ? classSummaries : classSummaries.filter(s => scopeIds.has(s.classRoom.id))
+  const scopeSummaries =
+    classFilter === 'all' ? classSummaries : classSummaries.filter((s) => scopeIds.has(s.classRoom.id))
 
   /* ── Chart data ── */
-  const classChartData = scopeSummaries.map(s => ({
-    name:       s.classRoom.name.length > 10 ? `${s.classRoom.name.slice(0, 10)}…` : s.classRoom.name,
+  const classChartData = scopeSummaries.map((s) => ({
+    name:
+      s.classRoom.name.length > 10 ? `${s.classRoom.name.slice(0, 10)}…` : s.classRoom.name,
     frequencia: s.attendance ?? 0,
     desempenho: s.score === null ? 0 : Number((s.score * 10).toFixed(1)),
-    alertas:    s.alertCount,
+    alertas: s.alertCount,
   }))
   const chartMin = Math.max(480, classChartData.length * 110)
-  const bsz      = classChartData.length > 6 ? 16 : classChartData.length > 3 ? 22 : 28
+  const bsz = classChartData.length > 6 ? 14 : classChartData.length > 3 ? 20 : 26
 
-  const stableCount    = scopeSummaries.filter(s => s.status === 'Estavel').length
-  const attentionCount = scopeSummaries.filter(s => s.status === 'Em atencao').length
-  const noDataCount    = scopeSummaries.filter(s => s.status === 'Sem dados').length
+  const stableCount = scopeSummaries.filter((s) => s.status === 'Estavel').length
+  const attentionCount = scopeSummaries.filter((s) => s.status === 'Em atencao').length
+  const noDataCount = scopeSummaries.filter((s) => s.status === 'Sem dados').length
 
   const statusPieData = [
-    { name: 'Estáveis', value: stableCount },
-    { name: 'Em atenção', value: attentionCount },
-    { name: 'Sem dados', value: noDataCount },
-  ].filter(i => i.value > 0)
+    { name: 'Estáveis', value: stableCount, color: '#059669' },
+    { name: 'Em atenção', value: attentionCount, color: '#d97706' },
+    { name: 'Sem dados', value: noDataCount, color: '#a8a29e' },
+  ].filter((i) => i.value > 0)
 
   /* ── Lesson modal data ── */
-  const recByClass     = lessonRecords.reduce<Record<string, number>>((a, r) => { a[r.classId] = (a[r.classId] ?? 0) + 1; return a }, {})
-  const noRecordCls    = classSummaries.filter(s => (recByClass[s.classRoom.id] ?? 0) === 0)
-  const withDataCls    = classSummaries.filter(s => s.studentsCount > 0)
-  const coverage       = Math.round((withDataCls.length / Math.max(classSummaries.length, 1)) * 100)
-  const recurrentAlerts = students.filter(s => getDerivedAtt(s) < 75 && s.averageScore < 6)
+  const recByClass = lessonRecords.reduce<Record<string, number>>((a, r) => {
+    a[r.classId] = (a[r.classId] ?? 0) + 1
+    return a
+  }, {})
+  const noRecordCls = classSummaries.filter((s) => (recByClass[s.classRoom.id] ?? 0) === 0)
+  const withDataCls = classSummaries.filter((s) => s.studentsCount > 0)
+  const coverage = Math.round((withDataCls.length / Math.max(classSummaries.length, 1)) * 100)
+  const recurrentAlerts = students.filter((s) => getDerivedAtt(s) < 75 && s.averageScore < 6)
 
-  const scopedRecs = lessonClassFilter === 'all' ? lessonRecords : lessonRecords.filter(r => r.classId === lessonClassFilter)
+  const scopedRecs =
+    lessonClassFilter === 'all'
+      ? lessonRecords
+      : lessonRecords.filter((r) => r.classId === lessonClassFilter)
 
-  const lessonClassChart = classSummaries.map(s => {
-    const recs = lessonRecords.filter(r => r.classId === s.classRoom.id)
-    return {
-      id:        s.classRoom.id,
-      name:      s.classRoom.name.length > 10 ? `${s.classRoom.name.slice(0, 10)}…` : s.classRoom.name,
-      registros: recs.length,
-      planos:    recs.filter(r => r.plan.trim()).length,
-      recursos:  recs.filter(r => r.resources.trim()).length,
-    }
-  }).filter(i => lessonClassFilter === 'all' || i.id === lessonClassFilter).filter(i => i.registros > 0 || i.planos > 0)
+  const lessonClassChart = classSummaries
+    .map((s) => {
+      const recs = lessonRecords.filter((r) => r.classId === s.classRoom.id)
+      return {
+        id: s.classRoom.id,
+        name:
+          s.classRoom.name.length > 10 ? `${s.classRoom.name.slice(0, 10)}…` : s.classRoom.name,
+        registros: recs.length,
+        planos: recs.filter((r) => r.plan.trim()).length,
+        recursos: recs.filter((r) => r.resources.trim()).length,
+      }
+    })
+    .filter((i) => lessonClassFilter === 'all' || i.id === lessonClassFilter)
+    .filter((i) => i.registros > 0 || i.planos > 0)
 
   const subjectData = Object.values(
     scopedRecs.reduce<Record<string, { name: string; value: number }>>((a, r) => {
       const sub = getAcademicSubjectLabel(r.subject).trim() || 'Sem matéria'
       a[sub] = a[sub] ? { ...a[sub], value: a[sub].value + 1 } : { name: sub, value: 1 }
       return a
-    }, {})
+    }, {}),
   )
   const resourceData = [
-    { name: 'Com recursos', value: scopedRecs.filter(r => r.resources.trim()).length },
-    { name: 'Sem recursos', value: scopedRecs.filter(r => !r.resources.trim()).length },
-  ].filter(i => i.value > 0)
+    { name: 'Com recursos', value: scopedRecs.filter((r) => r.resources.trim()).length },
+    { name: 'Sem recursos', value: scopedRecs.filter((r) => !r.resources.trim()).length },
+  ].filter((i) => i.value > 0)
 
-  const planCount     = scopedRecs.filter(r => r.plan.trim()).length
-  const resourceCount = scopedRecs.filter(r => r.resources.trim()).length
-  const activityCount = scopedRecs.filter(r => r.activity.trim()).length
+  const planCount = scopedRecs.filter((r) => r.plan.trim()).length
+  const resourceCount = scopedRecs.filter((r) => r.resources.trim()).length
+  const activityCount = scopedRecs.filter((r) => r.activity.trim()).length
 
   const subjectColors: Record<string, string> = {}
-  subjectData.forEach((s, i) => { subjectColors[s.name] = CHART_COLORS[i % CHART_COLORS.length] })
+  subjectData.forEach((s, i) => {
+    subjectColors[s.name] = CHART_PALETTE[i % CHART_PALETTE.length]
+  })
 
   const selectedAlertForModal = selectedAlertId ?? alertStudents[0]?.id ?? null
 
   /* ─────────────────────────────────────────────────────────────────────── */
   return (
     <>
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Lora:wght@400;500;600;700&family=DM+Sans:wght@400;500;600;700&display=swap');
-        @keyframes shimmer { to { transform: translateX(200%) } }
-      `}</style>
+      <style>{GLOBAL_STYLES}</style>
 
-      {/* ── Tabs — idêntico ao sistema ── */}
+      {/* ── Tabs ── */}
       <FadeUp delay={0}>
-        <div className="flex items-center gap-1.5 rounded-lg border border-stone-200 bg-stone-100 p-1 w-fit mb-1">
+        <div className="flex items-center gap-1.5 rounded-2xl border-2 border-stone-300 bg-stone-100 p-1.5 w-fit mb-2">
           {[
-            { id: 'general', label: 'Visão Geral',      icon: <LayoutDashboardIcon size={13} /> },
-            { id: 'action',  label: 'Ação Pedagógica',  icon: <Target size={13} /> },
-          ].map(t => {
+            { id: 'general', label: 'Visão Geral', icon: <LayoutDashboard size={14} /> },
+            { id: 'action', label: 'Ação Pedagógica', icon: <Target size={14} /> },
+          ].map((t) => {
             const active = tab === t.id
             return (
               <button
@@ -958,13 +1423,14 @@ export function PedagogicalDashboard({ classes, students, teachers, lessonRecord
                 role="tab"
                 aria-selected={active}
                 onClick={() => setTab(t.id as typeof tab)}
-                className={`inline-flex items-center gap-2 rounded-md px-5 py-2 text-[11px] font-semibold transition-all duration-200 font-['DM_Sans'] ${
+                className={`inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-[12px] font-bold transition-all duration-200 font-['Outfit'] ${
                   active
-                    ? 'bg-indigo-600 text-white shadow-sm'
-                    : 'text-stone-500 hover:bg-white hover:text-stone-800'
+                    ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200'
+                    : 'text-stone-500 hover:bg-white hover:text-stone-800 hover:shadow-sm'
                 }`}
               >
-                {t.icon}{t.label}
+                {t.icon}
+                {t.label}
               </button>
             )
           })}
@@ -973,22 +1439,37 @@ export function PedagogicalDashboard({ classes, students, teachers, lessonRecord
 
       {/* ── Filter bar ── */}
       <FadeUp delay={60}>
-        <div className="flex items-center gap-3 rounded-xl border border-stone-300 bg-white px-4 py-3 shadow-sm">
-          <div className="h-2 w-2 rounded-full bg-indigo-500 animate-pulse shrink-0" />
-          <p className="text-xs font-semibold text-stone-500 flex-1 min-w-0 font-['DM_Sans']">
-            <span className="font-bold text-stone-900">
-              {classFilter === 'all' ? 'Todas as turmas' : classes.find(c => c.id === classFilter)?.name ?? 'Turma'}
+        <div className="flex items-center gap-3 rounded-2xl border-2 border-stone-300 bg-white px-5 py-3.5 shadow-sm mb-2">
+          <div className="flex items-center gap-2">
+            <span className="h-2.5 w-2.5 rounded-full bg-indigo-500 animate-[pulse-dot_2s_ease-in-out_infinite]" />
+            <p className="text-xs font-bold text-stone-900 font-['Outfit']">
+              {classFilter === 'all'
+                ? 'Todas as turmas'
+                : classes.find((c) => c.id === classFilter)?.name ?? 'Turma'}
+            </p>
+            <span className="text-stone-300">·</span>
+            <span className="text-xs font-semibold text-stone-400 font-['Outfit']">
+              {scopeStudents.length} alunos
             </span>
-            {' · '}{scopeStudents.length} alunos · {scopeClasses.length} turma{scopeClasses.length !== 1 ? 's' : ''}
-          </p>
-          <select
-            value={classFilter}
-            onChange={e => setClassFilter(e.target.value)}
-            className="h-8 rounded-lg border border-stone-300 bg-stone-50 px-3 text-xs font-semibold text-stone-700 shadow-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 transition-all font-['DM_Sans']"
-          >
-            <option value="all">Todas as turmas</option>
-            {classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
+            <span className="text-stone-300">·</span>
+            <span className="text-xs font-semibold text-stone-400 font-['Outfit']">
+              {scopeClasses.length} turma{scopeClasses.length !== 1 ? 's' : ''}
+            </span>
+          </div>
+          <div className="ml-auto">
+            <select
+              value={classFilter}
+              onChange={(e) => setClassFilter(e.target.value)}
+              className="h-9 rounded-xl border-2 border-stone-300 bg-stone-50 px-3 text-xs font-semibold text-stone-700 shadow-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 transition-all font-['Outfit']"
+            >
+              <option value="all">Todas as turmas</option>
+              {classes.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
       </FadeUp>
 
@@ -996,69 +1477,79 @@ export function PedagogicalDashboard({ classes, students, teachers, lessonRecord
       {/* GENERAL TAB                                                        */}
       {/* ══════════════════════════════════════════════════════════════════ */}
       {tab === 'general' && (
-        <div className="space-y-5 mt-1">
-
-          {/* ── Section: KPIs ── */}
+        <div className="space-y-6 mt-1">
           <div>
-            <SectionLabel label="Indicadores gerais" icon={<BarChart2 size={12} />} />
+            <SectionDivider label="Indicadores gerais" icon={<BarChart2 size={13} />} />
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4 mt-3">
               <KpiCard
-                label="Frequência geral" value={`${avgAtt}%`}
-                sub={avgAtt >= 75 ? 'Acima da meta de 75%' : 'Abaixo da meta de 75%'}
-                tone={avgAtt < 75 ? 'rose' : 'emerald'} icon={<Activity size={15} />}
-                ring={avgAtt} delay={0}
+                label="Frequência geral"
+                value={`${avgAtt}%`}
+                sub={avgAtt >= 75 ? '✓ Acima da meta de 75%' : '✗ Abaixo da meta de 75%'}
+                tone={avgAtt < 75 ? 'rose' : 'emerald'}
+                icon={<Activity size={16} />}
+                ring={avgAtt}
+                delay={0}
               />
               <KpiCard
-                label="Desempenho médio" value={`${Math.round((avgScore / 10) * 100)}%`}
+                label="Desempenho médio"
+                value={`${Math.round((avgScore / 10) * 100)}%`}
                 sub={`Nota média ${avgScore.toFixed(1)} de 10`}
-                tone={avgScore < 6 ? 'amber' : 'indigo'} icon={<Award size={15} />}
-                ring={(avgScore / 10) * 100} delay={70}
+                tone={avgScore < 6 ? 'amber' : 'indigo'}
+                icon={<Award size={16} />}
+                ring={(avgScore / 10) * 100}
+                delay={70}
               />
               <KpiCard
-                label="Baixa frequência" value={lowAttScope.length}
-                sub="Alunos abaixo de 75%" tone="rose" icon={<Bell size={15} />}
+                label="Baixa frequência"
+                value={String(lowAttScope.length)}
+                numericValue={lowAttScope.length}
+                sub="Alunos abaixo de 75%"
+                tone="rose"
+                icon={<Bell size={16} />}
                 delay={140}
               />
               <KpiCard
-                label="Queda de desempenho" value={lowScoreScope.length}
-                sub="Alunos com média < 6,0" tone="amber" icon={<TrendingDown size={15} />}
+                label="Queda de desempenho"
+                value={String(lowScoreScope.length)}
+                numericValue={lowScoreScope.length}
+                sub="Alunos com média < 6,0"
+                tone="amber"
+                icon={<TrendingDown size={16} />}
                 delay={210}
               />
             </div>
           </div>
 
-          {/* ── Section: Charts ── */}
           <div>
-            <SectionLabel label="Análise por turma" icon={<School size={12} />} />
-            <div className="grid gap-4 lg:grid-cols-[1fr_280px] mt-3">
-
-              {/* Bar chart — vertical bars */}
+            <SectionDivider label="Análise por turma" icon={<School size={13} />} />
+            <div className="grid gap-4 lg:grid-cols-[1fr_300px] mt-3">
+              {/* Bar chart */}
               <Panel delay={0}>
                 <PanelHead
                   icon={<BarChart3 size={15} />}
                   title="Frequência e desempenho por turma"
-                  sub="Porcentagem consolidada por turma"
+                  sub="Porcentagem consolidada"
                   tone="indigo"
                   actions={
-                    <button
-                      type="button"
+                    <ActionBtn
                       onClick={() => openLesson(classFilter)}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-stone-300 bg-white px-3 py-1.5 text-[10px] font-semibold text-stone-500 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-600 transition-all shadow-sm font-['DM_Sans']"
+                      icon={<ClipboardList size={11} />}
+                      size="xs"
                     >
-                      <ClipboardList size={11} />Registros
-                    </button>
+                      Registros
+                    </ActionBtn>
                   }
                 />
                 {/* Legend */}
-                <div className="flex flex-wrap items-center gap-4 px-5 pt-3 pb-1">
+                <div className="flex flex-wrap items-center gap-4 px-5 pt-4 pb-1">
                   {[
                     { color: '#059669', label: 'Frequência (%)' },
                     { color: '#4f46e5', label: 'Desempenho (%)' },
                     { color: '#e11d48', label: 'Alertas (qtd)' },
                   ].map(({ color, label }) => (
                     <div key={label} className="flex items-center gap-1.5">
-                      <span className="h-2.5 w-5 rounded-sm" style={{ backgroundColor: color }} />
-                      <span className="text-[10px] font-semibold text-stone-500 font-['DM_Sans']">{label}</span>
+                      <span className="h-3 w-5 rounded-sm" style={{ backgroundColor: color }} />
+                      <span className="text-[10px] font-bold text-stone-500 font-['Outfit']">{label}</span>
                     </div>
                   ))}
                 </div>
@@ -1066,79 +1557,185 @@ export function PedagogicalDashboard({ classes, students, teachers, lessonRecord
                   {classChartData.length > 0 ? (
                     <div className="h-full" style={{ minWidth: chartMin }}>
                       <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={classChartData} margin={{ top: 28, right: 36, left: -16, bottom: 24 }} barCategoryGap="30%" barGap={4}>
+                        <BarChart
+                          data={classChartData}
+                          margin={{ top: 28, right: 36, left: -16, bottom: 24 }}
+                          barCategoryGap="30%"
+                          barGap={4}
+                        >
                           <CartesianGrid strokeDasharray="3 0" vertical={false} stroke="#f5f5f4" />
-                          <XAxis dataKey="name" tick={{ fontSize: 10, fontWeight: 600, fill: '#78716c', fontFamily: 'DM Sans' }} interval={0} angle={-8} textAnchor="end" height={42} tickLine={false} axisLine={{ stroke: '#e7e5e4' }} />
-                          <YAxis yAxisId="pct" domain={[0, 100]} tickFormatter={fmtPct} tick={{ fontSize: 9, fontWeight: 600, fill: '#a8a29e', fontFamily: 'DM Sans' }} tickLine={false} axisLine={false} />
-                          <YAxis yAxisId="count" orientation="right" allowDecimals={false} tick={{ fontSize: 9, fontWeight: 600, fill: '#a8a29e', fontFamily: 'DM Sans' }} tickLine={false} axisLine={false} />
+                          <XAxis
+                            dataKey="name"
+                            tick={{ fontSize: 10, fontWeight: 700, fill: '#78716c', fontFamily: 'Outfit' }}
+                            interval={0}
+                            angle={-8}
+                            textAnchor="end"
+                            height={42}
+                            tickLine={false}
+                            axisLine={{ stroke: '#d6d3d1' }}
+                          />
+                          <YAxis
+                            yAxisId="pct"
+                            domain={[0, 100]}
+                            tickFormatter={fmtPct}
+                            tick={{ fontSize: 9, fontWeight: 700, fill: '#a8a29e', fontFamily: 'Outfit' }}
+                            tickLine={false}
+                            axisLine={false}
+                          />
+                          <YAxis
+                            yAxisId="count"
+                            orientation="right"
+                            allowDecimals={false}
+                            tick={{ fontSize: 9, fontWeight: 700, fill: '#a8a29e', fontFamily: 'Outfit' }}
+                            tickLine={false}
+                            axisLine={false}
+                          />
                           <Tooltip content={<ChartTooltip />} cursor={{ fill: '#fafaf9', radius: 6 }} />
-                          <Bar yAxisId="pct" dataKey="frequencia" name="Frequência (%)" fill="#059669" radius={[5, 5, 0, 0]} barSize={bsz} animationDuration={1000}>
-                            <LabelList dataKey="frequencia" position="top" formatter={fmtPct} style={{ fill: '#57534e', fontSize: 8, fontWeight: 700, fontFamily: 'DM Sans' }} />
+                          <Bar
+                            yAxisId="pct"
+                            dataKey="frequencia"
+                            name="Frequência (%)"
+                            fill="#059669"
+                            radius={[6, 6, 0, 0]}
+                            barSize={bsz}
+                            animationDuration={1000}
+                          >
+                            <LabelList
+                              dataKey="frequencia"
+                              position="top"
+                              formatter={fmtPct}
+                              style={{ fill: '#57534e', fontSize: 8, fontWeight: 700, fontFamily: 'Outfit' }}
+                            />
                           </Bar>
-                          <Bar yAxisId="pct" dataKey="desempenho" name="Desempenho (%)" fill="#4f46e5" radius={[5, 5, 0, 0]} barSize={bsz} animationBegin={150} animationDuration={1000}>
-                            <LabelList dataKey="desempenho" position="top" formatter={fmtPct} style={{ fill: '#57534e', fontSize: 8, fontWeight: 700, fontFamily: 'DM Sans' }} />
+                          <Bar
+                            yAxisId="pct"
+                            dataKey="desempenho"
+                            name="Desempenho (%)"
+                            fill="#4f46e5"
+                            radius={[6, 6, 0, 0]}
+                            barSize={bsz}
+                            animationBegin={150}
+                            animationDuration={1000}
+                          >
+                            <LabelList
+                              dataKey="desempenho"
+                              position="top"
+                              formatter={fmtPct}
+                              style={{ fill: '#57534e', fontSize: 8, fontWeight: 700, fontFamily: 'Outfit' }}
+                            />
                           </Bar>
-                          <Bar yAxisId="count" dataKey="alertas" name="Alertas (qtd)" fill="#e11d48" radius={[5, 5, 0, 0]} barSize={bsz} animationBegin={300} animationDuration={1000}>
-                            <LabelList dataKey="alertas" position="top" formatter={fmt} style={{ fill: '#57534e', fontSize: 8, fontWeight: 700, fontFamily: 'DM Sans' }} />
+                          <Bar
+                            yAxisId="count"
+                            dataKey="alertas"
+                            name="Alertas (qtd)"
+                            fill="#e11d48"
+                            radius={[6, 6, 0, 0]}
+                            barSize={bsz}
+                            animationBegin={300}
+                            animationDuration={1000}
+                          >
+                            <LabelList
+                              dataKey="alertas"
+                              position="top"
+                              formatter={fmt}
+                              style={{ fill: '#57534e', fontSize: 8, fontWeight: 700, fontFamily: 'Outfit' }}
+                            />
                           </Bar>
                         </BarChart>
                       </ResponsiveContainer>
                     </div>
                   ) : (
                     <div className="flex h-full items-center justify-center">
-                      <p className="text-sm font-semibold text-stone-400 font-['DM_Sans']">Nenhuma turma disponível</p>
+                      <p className="text-sm font-semibold text-stone-400 font-['Outfit']">
+                        Nenhuma turma disponível
+                      </p>
                     </div>
                   )}
                 </div>
               </Panel>
 
-              {/* Pie — status das turmas */}
+              {/* Pie chart */}
               <Panel delay={100}>
-                <PanelHead icon={<PieChartIcon size={15} />} title="Situação das turmas" sub="Distribuição por status" tone="violet" />
+                <PanelHead
+                  icon={<PieChartIcon size={15} />}
+                  title="Situação das turmas"
+                  sub="Distribuição por status"
+                  tone="violet"
+                />
                 <div className="px-4 py-2 h-52">
                   {statusPieData.length > 0 ? (
                     <ResponsiveContainer width="100%" height="100%">
                       <PieChart margin={{ top: 10, right: 44, bottom: 10, left: 44 }}>
                         <Pie
-                          data={statusPieData} dataKey="value" nameKey="name"
-                          innerRadius={46} outerRadius={68} paddingAngle={5}
-                          label={PieLabel} labelLine={false}
-                          animationDuration={1200} animationBegin={200}
+                          data={statusPieData}
+                          dataKey="value"
+                          nameKey="name"
+                          innerRadius={46}
+                          outerRadius={68}
+                          paddingAngle={5}
+                          label={PieLabel}
+                          labelLine={false}
+                          animationDuration={1200}
+                          animationBegin={200}
                         >
-                          {statusPieData.map((entry, i) => (
-                            <Cell key={entry.name} fill={STATUS_COLORS[entry.name] ?? CHART_COLORS[(i + 2) % CHART_COLORS.length]} strokeWidth={0} />
+                          {statusPieData.map((entry) => (
+                            <Cell key={entry.name} fill={entry.color} strokeWidth={0} />
                           ))}
                         </Pie>
-                        <Tooltip contentStyle={{ borderRadius: 12, border: '1px solid #e7e5e4', fontWeight: 600, fontSize: 11, fontFamily: 'DM Sans' }} />
+                        <Tooltip
+                          contentStyle={{
+                            borderRadius: 12,
+                            border: '2px solid #e7e5e4',
+                            fontWeight: 700,
+                            fontSize: 11,
+                            fontFamily: 'Outfit',
+                          }}
+                        />
                       </PieChart>
                     </ResponsiveContainer>
-                  ) : <div className="flex h-full items-center justify-center"><p className="text-sm text-stone-400 font-['DM_Sans']">Sem dados</p></div>}
+                  ) : (
+                    <div className="flex h-full items-center justify-center">
+                      <p className="text-sm text-stone-400 font-['Outfit']">Sem dados</p>
+                    </div>
+                  )}
                 </div>
                 <div className="px-5 pb-5 space-y-2">
                   {[
-                    { label: 'Estáveis',   count: stableCount,    color: '#059669', bg: 'bg-emerald-50 border-emerald-200' },
-                    { label: 'Em atenção', count: attentionCount, color: '#d97706', bg: 'bg-amber-50 border-amber-200' },
-                    { label: 'Sem dados',  count: noDataCount,    color: '#a8a29e', bg: 'bg-stone-50 border-stone-200' },
-                  ].filter(i => i.count > 0).map(item => (
-                    <div key={item.label} className={`flex items-center justify-between rounded-lg border px-3 py-2 ${item.bg}`}>
-                      <div className="flex items-center gap-2">
-                        <span className="h-2 w-2 rounded-full" style={{ backgroundColor: item.color }} />
-                        <span className="text-[11px] font-semibold text-stone-700 font-['DM_Sans']">{item.label}</span>
+                    { label: 'Estáveis', count: stableCount, color: '#059669', bg: 'bg-emerald-50 border-2 border-emerald-300' },
+                    { label: 'Em atenção', count: attentionCount, color: '#d97706', bg: 'bg-amber-50 border-2 border-amber-300' },
+                    { label: 'Sem dados', count: noDataCount, color: '#a8a29e', bg: 'bg-stone-50 border-2 border-stone-300' },
+                  ]
+                    .filter((i) => i.count > 0)
+                    .map((item) => (
+                      <div
+                        key={item.label}
+                        className={`flex items-center justify-between rounded-xl px-3 py-2 ${item.bg}`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.color }} />
+                          <span className="text-[11px] font-bold text-stone-700 font-['Outfit']">{item.label}</span>
+                        </div>
+                        <span className="text-[13px] font-bold text-stone-900 tabular-nums font-['Fraunces']">
+                          {item.count}
+                        </span>
                       </div>
-                      <span className="text-[11px] font-bold text-stone-900 tabular-nums font-['Lora']">{item.count}</span>
-                    </div>
-                  ))}
+                    ))}
                 </div>
               </Panel>
             </div>
           </div>
 
-          {/* ── Section: Difficulty ── */}
+          {/* Difficulty Index */}
           <div>
-            <SectionLabel label="Índice de dificuldade por disciplina" icon={<Flame size={12} />} />
+            <SectionDivider label="Índice de dificuldade por disciplina" icon={<Flame size={13} />} />
             <Panel delay={180}>
-              <PanelHead icon={<Percent size={15} />} tone="rose" title="Dificuldade por disciplina" sub="Percentual de alunos com dificuldade" />
-              <div className="p-5 space-y-3.5">
+              <PanelHead
+                icon={<Percent size={15} />}
+                tone="rose"
+                title="Dificuldade por disciplina"
+                sub="% de alunos com dificuldade"
+              />
+              <div className="p-5 space-y-4">
                 {['Matemática', 'Português', 'Ciências', 'História', 'Geografia'].map((subject, i) => {
                   const diff = Math.round(40 + Math.random() * 50)
                   return (
@@ -1161,35 +1758,65 @@ export function PedagogicalDashboard({ classes, students, teachers, lessonRecord
       {/* ACTION TAB                                                         */}
       {/* ══════════════════════════════════════════════════════════════════ */}
       {tab === 'action' && (
-        <div className="space-y-5 mt-1">
-
-          {/* ── Priority KPIs ── */}
+        <div className="space-y-6 mt-1">
           <div>
-            <SectionLabel label="Prioridades pedagógicas" icon={<Target size={12} />} />
+            <SectionDivider label="Prioridades pedagógicas" icon={<Target size={13} />} />
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4 mt-3">
-              <KpiCard label="Turmas em atenção"   value={attentionCount}          sub="Com alertas pedagógicos"         tone={attentionCount > 0 ? 'amber' : 'emerald'}   icon={<AlertTriangle size={15} />} delay={0} />
-              <KpiCard label="Alunos reincidentes"  value={recurrentAlerts.length}  sub="Baixa freq. e média < 6"        tone={recurrentAlerts.length > 0 ? 'rose' : 'emerald'} icon={<UserRound size={15} />}    delay={70} />
-              <KpiCard label="Sem registros"        value={noRecordCls.length}       sub="Turmas sem diário"              tone={noRecordCls.length > 0 ? 'amber' : 'emerald'}  icon={<ClipboardList size={15} />} delay={140} />
-              <KpiCard label="Cobertura"            value={`${coverage}%`}           sub={`${withDataCls.length} de ${classSummaries.length} turmas`} tone={coverage >= 80 ? 'emerald' : coverage >= 50 ? 'amber' : 'rose'} icon={<Layers size={15} />} delay={210} />
+              <KpiCard
+                label="Turmas em atenção"
+                value={String(attentionCount)}
+                numericValue={attentionCount}
+                sub="Com alertas pedagógicos"
+                tone={attentionCount > 0 ? 'amber' : 'emerald'}
+                icon={<AlertTriangle size={16} />}
+                delay={0}
+              />
+              <KpiCard
+                label="Alunos reincidentes"
+                value={String(recurrentAlerts.length)}
+                numericValue={recurrentAlerts.length}
+                sub="Baixa freq. e média < 6"
+                tone={recurrentAlerts.length > 0 ? 'rose' : 'emerald'}
+                icon={<UserRound size={16} />}
+                delay={70}
+              />
+              <KpiCard
+                label="Sem registros"
+                value={String(noRecordCls.length)}
+                numericValue={noRecordCls.length}
+                sub="Turmas sem diário"
+                tone={noRecordCls.length > 0 ? 'amber' : 'emerald'}
+                icon={<ClipboardList size={16} />}
+                delay={140}
+              />
+              <KpiCard
+                label="Cobertura"
+                value={`${coverage}%`}
+                sub={`${withDataCls.length} de ${classSummaries.length} turmas`}
+                tone={coverage >= 80 ? 'emerald' : coverage >= 50 ? 'amber' : 'rose'}
+                icon={<Layers size={16} />}
+                ring={coverage}
+                delay={210}
+              />
             </div>
           </div>
 
-          {/* ── Class radar ── */}
+          {/* Class radar */}
           <div>
-            <SectionLabel label="Radar por turma" icon={<School size={12} />} />
+            <SectionDivider label="Radar por turma" icon={<School size={13} />} />
             <Panel delay={60}>
               <PanelHead
                 icon={<Layers size={15} />}
                 title="Radar pedagógico"
                 sub={`${classSummaries.length} turma${classSummaries.length !== 1 ? 's' : ''}`}
                 actions={
-                  <button
-                    type="button"
+                  <ActionBtn
                     onClick={() => openLesson()}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-stone-300 bg-white px-3 py-1.5 text-[10px] font-semibold text-stone-500 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-600 transition-all shadow-sm font-['DM_Sans']"
+                    icon={<ClipboardList size={11} />}
+                    size="xs"
                   >
-                    <ClipboardList size={11} />Registros
-                  </button>
+                    Registros
+                  </ActionBtn>
                 }
               />
               {classSummaries.length > 0 ? (
@@ -1204,16 +1831,17 @@ export function PedagogicalDashboard({ classes, students, teachers, lessonRecord
                   ))}
                 </div>
               ) : (
-                <div className="py-12 text-center">
-                  <p className="text-sm font-semibold text-stone-400 font-['DM_Sans']">Nenhuma turma no escopo</p>
+                <div className="py-16 text-center">
+                  <GraduationCap size={40} className="text-stone-300 mx-auto mb-3" />
+                  <p className="text-sm font-semibold text-stone-400 font-['Outfit']">Nenhuma turma no escopo</p>
                 </div>
               )}
             </Panel>
           </div>
 
-          {/* ── Alert students ── */}
+          {/* Alert students */}
           <div>
-            <SectionLabel label="Alunos em alerta" icon={<AlertCircle size={12} />} />
+            <SectionDivider label="Alunos em alerta" icon={<AlertCircle size={13} />} />
             <Panel delay={100}>
               <PanelHead
                 icon={<AlertCircle size={15} />}
@@ -1222,13 +1850,17 @@ export function PedagogicalDashboard({ classes, students, teachers, lessonRecord
                 sub={`${alertStudents.length} aluno${alertStudents.length !== 1 ? 's' : ''} identificado${alertStudents.length !== 1 ? 's' : ''}`}
                 actions={
                   alertStudents.length > 0 ? (
-                    <button
-                      type="button"
-                      onClick={() => { setSelectedAlertId(selectedAlertForModal); setAlertModal(true) }}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-[10px] font-semibold text-rose-600 hover:bg-rose-50 transition-all shadow-sm font-['DM_Sans']"
+                    <ActionBtn
+                      tone="rose"
+                      onClick={() => {
+                        setSelectedAlertId(selectedAlertForModal)
+                        setAlertModal(true)
+                      }}
+                      icon={<Eye size={11} />}
+                      size="xs"
                     >
-                      <Users size={11} />Ver todos
-                    </button>
+                      Ver todos
+                    </ActionBtn>
                   ) : undefined
                 }
               />
@@ -1240,14 +1872,19 @@ export function PedagogicalDashboard({ classes, students, teachers, lessonRecord
                       student={st}
                       className={getClassName(st.classId)}
                       delay={i * 45}
-                      onOpen={() => { setSelectedAlertId(st.id); setAlertModal(true) }}
+                      onOpen={() => {
+                        setSelectedAlertId(st.id)
+                        setAlertModal(true)
+                      }}
                     />
                   ))}
                 </div>
               ) : (
-                <div className="py-12 text-center">
-                  <CheckCircle size={36} className="text-emerald-300 mx-auto mb-3" />
-                  <p className="text-sm font-semibold text-stone-400 font-['DM_Sans']">Nenhum aluno em alerta no escopo</p>
+                <div className="py-16 text-center">
+                  <CheckCircle size={40} className="text-emerald-400 mx-auto mb-3" />
+                  <p className="text-sm font-bold text-stone-400 font-['Outfit']">
+                    Nenhum aluno em alerta no escopo
+                  </p>
                 </div>
               )}
             </Panel>
@@ -1267,210 +1904,373 @@ export function PedagogicalDashboard({ classes, students, teachers, lessonRecord
       )}
 
       {/* ── Lesson Records Modal ── */}
-      {lessonModal && typeof document !== 'undefined' && createPortal(
-        <div
-          role="presentation"
-          onMouseDown={() => setLessonModal(false)}
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 py-6 backdrop-blur-sm"
-          style={{ background: 'rgba(15,23,42,0.25)', animation: 'fadeIn .15s ease-out' }}
-        >
+      {lessonModal &&
+        typeof document !== 'undefined' &&
+        createPortal(
           <div
-            role="dialog"
-            aria-modal="true"
-            onMouseDown={e => e.stopPropagation()}
-            className="flex max-h-[calc(100dvh-3rem)] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-stone-300 bg-white shadow-2xl"
-            style={{ animation: 'scaleIn .25s ease-out' }}
+            role="presentation"
+            onMouseDown={() => setLessonModal(false)}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 py-6"
+            style={{
+              background: 'rgba(28,25,23,0.4)',
+              backdropFilter: 'blur(8px)',
+              animation: 'fade-up .2s ease-out',
+            }}
           >
-            {/* Gradient strip */}
-            <div className="h-0.5 w-full shrink-0 bg-gradient-to-r from-indigo-500 via-violet-500 to-purple-500" />
+            <div
+              role="dialog"
+              aria-modal="true"
+              onMouseDown={(e) => e.stopPropagation()}
+              className="flex max-h-[calc(100dvh-3rem)] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border-2 border-stone-300 bg-white shadow-2xl"
+              style={{ animation: 'scale-in .3s cubic-bezier(.16,1,.3,1)' }}
+            >
+              {/* Gradient strip */}
+              <div className="h-1.5 w-full shrink-0 bg-gradient-to-r from-indigo-500 via-violet-500 to-purple-600" />
 
-            {/* Header */}
-            <div className="flex items-center justify-between gap-4 border-b border-stone-200 bg-stone-50 px-5 py-4 shrink-0">
-              <div className="flex items-center gap-3 min-w-0">
-                <div className="grid h-9 w-9 place-items-center rounded-xl bg-indigo-600 text-white shadow-sm">
-                  <ClipboardList size={15} />
-                </div>
-                <div>
-                  <Eyebrow className="mb-0.5 text-indigo-500">Diário de aula</Eyebrow>
-                  <h2 className="text-base font-semibold text-stone-900 leading-tight font-['Lora']">Registros por turma</h2>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <select
-                  value={lessonClassFilter}
-                  onChange={e => setLessonClassFilter(e.target.value)}
-                  className="h-8 min-w-[160px] rounded-lg border border-stone-300 bg-stone-50 px-3 text-xs font-semibold outline-none font-['DM_Sans']"
-                >
-                  <option value="all">Todas as turmas</option>
-                  {classSummaries.map(s => <option key={s.classRoom.id} value={s.classRoom.id}>{s.classRoom.name}</option>)}
-                </select>
-                <button
-                  type="button"
-                  onClick={() => setLessonModal(false)}
-                  className="grid h-8 w-8 place-items-center rounded-lg border border-stone-300 bg-white text-stone-400 transition hover:border-rose-300 hover:bg-rose-50 hover:text-rose-500"
-                  aria-label="Fechar"
-                >
-                  <X size={14} />
-                </button>
-              </div>
-            </div>
-
-            {/* Body */}
-            <div className="min-h-0 flex-1 overflow-y-auto bg-stone-50/50 p-5">
-              {lessonLoading ? <LessonSkeleton /> : (
-                <div className="space-y-4">
-                  {/* KPIs */}
-                  <div className="grid gap-3 sm:grid-cols-4">
-                    <InfoKpi label="Registros"   value={scopedRecs.length}  detail="Aulas registradas"      icon={<ClipboardList size={15} />} delay={0} />
-                    <InfoKpi label="Planos"       value={planCount}           detail="Com plano de aula"      tone="emerald" icon={<BookMarked size={15} />}  delay={60} />
-                    <InfoKpi label="Recursos"     value={resourceCount}       detail="Com materiais"          tone="amber"   icon={<Zap size={15} />}         delay={120} />
-                    <InfoKpi label="Atividades"   value={activityCount}       detail="Atividades descritas"   tone="rose"    icon={<ListChecks size={15} />}  delay={180} />
+              {/* Header */}
+              <div className="flex items-center justify-between gap-4 border-b-2 border-stone-200 bg-stone-50 px-6 py-4 shrink-0">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="grid h-10 w-10 place-items-center rounded-2xl bg-indigo-600 text-white border-2 border-indigo-700 shadow-sm">
+                    <ClipboardList size={16} />
                   </div>
+                  <div>
+                    <Label className="mb-0.5 text-indigo-500">Diário de aula</Label>
+                    <h2 className="text-base font-bold text-stone-900 leading-tight font-['Fraunces']">
+                      Registros por turma
+                    </h2>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2.5">
+                  <select
+                    value={lessonClassFilter}
+                    onChange={(e) => setLessonClassFilter(e.target.value)}
+                    className="h-9 min-w-[170px] rounded-xl border-2 border-stone-300 bg-stone-50 px-3 text-xs font-bold outline-none font-['Outfit'] focus:border-indigo-400"
+                  >
+                    <option value="all">Todas as turmas</option>
+                    {classSummaries.map((s) => (
+                      <option key={s.classRoom.id} value={s.classRoom.id}>
+                        {s.classRoom.name}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => setLessonModal(false)}
+                    className="grid h-9 w-9 place-items-center rounded-xl border-2 border-stone-300 bg-white text-stone-400 transition-all hover:border-rose-400 hover:bg-rose-50 hover:text-rose-500"
+                    aria-label="Fechar"
+                  >
+                    <X size={15} />
+                  </button>
+                </div>
+              </div>
 
-                  {/* Bar chart */}
-                  <div className="rounded-xl border border-stone-200 bg-white p-5 shadow-sm">
-                    <div className="flex items-center justify-between mb-3">
-                      <div>
-                        <Eyebrow className="mb-0.5 text-indigo-500">Por turma</Eyebrow>
-                        <p className="text-sm font-semibold text-stone-800 font-['Lora']">Registros, planos e recursos</p>
+              {/* Body */}
+              <div className="min-h-0 flex-1 overflow-y-auto bg-stone-50/60 p-5">
+                {lessonLoading ? (
+                  <LessonSkeleton />
+                ) : (
+                  <div className="space-y-4">
+                    {/* KPIs */}
+                    <div className="grid gap-3 sm:grid-cols-4">
+                      <InfoKpi
+                        label="Registros"
+                        value={scopedRecs.length}
+                        detail="Aulas registradas"
+                        icon={<ClipboardList size={16} />}
+                        delay={0}
+                      />
+                      <InfoKpi
+                        label="Planos"
+                        value={planCount}
+                        detail="Com plano de aula"
+                        tone="emerald"
+                        icon={<BookMarked size={16} />}
+                        delay={60}
+                      />
+                      <InfoKpi
+                        label="Recursos"
+                        value={resourceCount}
+                        detail="Com materiais didáticos"
+                        tone="amber"
+                        icon={<Zap size={16} />}
+                        delay={120}
+                      />
+                      <InfoKpi
+                        label="Atividades"
+                        value={activityCount}
+                        detail="Atividades descritas"
+                        tone="rose"
+                        icon={<ListChecks size={16} />}
+                        delay={180}
+                      />
+                    </div>
+
+                    {/* Bar chart */}
+                    <div className="rounded-2xl border-2 border-stone-200 bg-white p-5 shadow-sm">
+                      <div className="flex items-center justify-between mb-4">
+                        <div>
+                          <Label className="mb-0.5 text-indigo-500">Por turma</Label>
+                          <p className="text-sm font-bold text-stone-800 font-['Fraunces']">
+                            Registros, planos e recursos
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          {[
+                            { color: '#4f46e5', label: 'Registros' },
+                            { color: '#059669', label: 'Planos' },
+                            { color: '#d97706', label: 'Recursos' },
+                          ].map(({ color, label }) => (
+                            <div key={label} className="flex items-center gap-1.5">
+                              <span className="h-2.5 w-4 rounded-sm" style={{ backgroundColor: color }} />
+                              <span className="text-[10px] font-bold text-stone-500 font-['Outfit']">
+                                {label}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
                       </div>
-                      <div className="flex items-center gap-3">
-                        {[{ color: '#4f46e5', label: 'Registros' }, { color: '#059669', label: 'Planos' }, { color: '#d97706', label: 'Recursos' }].map(({ color, label }) => (
-                          <div key={label} className="flex items-center gap-1.5">
-                            <span className="h-2 w-4 rounded-sm" style={{ backgroundColor: color }} />
-                            <span className="text-[10px] font-semibold text-stone-500 font-['DM_Sans']">{label}</span>
+                      <div className="h-52 overflow-x-auto">
+                        {lessonClassChart.length > 0 ? (
+                          <div
+                            className="h-full"
+                            style={{ minWidth: Math.max(380, lessonClassChart.length * 100) }}
+                          >
+                            <ResponsiveContainer width="100%" height="100%">
+                              <BarChart
+                                data={lessonClassChart}
+                                margin={{ top: 24, right: 12, left: -16, bottom: 20 }}
+                                barCategoryGap="30%"
+                                barGap={4}
+                              >
+                                <CartesianGrid strokeDasharray="3 0" vertical={false} stroke="#f5f5f4" />
+                                <XAxis
+                                  dataKey="name"
+                                  tick={{ fontSize: 10, fontWeight: 700, fill: '#78716c', fontFamily: 'Outfit' }}
+                                  interval={0}
+                                  angle={-8}
+                                  textAnchor="end"
+                                  height={42}
+                                  tickLine={false}
+                                  axisLine={{ stroke: '#d6d3d1' }}
+                                />
+                                <YAxis
+                                  allowDecimals={false}
+                                  tick={{ fontSize: 9, fontWeight: 700, fill: '#a8a29e', fontFamily: 'Outfit' }}
+                                  tickLine={false}
+                                  axisLine={false}
+                                />
+                                <Tooltip content={<ChartTooltip />} cursor={{ fill: '#fafaf9', radius: 6 }} />
+                                <Bar
+                                  dataKey="registros"
+                                  name="Registros"
+                                  fill="#4f46e5"
+                                  radius={[6, 6, 0, 0]}
+                                  barSize={24}
+                                  animationDuration={900}
+                                >
+                                  <LabelList
+                                    dataKey="registros"
+                                    position="top"
+                                    formatter={fmt}
+                                    style={{ fill: '#57534e', fontSize: 8, fontWeight: 700, fontFamily: 'Outfit' }}
+                                  />
+                                </Bar>
+                                <Bar
+                                  dataKey="planos"
+                                  name="Planos"
+                                  fill="#059669"
+                                  radius={[6, 6, 0, 0]}
+                                  barSize={24}
+                                  animationBegin={150}
+                                  animationDuration={900}
+                                >
+                                  <LabelList
+                                    dataKey="planos"
+                                    position="top"
+                                    formatter={fmt}
+                                    style={{ fill: '#57534e', fontSize: 8, fontWeight: 700, fontFamily: 'Outfit' }}
+                                  />
+                                </Bar>
+                                <Bar
+                                  dataKey="recursos"
+                                  name="Recursos"
+                                  fill="#d97706"
+                                  radius={[6, 6, 0, 0]}
+                                  barSize={24}
+                                  animationBegin={300}
+                                  animationDuration={900}
+                                >
+                                  <LabelList
+                                    dataKey="recursos"
+                                    position="top"
+                                    formatter={fmt}
+                                    style={{ fill: '#57534e', fontSize: 8, fontWeight: 700, fontFamily: 'Outfit' }}
+                                  />
+                                </Bar>
+                              </BarChart>
+                            </ResponsiveContainer>
                           </div>
-                        ))}
+                        ) : (
+                          <div className="flex h-full items-center justify-center">
+                            <p className="text-sm font-semibold text-stone-400 font-['Outfit']">
+                              Nenhum registro para exibir
+                            </p>
+                          </div>
+                        )}
                       </div>
                     </div>
-                    <div className="h-52 overflow-x-auto">
-                      {lessonClassChart.length > 0 ? (
-                        <div className="h-full" style={{ minWidth: Math.max(380, lessonClassChart.length * 100) }}>
-                          <ResponsiveContainer width="100%" height="100%">
-                            <BarChart data={lessonClassChart} margin={{ top: 24, right: 12, left: -16, bottom: 20 }} barCategoryGap="30%" barGap={4}>
-                              <CartesianGrid strokeDasharray="3 0" vertical={false} stroke="#f5f5f4" />
-                              <XAxis dataKey="name" tick={{ fontSize: 10, fontWeight: 600, fill: '#78716c', fontFamily: 'DM Sans' }} interval={0} angle={-8} textAnchor="end" height={42} tickLine={false} axisLine={{ stroke: '#e7e5e4' }} />
-                              <YAxis allowDecimals={false} tick={{ fontSize: 9, fontWeight: 600, fill: '#a8a29e', fontFamily: 'DM Sans' }} tickLine={false} axisLine={false} />
-                              <Tooltip content={<ChartTooltip />} cursor={{ fill: '#fafaf9', radius: 6 }} />
-                              <Bar dataKey="registros" name="Registros" fill="#4f46e5" radius={[5, 5, 0, 0]} barSize={24} animationDuration={900}>
-                                <LabelList dataKey="registros" position="top" formatter={fmt} style={{ fill: '#57534e', fontSize: 8, fontWeight: 700, fontFamily: 'DM Sans' }} />
-                              </Bar>
-                              <Bar dataKey="planos" name="Planos" fill="#059669" radius={[5, 5, 0, 0]} barSize={24} animationBegin={150} animationDuration={900}>
-                                <LabelList dataKey="planos" position="top" formatter={fmt} style={{ fill: '#57534e', fontSize: 8, fontWeight: 700, fontFamily: 'DM Sans' }} />
-                              </Bar>
-                              <Bar dataKey="recursos" name="Recursos" fill="#d97706" radius={[5, 5, 0, 0]} barSize={24} animationBegin={300} animationDuration={900}>
-                                <LabelList dataKey="recursos" position="top" formatter={fmt} style={{ fill: '#57534e', fontSize: 8, fontWeight: 700, fontFamily: 'DM Sans' }} />
-                              </Bar>
-                            </BarChart>
-                          </ResponsiveContainer>
+
+                    {/* Pie charts */}
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      {[
+                        {
+                          label: 'Distribuição por matéria',
+                          data: subjectData,
+                          icon: <BookOpen size={14} />,
+                        },
+                        {
+                          label: 'Uso de recursos didáticos',
+                          data: resourceData,
+                          icon: <Zap size={14} />,
+                        },
+                      ].map(({ label, data, icon }) => (
+                        <div
+                          key={label}
+                          className="rounded-2xl border-2 border-stone-200 bg-white p-4 shadow-sm"
+                        >
+                          <div className="flex items-center gap-2 mb-3">
+                            <span className="text-stone-400">{icon}</span>
+                            <p className="text-xs font-bold text-stone-700 font-['Fraunces']">{label}</p>
+                          </div>
+                          <div className="h-40">
+                            {data.length > 0 ? (
+                              <ResponsiveContainer width="100%" height="100%">
+                                <PieChart margin={{ top: 8, right: 48, bottom: 8, left: 48 }}>
+                                  <Pie
+                                    data={data}
+                                    dataKey="value"
+                                    nameKey="name"
+                                    innerRadius={32}
+                                    outerRadius={52}
+                                    paddingAngle={5}
+                                    label={PieLabel}
+                                    labelLine={false}
+                                    animationDuration={1000}
+                                    strokeWidth={0}
+                                  >
+                                    {data.map((entry, i) => (
+                                      <Cell
+                                        key={entry.name}
+                                        fill={CHART_PALETTE[i % CHART_PALETTE.length]}
+                                      />
+                                    ))}
+                                  </Pie>
+                                  <Tooltip
+                                    contentStyle={{
+                                      borderRadius: 12,
+                                      border: '2px solid #e7e5e4',
+                                      fontWeight: 700,
+                                      fontSize: 11,
+                                      fontFamily: 'Outfit',
+                                    }}
+                                  />
+                                </PieChart>
+                              </ResponsiveContainer>
+                            ) : (
+                              <div className="flex h-full items-center justify-center">
+                                <p className="text-sm font-semibold text-stone-400 font-['Outfit']">Sem dados</p>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Records table */}
+                    <div className="rounded-2xl border-2 border-stone-200 bg-white overflow-hidden shadow-sm">
+                      <div className="border-b-2 border-stone-100 bg-stone-50 px-5 py-3.5 flex items-center gap-2.5">
+                        <CalendarDays size={15} className="text-stone-400" />
+                        <p className="text-xs font-bold text-stone-700 font-['Fraunces']">
+                          Registros detalhados
+                        </p>
+                        {scopedRecs.length > 0 && (
+                          <span className="ml-auto text-[10px] font-bold text-stone-400 font-['Outfit']">
+                            {Math.min(scopedRecs.length, 8)} de {scopedRecs.length}
+                          </span>
+                        )}
+                      </div>
+                      {scopedRecs.length > 0 ? (
+                        <div className="overflow-x-auto">
+                          <div className="grid grid-cols-[140px_1fr_1fr_1fr_1fr] border-b-2 border-stone-100 bg-indigo-50 px-5 py-2.5">
+                            {['Turma · Data', 'Matéria', 'Conteúdo', 'Plano', 'Recursos'].map((h) => (
+                              <Label key={h} className="text-indigo-500 px-1">
+                                {h}
+                              </Label>
+                            ))}
+                          </div>
+                          <div className="divide-y-2 divide-stone-50">
+                            {scopedRecs.slice(0, 8).map((record, i) => (
+                              <FadeUp key={record.id} delay={i * 40}>
+                                <div className="grid grid-cols-[140px_1fr_1fr_1fr_1fr] px-5 py-3.5 hover:bg-stone-50 transition-colors items-center">
+                                  <div className="px-1">
+                                    <p className="text-[10px] font-bold text-stone-800 truncate font-['Outfit']">
+                                      {getClassName(record.classId)}
+                                    </p>
+                                    <p className="text-[9px] text-stone-400 font-semibold font-['Outfit']">
+                                      {record.date}
+                                    </p>
+                                  </div>
+                                  <div className="px-1">
+                                    <span
+                                      className="inline-block rounded-full px-2.5 py-0.5 text-[9px] font-bold font-['Outfit'] border"
+                                      style={{
+                                        backgroundColor: `${subjectColors[getAcademicSubjectLabel(record.subject) || 'Sem matéria'] ?? '#4f46e5'}18`,
+                                        color:
+                                          subjectColors[
+                                            getAcademicSubjectLabel(record.subject) || 'Sem matéria'
+                                          ] ?? '#4f46e5',
+                                        borderColor: `${subjectColors[getAcademicSubjectLabel(record.subject) || 'Sem matéria'] ?? '#4f46e5'}44`,
+                                      }}
+                                    >
+                                      {getAcademicSubjectLabel(record.subject) || 'Sem matéria'}
+                                    </span>
+                                  </div>
+                                  <div className="px-1">
+                                    <p className="text-[10px] font-medium text-stone-600 truncate font-['Outfit']">
+                                      {record.content || '—'}
+                                    </p>
+                                  </div>
+                                  <div className="px-1">
+                                    <p className="text-[10px] font-medium text-stone-600 truncate font-['Outfit']">
+                                      {record.plan || '—'}
+                                    </p>
+                                  </div>
+                                  <div className="px-1">
+                                    <p className="text-[10px] font-medium text-stone-600 truncate font-['Outfit']">
+                                      {record.resources || '—'}
+                                    </p>
+                                  </div>
+                                </div>
+                              </FadeUp>
+                            ))}
+                          </div>
                         </div>
                       ) : (
-                        <div className="flex h-full items-center justify-center">
-                          <p className="text-sm font-semibold text-stone-400 font-['DM_Sans']">Nenhum registro para exibir</p>
+                        <div className="py-16 text-center">
+                          <FileText size={36} className="text-stone-300 mx-auto mb-3" />
+                          <p className="text-sm font-semibold text-stone-400 font-['Outfit']">
+                            Nenhum registro encontrado
+                          </p>
                         </div>
                       )}
                     </div>
                   </div>
-
-                  {/* Pie charts */}
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    {[
-                      { label: 'Distribuição por matéria',    data: subjectData,  icon: <BookOpen size={14} /> },
-                      { label: 'Uso de recursos didáticos',   data: resourceData, icon: <Zap size={14} /> },
-                    ].map(({ label, data, icon }) => (
-                      <div key={label} className="rounded-xl border border-stone-200 bg-white p-4 shadow-sm">
-                        <div className="flex items-center gap-2 mb-2">
-                          <span className="text-stone-400">{icon}</span>
-                          <p className="text-xs font-semibold text-stone-700 font-['Lora']">{label}</p>
-                        </div>
-                        <div className="h-40">
-                          {data.length > 0 ? (
-                            <ResponsiveContainer width="100%" height="100%">
-                              <PieChart margin={{ top: 8, right: 48, bottom: 8, left: 48 }}>
-                                <Pie data={data} dataKey="value" nameKey="name" innerRadius={32} outerRadius={52} paddingAngle={5} label={PieLabel} labelLine={false} animationDuration={1000} strokeWidth={0}>
-                                  {data.map((entry, i) => (
-                                    <Cell key={entry.name} fill={CHART_COLORS[i % CHART_COLORS.length]} />
-                                  ))}
-                                </Pie>
-                                <Tooltip contentStyle={{ borderRadius: 12, border: '1px solid #e7e5e4', fontWeight: 600, fontSize: 11, fontFamily: 'DM Sans' }} />
-                              </PieChart>
-                            </ResponsiveContainer>
-                          ) : (
-                            <div className="flex h-full items-center justify-center">
-                              <p className="text-sm font-semibold text-stone-400 font-['DM_Sans']">Sem dados</p>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* Records table */}
-                  <div className="rounded-xl border border-stone-200 bg-white overflow-hidden shadow-sm">
-                    <div className="border-b border-stone-100 bg-stone-50 px-5 py-3 flex items-center gap-2">
-                      <CalendarDays size={14} className="text-stone-400" />
-                      <p className="text-xs font-semibold text-stone-700 font-['Lora']">Registros detalhados</p>
-                      {scopedRecs.length > 0 && (
-                        <span className="ml-auto text-[10px] font-semibold text-stone-400 font-['DM_Sans']">
-                          {Math.min(scopedRecs.length, 8)} de {scopedRecs.length}
-                        </span>
-                      )}
-                    </div>
-                    {scopedRecs.length > 0 ? (
-                      <div className="overflow-x-auto">
-                        {/* Table header */}
-                        <div className="grid grid-cols-[130px_1fr_1fr_1fr_1fr] border-b border-stone-100 bg-indigo-50/40 px-5 py-2.5">
-                          {['Turma · Data', 'Matéria', 'Conteúdo', 'Plano', 'Recursos'].map(h => (
-                            <Eyebrow key={h} className="text-indigo-500 px-1">{h}</Eyebrow>
-                          ))}
-                        </div>
-                        <div className="divide-y divide-stone-50">
-                          {scopedRecs.slice(0, 8).map((record, i) => (
-                            <FadeUp key={record.id} delay={i * 40}>
-                              <div className="grid grid-cols-[130px_1fr_1fr_1fr_1fr] px-5 py-3 hover:bg-stone-50/60 transition-colors items-center">
-                                <div className="px-1">
-                                  <p className="text-[10px] font-semibold text-stone-800 truncate font-['DM_Sans']">{getClassName(record.classId)}</p>
-                                  <p className="text-[9px] text-stone-400 font-semibold font-['DM_Sans']">{record.date}</p>
-                                </div>
-                                <div className="px-1">
-                                  <span
-                                    className="inline-block rounded-full px-2.5 py-0.5 text-[9px] font-semibold font-['DM_Sans']"
-                                    style={{
-                                      backgroundColor: `${subjectColors[getAcademicSubjectLabel(record.subject) || 'Sem matéria'] ?? '#4f46e5'}18`,
-                                      color: subjectColors[getAcademicSubjectLabel(record.subject) || 'Sem matéria'] ?? '#4f46e5',
-                                    }}
-                                  >
-                                    {getAcademicSubjectLabel(record.subject) || 'Sem matéria'}
-                                  </span>
-                                </div>
-                                <div className="px-1"><p className="text-[10px] font-medium text-stone-600 truncate font-['DM_Sans']">{record.content || '—'}</p></div>
-                                <div className="px-1"><p className="text-[10px] font-medium text-stone-600 truncate font-['DM_Sans']">{record.plan || '—'}</p></div>
-                                <div className="px-1"><p className="text-[10px] font-medium text-stone-600 truncate font-['DM_Sans']">{record.resources || '—'}</p></div>
-                              </div>
-                            </FadeUp>
-                          ))}
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="py-12 text-center">
-                        <p className="text-sm font-semibold text-stone-400 font-['DM_Sans']">Nenhum registro encontrado</p>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
+                )}
+              </div>
             </div>
-          </div>
-        </div>,
-        document.body,
-      )}
-
-      {/* Animations */}
-      <style>{`
-        @keyframes fadeIn   { from { opacity:0 } to { opacity:1 } }
-        @keyframes scaleIn  { from { opacity:0; transform:scale(0.96) translateY(8px) } to { opacity:1; transform:scale(1) translateY(0) } }
-        @keyframes shimmer  { to { transform:translateX(200%) } }
-      `}</style>
+          </div>,
+          document.body,
+        )}
     </>
   )
 }

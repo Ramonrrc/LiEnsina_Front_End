@@ -9,7 +9,8 @@ export type AppSection =
   | 'dashboard'
   | 'schools'
   | 'classes'
-  | 'people'
+  | 'teachers'
+  | 'students'
   | 'evaluations'
   | 'evaluation-corrections'
   | 'calendar'
@@ -1097,11 +1098,24 @@ export interface DashboardScreenPayload {
   dashboard: DashboardPayload
   evaluations: Evaluation[]
   auditEvents: AuditEvent[]
+  schools?: School[]
+  classes?: ClassRoom[]
 }
 
 export interface DashboardAlertsPageQuery {
   page: number
   limit: number
+}
+
+export type DashboardPeriodFilter = 'all' | 'week' | 'month' | 'year'
+
+export interface DashboardFiltersQuery {
+  alertPage?: number
+  alertLimit?: number
+  schoolId?: string
+  classId?: string
+  subject?: string
+  period?: DashboardPeriodFilter
 }
 
 export interface DashboardAlertsPagePayload {
@@ -1122,6 +1136,7 @@ export interface SchoolsScreenPayload {
   students: Student[]
   classes: ClassRoom[]
   schoolsPagination?: PaginationMeta
+  classesPagination?: PaginationMeta
   lessonRecords?: LessonRecord[]
   roomReservations?: RoomReservation[]
 }
@@ -1202,6 +1217,18 @@ export interface SchoolsPagePayload {
   pagination: PaginationMeta
 }
 
+export interface ClassesPageQuery {
+  page: number
+  limit: number
+  search?: string
+  schoolId?: string
+}
+
+export interface ClassesPagePayload {
+  classes: ClassRoom[]
+  pagination: PaginationMeta
+}
+
 export interface TeacherSubjectCard {
   subject: string
   classes: ClassRoom[]
@@ -1224,7 +1251,15 @@ export interface TeacherSubjectCardsPagePayload {
   }
 }
 
-export interface PeoplePageQuery {
+export interface TeachersPageQuery {
+  page: number
+  limit: number
+  search?: string
+  schoolId?: string
+  discipline?: string
+}
+
+export interface StudentsPageQuery {
   page: number
   limit: number
   search?: string
@@ -1275,7 +1310,8 @@ export interface ScreenPayloads {
   dashboard: DashboardScreenPayload
   schools: SchoolsScreenPayload
   classes: SchoolsScreenPayload
-  people: SchoolsScreenPayload
+  teachers: SchoolsScreenPayload
+  students: SchoolsScreenPayload
   evaluations: EvaluationsScreenPayload
   'evaluation-corrections': EvaluationsScreenPayload
   calendar: CalendarScreenPayload

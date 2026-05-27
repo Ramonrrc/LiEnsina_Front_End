@@ -726,7 +726,7 @@ export default function LandingPage() {
             <div className="w-7 h-7 rounded-lg bg-indigo-600 border border-indigo-500/50 flex items-center justify-center shadow-sm">
               <GraduationCap size={15} className="text-white" />
             </div>
-            <span className="font-['Lora'] font-semibold text-lg text-white">{appName}</span>
+            <span className="font-DMSans font-semibold text-lg text-white">{appName}</span>
           </div>
           <span
             className="font-['DM_Sans'] text-indigo-400 text-[13px] text-center"

@@ -106,7 +106,8 @@ describe('security hardening helpers', () => {
     await expect(validateProfileImageFile(jpg)).resolves.toMatchObject({ ok: true })
     await expect(validateOmrFile(fakeJpg)).resolves.toMatchObject({ ok: false })
     await expect(validateProfileImageFile(svg)).resolves.toMatchObject({ ok: false })
-    await expect(validateOmrBatchFiles(Array.from({ length: 21 }, (_, index) => file('%PDF-1.7', `lote-${index}.pdf`, 'application/pdf'))))
+    await expect(validateOmrFile(file('%PDF-1.7', 'cartao.pdf', 'application/pdf'))).resolves.toMatchObject({ ok: false })
+    await expect(validateOmrBatchFiles(Array.from({ length: 21 }, (_, index) => file([0xff, 0xd8, 0xff, 0xe0, 0x00], `lote-${index}.jpg`, 'image/jpeg'))))
       .resolves.toMatchObject({ ok: false })
   })
 
@@ -151,7 +152,8 @@ describe('security hardening helpers', () => {
     const correctionView = readFileSync(new URL('../views/EvaluationCorrectionsView.tsx', import.meta.url), 'utf8')
     const nginxConfig = readFileSync(new URL('../../nginx.conf', import.meta.url), 'utf8')
 
-    expect(correctionView.match(/<iframe[\s\S]*?sandbox=""/g)?.length ?? 0).toBeGreaterThanOrEqual(2)
+    expect(correctionView.match(/<iframe[\s\S]*?sandbox=""/g)?.length ?? 0).toBeGreaterThanOrEqual(1)
+    expect(correctionView.match(/<PdfPreview /g)?.length ?? 0).toBeGreaterThanOrEqual(2)
     expect(nginxConfig).toContain("script-src 'self'")
     expect(nginxConfig).not.toContain("script-src 'self' 'unsafe-inline'")
     expect(nginxConfig).toContain("frame-ancestors 'none'")

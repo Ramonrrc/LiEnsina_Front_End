@@ -4,12 +4,15 @@ export const MAX_OMR_BATCH_FILES = 20
 export const MAX_OMR_BATCH_TOTAL_BYTES = 12 * 1024 * 1024
 
 export const PROFILE_IMAGE_ACCEPT = 'image/png,image/jpeg,image/webp'
-export const OMR_UPLOAD_ACCEPT = 'image/png,image/jpeg,image/webp,application/pdf'
+export const OMR_PDF_UPLOADS_ENABLED = import.meta.env.VITE_OMR_ALLOW_PDF_UPLOADS === 'true'
+export const OMR_UPLOAD_ACCEPT = OMR_PDF_UPLOADS_ENABLED
+  ? 'image/png,image/jpeg,image/webp,application/pdf'
+  : 'image/png,image/jpeg,image/webp'
 
 const allowedProfileImageMimes = new Set(['image/png', 'image/jpeg', 'image/webp'])
-const allowedOmrMimes = new Set([...allowedProfileImageMimes, 'application/pdf'])
+const allowedOmrMimes = new Set(OMR_PDF_UPLOADS_ENABLED ? [...allowedProfileImageMimes, 'application/pdf'] : [...allowedProfileImageMimes])
 const allowedProfileImageExtensions = new Set(['png', 'jpg', 'jpeg', 'webp'])
-const allowedOmrExtensions = new Set([...allowedProfileImageExtensions, 'pdf'])
+const allowedOmrExtensions = new Set(OMR_PDF_UPLOADS_ENABLED ? [...allowedProfileImageExtensions, 'pdf'] : [...allowedProfileImageExtensions])
 const dangerousExtensions = new Set([
   'svg', 'html', 'htm', 'js', 'mjs', 'ts', 'tsx', 'jsx', 'php', 'phtml', 'exe', 'dll', 'bat',
   'cmd', 'ps1', 'sh', 'bash', 'zsh', 'jar', 'war', 'zip', 'rar', '7z', 'tar', 'gz',

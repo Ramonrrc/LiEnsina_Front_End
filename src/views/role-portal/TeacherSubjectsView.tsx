@@ -193,7 +193,7 @@ function LightModal({
           <div className="flex items-center gap-3 min-w-0">
             <div className="min-w-0">
               {eyebrow && <Eyebrow className="mb-0.5 text-indigo-500">{eyebrow}</Eyebrow>}
-              <h2 className="truncate text-lg font-semibold text-stone-900 leading-tight font-['Lora']">{title}</h2>
+              <h2 className="truncate text-lg font-semibold text-stone-900 leading-tight font-DMSans">{title}</h2>
             </div>
           </div>
           <button
@@ -259,7 +259,7 @@ function SubjectCard({
             </span>
             <div className="min-w-0">
               <Eyebrow className="mb-0.5">Matéria</Eyebrow>
-              <h2 className="truncate text-base font-semibold text-stone-900 leading-tight font-['Lora']">
+              <h2 className="truncate text-base font-semibold text-stone-900 leading-tight font-DMSans">
                 {card.subject}
               </h2>
             </div>
@@ -730,7 +730,7 @@ export function TeacherSubjectsView({ model }: { model: RolePortalScreenModel })
               </div>
               <div>
                 <Eyebrow>{stat.label}</Eyebrow>
-                <p className="font-['Lora'] text-base font-bold text-stone-900 leading-none">{stat.value}</p>
+                <p className="font-DMSans text-base font-bold text-stone-900 leading-none">{stat.value}</p>
               </div>
             </div>
           ))}
@@ -953,7 +953,9 @@ export function TeacherSubjectsView({ model }: { model: RolePortalScreenModel })
                         style={{ animation: 'fadeSlideIn 0.3s ease-out forwards', animationDelay: `${index * 40}ms`, opacity: 0 }}
                       >
                         <div className="flex items-start justify-between gap-3">
-                          <strong className="line-clamp-2 text-sm font-semibold text-stone-900 leading-snug">{evaluation.title}</strong>
+                          <strong className="line-clamp-2 text-sm font-semibold text-stone-900 leading-snug font-DMSans">
+                            {evaluation.title}
+                          </strong>
                           {active && (
                             <span className="shrink-0 rounded-md bg-amber-500 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-white">
                               Selecionada

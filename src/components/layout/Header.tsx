@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { createPortal } from 'react-dom'
 import {
   AlertCircle,
   AlertTriangle,
@@ -483,11 +484,34 @@ export function Header({
   const [profileOpen, setProfileOpen] = useState(false)
   const [notifOpen, setNotifOpen] = useState(false)
   const [avatarHover, setAvatarHover] = useState(false)
+  const [avatarPreviewStyle, setAvatarPreviewStyle] = useState<CSSProperties | null>(null)
   const [pendingId, setPendingId] = useState<string | null>(null)
   const [markingAll, setMarkingAll] = useState(false)
 
   const profileRef = useRef<HTMLDivElement>(null)
   const notifRef = useRef<HTMLDivElement>(null)
+
+  function positionAvatarPreview(target: HTMLElement) {
+    const rect = target.getBoundingClientRect()
+    const previewWidth = Math.min(360, window.innerWidth - 48)
+    const previewHeight = 220
+    const viewportPadding = 24
+    const left = Math.min(
+      Math.max(viewportPadding, rect.right - previewWidth),
+      Math.max(viewportPadding, window.innerWidth - previewWidth - viewportPadding),
+    )
+    const belowTop = rect.bottom + 10
+    const top = belowTop + previewHeight > window.innerHeight
+      ? Math.max(16, rect.top - previewHeight - 10)
+      : belowTop
+
+    setAvatarPreviewStyle({ left, top, width: previewWidth })
+  }
+
+  function hideAvatarPreview() {
+    setAvatarHover(false)
+    setAvatarPreviewStyle(null)
+  }
 
   useEffect(() => {
     if (!profileOpen && !notifOpen) return
@@ -511,7 +535,7 @@ export function Header({
     const next = !notifOpen
     setNotifOpen(next)
     setProfileOpen(false)
-    setAvatarHover(false)
+    hideAvatarPreview()
     if (next) onOpenNotifications?.()
   }
 
@@ -793,9 +817,10 @@ export function Header({
           <div ref={profileRef} className="relative">
             <motion.button
               type="button"
-              onClick={() => { setProfileOpen(c => !c); setNotifOpen(false) }}
+              onClick={() => { setProfileOpen(c => !c); setNotifOpen(false); hideAvatarPreview() }}
               onMouseEnter={e => {
                 setAvatarHover(true)
+                positionAvatarPreview(e.currentTarget)
                 if (!profileOpen) {
                   const el = e.currentTarget as HTMLElement
                   el.style.background = '#f0f7ff'
@@ -804,7 +829,7 @@ export function Header({
                 }
               }}
               onMouseLeave={e => {
-                setAvatarHover(false)
+                hideAvatarPreview()
                 if (!profileOpen) {
                   const el = e.currentTarget as HTMLElement
                   el.style.background = '#ffffff'
@@ -812,8 +837,8 @@ export function Header({
                   el.style.boxShadow = '0 1px 3px rgba(0,0,0,0.06)'
                 }
               }}
-              onFocus={() => setAvatarHover(true)}
-              onBlur={() => setAvatarHover(false)}
+              onFocus={e => { setAvatarHover(true); positionAvatarPreview(e.currentTarget) }}
+              onBlur={hideAvatarPreview}
               whileTap={{ scale: 0.97 }}
               className="flex h-9 items-center gap-2.5 rounded-xl pl-1 pr-2.5 text-left transition-all duration-150"
               style={{
@@ -868,17 +893,22 @@ export function Header({
             </motion.button>
 
             {/* Avatar hover preview */}
-            {!profileOpen && (
-              <AvatarHoverPreview
-                name={userName}
-                email={userEmail}
-                avatarSrc={avatarUrl}
-                bannerSrc={bannerUrl}
-                initials={initials}
-                visible={avatarHover}
-                className="right-0 top-[calc(100%+10px)]"
-              />
-            )}
+            {!profileOpen && avatarHover && avatarPreviewStyle && typeof document !== 'undefined'
+              ? createPortal(
+                <AvatarHoverPreview
+                  name={userName}
+                  email={userEmail}
+                  avatarSrc={avatarUrl}
+                  bannerSrc={bannerUrl}
+                  initials={initials}
+                  position="fixed"
+                  style={avatarPreviewStyle}
+                  visible
+                  className=""
+                />,
+                document.body,
+              )
+              : null}
 
             {/* ── Profile dropdown ── */}
             <AnimatePresence>

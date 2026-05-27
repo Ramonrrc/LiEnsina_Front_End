@@ -35,14 +35,16 @@ import {
   loadMealsScreen,
   loadMePermissions,
   loadNotificationsScreen,
-  loadPeopleScreen,
   loadRoomReservationsScreen,
   loadSchoolsScreen,
   loadSession,
   loadSettingsScreen,
+  loadStudentsScreen,
   loadStudentGradesEvaluationsScreen,
+  loadTeachersScreen,
   loadTeacherSubjectEvaluationsScreen,
   listLessonRecords,
+  listClassesPage,
   listSchoolsPage,
   listQuestionsPage,
   listTeacherSubjectCardsPage,
@@ -89,8 +91,11 @@ import { getAnswerCardEvaluationId, getBatchCorrections, getCreatedAnswerCards, 
 import type {
   AppSection,
   CalendarScreenPayload,
+  ClassesPageQuery,
   EvaluationAnswerCard,
   DashboardAlertsPagePayload,
+  DashboardFiltersQuery,
+  DashboardScreenPayload,
   EvaluationCorrection,
   EvaluationOmrBatchResponse,
   EvaluationsScreenPayload,
@@ -114,7 +119,9 @@ import type {
   UserAccount,
 } from './types'
 
-const ACCESS_TOKEN_REFRESH_INTERVAL_MS = 25 * 60 * 1000
+const ACCESS_TOKEN_REFRESH_FALLBACK_MS = 12 * 60 * 1000
+const ACCESS_TOKEN_REFRESH_SKEW_MS = 60 * 1000
+const ACCESS_TOKEN_REFRESH_MIN_DELAY_MS = 5 * 1000
 
 let refreshAccessTokenRequest: ReturnType<typeof refreshAccessToken> | null = null
 
@@ -128,7 +135,8 @@ function refreshAccessTokenOnce() {
 const DashboardView = lazy(() => import('./views/DashboardView'))
 const SchoolsView = lazy(() => import('./views/SchoolsView'))
 const ClassesView = lazy(() => import('./views/ClassesView'))
-const PeopleView = lazy(() => import('./views/PeopleView'))
+const TeachersView = lazy(() => import('./views/TeachersView'))
+const StudentsView = lazy(() => import('./views/StudentsView'))
 const RolePortalView = lazy(() => import('./views/RolePortalView'))
 const EvaluationsView = lazy(() => import('./views/EvaluationsView'))
 const EvaluationCorrectionsView = lazy(() => import('./views/EvaluationCorrectionsView'))
@@ -146,10 +154,10 @@ type AppToast = { tone: 'success' | 'error'; message: string }
 type RoleProfile = RoleCode
 type NavigationItem = (typeof navItems)[number]
 
-const superAdminSections: AppSection[] = ['dashboard', 'schools', 'people', 'evaluations', 'evaluation-corrections', 'meals', 'access', 'notifications', 'settings']
-const adminSections: AppSection[] = ['dashboard', 'schools', 'people', 'evaluations', 'evaluation-corrections', 'meals', 'access', 'notifications', 'settings']
-const schoolAdminSections: AppSection[] = ['dashboard', 'schools', 'people', 'evaluations', 'evaluation-corrections', 'meals', 'notifications', 'settings']
-const directorSections: AppSection[] = ['dashboard', 'schools', 'people', 'evaluations', 'evaluation-corrections', 'meals', 'notifications', 'settings']
+const superAdminSections: AppSection[] = ['dashboard', 'schools', 'teachers', 'students', 'evaluations', 'evaluation-corrections', 'meals', 'access', 'notifications', 'settings']
+const adminSections: AppSection[] = ['dashboard', 'schools', 'teachers', 'students', 'evaluations', 'evaluation-corrections', 'meals', 'notifications', 'settings']
+const schoolAdminSections: AppSection[] = ['dashboard', 'schools', 'teachers', 'students', 'evaluations', 'evaluation-corrections', 'meals', 'notifications', 'settings']
+const directorSections: AppSection[] = ['dashboard', 'schools', 'teachers', 'students', 'evaluations', 'evaluation-corrections', 'meals', 'notifications', 'settings']
 const coordinatorSections: AppSection[] = ['pedagogy', 'evaluations', 'evaluation-corrections', 'calendar', 'notifications', 'settings']
 const teacherSections: AppSection[] = ['teacher-subjects', 'room-reservations', 'evaluations', 'evaluation-corrections', 'calendar', 'notifications', 'settings']
 const studentSections: AppSection[] = ['student-performance', 'student-grades', 'calendar', 'notifications', 'settings']
@@ -157,6 +165,8 @@ const guardianSections: AppSection[] = ['child-performance', 'child-attendance',
 const nutritionistSections: AppSection[] = ['food-requests', 'meals', 'notifications', 'settings']
 const hiddenSidebarSections: AppSection[] = ['notifications', 'child-attendance']
 const lessonRecordsPayloadSections: AppSection[] = [
+  'teachers',
+  'students',
   'pedagogy',
   'teacher-subjects',
   'lesson-records',
@@ -189,7 +199,8 @@ const sectionLabels: Partial<Record<RoleProfile, Partial<Record<AppSection, Pick
   DIRETOR: {
     dashboard: { label: 'Dashboard da Escola', description: 'Indicadores da unidade' },
     schools: { label: 'Escolas', description: 'Minha unidade escolar' },
-    people: { label: 'Professores e Alunos', description: 'Equipe e estudantes' },
+    teachers: { label: 'Professores', description: 'Equipe docente' },
+    students: { label: 'Alunos', description: 'Estudantes da escola' },
     evaluations: { label: 'Provas e Simulados', description: 'Acompanhamento pedagogico' },
     'evaluation-corrections': { label: 'Correcao de Provas', description: 'Revisao de cartoes resposta' },
     meals: { label: 'Gestao Alimentar', description: 'Solicitacoes, cardapios e estoque da unidade' },
@@ -353,7 +364,11 @@ function getSectionsForProfile(profile: RoleProfile | null) {
 
 export function getExplicitAllowedSections(profile: RoleProfile | null, permissions: MePermissionsPayload | null) {
   if (!profile || !permissions || permissions.roleCode !== profile) return []
-  const backendSections = new Set(permissions.allowedSections)
+  const backendSections = new Set<string>(permissions.allowedSections)
+  if (backendSections.has('people')) {
+    backendSections.add('teachers')
+    backendSections.add('students')
+  }
   return getSectionsForProfile(profile).filter((section) => backendSections.has(section))
 }
 
@@ -584,6 +599,14 @@ function mergeById<T extends { id: string }>(...groups: T[][]) {
   return Array.from(byId.values())
 }
 
+function mergeDashboardScope(payload: DashboardScreenPayload, previous?: DashboardScreenPayload): DashboardScreenPayload {
+  return {
+    ...payload,
+    schools: mergeById(previous?.schools ?? [], payload.schools ?? []),
+    classes: mergeById(previous?.classes ?? [], payload.classes ?? []),
+  }
+}
+
 function normalizeMealsPayload(payload: MealsScreenPayload | MealManagement[] | null | undefined): MealsScreenPayload {
   if (!payload) {
     return { schools: [], mealManagements: [], foodRequests: [], mealRequestHistory: [] }
@@ -670,7 +693,19 @@ async function loadSectionPayload(section: AppSection, token: string, profile: R
 
   switch (section) {
     case 'dashboard':
-      return loadDashboardScreen(token)
+      return Promise.all([
+        loadDashboardScreen(token, { period: 'month' }),
+        loadAcademicScopeScreen(token, {
+          ...scopedOptions,
+          includeTeachers: false,
+          includeStudents: false,
+          classesView: 'summary',
+        }),
+      ]).then(([dashboardPayload, scopePayload]) => ({
+        ...dashboardPayload,
+        schools: mergeById(scopePayload.schools, dashboardPayload.schools ?? []),
+        classes: mergeById(scopePayload.classes, dashboardPayload.classes ?? []),
+      }))
     case 'notifications':
       return loadNotificationsScreen(token)
     case 'pedagogy':
@@ -680,8 +715,10 @@ async function loadSectionPayload(section: AppSection, token: string, profile: R
       }))
     case 'schools':
       return loadSchoolsScreen(token, scopedOptions)
-    case 'people':
-      return loadPeopleScreen(token, scopedOptions)
+    case 'teachers':
+      return loadTeachersScreen(token, scopedOptions)
+    case 'students':
+      return loadStudentsScreen(token, scopedOptions)
     case 'classes':
       return loadClassesScreen(token, scopedOptions)
     case 'lesson-records':
@@ -763,6 +800,7 @@ async function loadSectionPayload(section: AppSection, token: string, profile: R
 
 export default function App() {
   const [token, setToken] = useState<string | null>(null)
+  const [tokenExpiresAt, setTokenExpiresAt] = useState<string | null>(null)
   const [route, setRoute] = useState(getCurrentPath)
   const [session, setSession] = useState<SessionPayload | null>(null)
   const [mePermissions, setMePermissions] = useState<MePermissionsPayload | null>(null)
@@ -797,6 +835,47 @@ export default function App() {
     if (!token) return Promise.reject(new Error('Sessao expirada.'))
     return listQuestionsPage(token, params)
   }, [token])
+  const loadDashboardWithFilters = useCallback(async (filters: Partial<DashboardFiltersQuery>) => {
+    if (!token) throw new Error('Sessao expirada.')
+
+    setScreenLoading((current) => ({ ...current, dashboard: true }))
+    setScreenErrors((current) => ({ ...current, dashboard: undefined }))
+
+    try {
+      const payload = await loadDashboardScreen(token, filters)
+      setScreenData((current) => ({ ...current, dashboard: mergeDashboardScope(payload, current.dashboard) }))
+      return payload
+    } catch (error) {
+      if (error instanceof ApiError && error.statusCode === 401) {
+        const refreshedToken = await renewAccessToken()
+        if (refreshedToken) {
+          const payload = await loadDashboardScreen(refreshedToken, filters)
+          setScreenData((current) => ({ ...current, dashboard: mergeDashboardScope(payload, current.dashboard) }))
+          return payload
+        }
+      }
+
+      const message = error instanceof Error ? error.message : 'Nao foi possivel atualizar o dashboard.'
+      setScreenErrors((current) => ({ ...current, dashboard: message }))
+      throw error
+    } finally {
+      setScreenLoading((current) => ({ ...current, dashboard: false }))
+    }
+  }, [token])
+  const applyDashboardFilters = useCallback(async (filters: Partial<DashboardFiltersQuery>) => {
+    await loadDashboardWithFilters(filters)
+  }, [loadDashboardWithFilters])
+  const loadDashboardAlertsPage = useCallback(async ({ page, limit, filters }: {
+    page: number
+    limit: number
+    filters: Partial<DashboardFiltersQuery>
+  }) => {
+    if (!token) throw new Error('Sessao expirada.')
+    const payload = await loadDashboardScreen(token, { ...filters, alertPage: page, alertLimit: limit })
+    return payload.dashboard.alertsPagination
+      ? { alerts: payload.dashboard.alerts, pagination: payload.dashboard.alertsPagination }
+      : buildDashboardAlertsPagePayload(payload.dashboard.alerts, page, limit)
+  }, [token])
 
   useEffect(() => {
     if (window.location.hash.startsWith('#/')) {
@@ -820,9 +899,11 @@ export default function App() {
         const result = await refreshAccessTokenOnce()
         if (cancelled) return
         setToken(result.token)
+        setTokenExpiresAt(result.expiresAt)
       } catch {
         if (cancelled) return
         setToken(null)
+        setTokenExpiresAt(null)
         setSession(null)
         setMePermissions(null)
         setScreenData({})
@@ -857,25 +938,38 @@ export default function App() {
   useEffect(() => {
     if (!token) return
 
+    const expiresAtMs = tokenExpiresAt ? new Date(tokenExpiresAt).getTime() : Number.NaN
+    const targetDelay = Number.isFinite(expiresAtMs)
+      ? expiresAtMs - Date.now() - ACCESS_TOKEN_REFRESH_SKEW_MS
+      : ACCESS_TOKEN_REFRESH_FALLBACK_MS
+    const refreshDelay = Math.max(
+      ACCESS_TOKEN_REFRESH_MIN_DELAY_MS,
+      Math.min(ACCESS_TOKEN_REFRESH_FALLBACK_MS, targetDelay),
+    )
+
     const refreshTimer = window.setTimeout(() => {
       void renewAccessToken()
-    }, ACCESS_TOKEN_REFRESH_INTERVAL_MS)
+    }, refreshDelay)
 
     return () => window.clearTimeout(refreshTimer)
-  }, [token])
+  }, [token, tokenExpiresAt])
 
   useEffect(() => {
     if (!token || !session) return
     if (!allowedSections.includes(activeSection)) return
     if (!getSectionFromPath(route) || isLoginPath(route)) return
-    if (routeSection && requestedSection !== activeSection) {
+    if (routeSection && requestedSectionAlias !== activeSection) {
       navigateToSection(fallbackSection, 'replace')
+      return
+    }
+    if (routeSection && requestedSection !== activeSection) {
+      navigateToSection(activeSection, 'replace')
       return
     }
     if (screenData[activeSection] || screenLoading[activeSection] || screenErrors[activeSection]) return
 
     void loadScreen(activeSection, token)
-  }, [activeSection, allowedSections, fallbackSection, requestedSection, route, routeSection, screenData, screenErrors, screenLoading, session, token])
+  }, [activeSection, allowedSections, fallbackSection, requestedSection, requestedSectionAlias, route, routeSection, screenData, screenErrors, screenLoading, session, token])
 
   function navigateToPath(path: string, mode: 'push' | 'replace' = 'push') {
     if (mode === 'replace') {
@@ -892,6 +986,7 @@ export default function App() {
 
   function clearAuthState() {
     setToken(null)
+    setTokenExpiresAt(null)
     setSession(null)
     setMePermissions(null)
     setScreenData({})
@@ -903,6 +998,7 @@ export default function App() {
     try {
       const result = await refreshAccessTokenOnce()
       setToken(result.token)
+      setTokenExpiresAt(result.expiresAt)
       return result.token
     } catch {
       clearAuthState()
@@ -1329,6 +1425,7 @@ export default function App() {
       setScreenData({})
       setScreenErrors({})
       setToken(result.token)
+      setTokenExpiresAt(result.expiresAt)
       navigateToPath('/', 'replace')
     } catch (error) {
       setAuthError(error instanceof Error ? error.message : 'Nao foi possivel entrar.')
@@ -1348,7 +1445,7 @@ export default function App() {
     window.setTimeout(() => setToast(null), 4200)
   }
 
-  async function runAction(action: () => Promise<void>, successMessage: string) {
+  async function runAction(action: (currentToken: string) => Promise<void>, successMessage: string) {
     if (!token) {
       showToast({ tone: 'error', message: 'Sessao expirada. Entre novamente para continuar.' })
       return
@@ -1356,9 +1453,22 @@ export default function App() {
 
     setAppError(null)
     try {
-      await action()
+      await action(token)
       showToast({ tone: 'success', message: successMessage })
     } catch (error) {
+      if (error instanceof ApiError && error.statusCode === 401) {
+        const refreshedToken = await renewAccessToken()
+        if (refreshedToken) {
+          try {
+            await action(refreshedToken)
+            showToast({ tone: 'success', message: successMessage })
+            return
+          } catch (retryError) {
+            showToast({ tone: 'error', message: retryError instanceof Error ? retryError.message : 'Nao foi possivel salvar a alteracao.' })
+            throw retryError
+          }
+        }
+      }
       showToast({ tone: 'error', message: error instanceof Error ? error.message : 'Nao foi possivel salvar a alteracao.' })
       throw error
     }
@@ -1440,6 +1550,9 @@ export default function App() {
       case 'dashboard': {
         const data = screenData.dashboard
         if (!data) return renderMissingScreen('dashboard')
+        const cachedSchoolScope = screenData.schools ? getScopedSchoolsData(screenData.schools) : null
+        const dashboardSchools = mergeById(cachedSchoolScope?.schools ?? [], data.schools ?? [])
+        const dashboardClasses = mergeById(cachedSchoolScope?.classes ?? [], data.classes ?? [])
 
         return (
           <DashboardView
@@ -1448,14 +1561,11 @@ export default function App() {
             evaluations={data.evaluations}
             profile={roleProfile}
             currentUser={session.currentUser}
-            schools={screenData.schools ? getScopedSchoolsData(screenData.schools).schools : []}
-            classes={screenData.schools ? getScopedSchoolsData(screenData.schools).classes : []}
-            onLoadAlertsPage={async ({ page, limit }) => {
-              const payload = await loadDashboardScreen(token, { page, limit })
-              return payload.dashboard.alertsPagination
-                ? { alerts: payload.dashboard.alerts, pagination: payload.dashboard.alertsPagination }
-                : buildDashboardAlertsPagePayload(payload.dashboard.alerts, page, limit)
-            }}
+            schools={dashboardSchools}
+            classes={dashboardClasses}
+            loading={Boolean(screenLoading.dashboard)}
+            onApplyFilters={applyDashboardFilters}
+            onLoadAlertsPage={loadDashboardAlertsPage}
           />
         )
       }
@@ -1472,6 +1582,7 @@ export default function App() {
             schools={scopedData.schools}
             schoolsPagination={scopedData.schoolsPagination}
             classes={scopedData.classes}
+            classesPagination={scopedData.classesPagination}
             students={scopedData.students}
             teachers={scopedData.teachers}
             guardians={scopedData.guardians}
@@ -1479,25 +1590,26 @@ export default function App() {
             assetVersion={profileAssetVersion}
             readOnly={!isAdminProfile(roleProfile)}
             onLoadSchoolsPage={(params: SchoolsPageQuery) => listSchoolsPage(token, params, { networkScope: isNetworkAdminProfile(roleProfile) })}
+            onLoadClassesPage={(params: ClassesPageQuery) => listClassesPage(token, params, { networkScope: isNetworkAdminProfile(roleProfile) })}
             onCreate={(draft) => isAdminProfile(roleProfile) ? runAction(async () => {
               const created = await createSchool(token, draft)
               updateScreenData('schools', (current) => ({ ...current, schools: [created, ...current.schools] }))
-              invalidateScreens(['dashboard', 'access', 'calendar', 'pedagogy'])
+              invalidateScreens(['dashboard', 'teachers', 'students', 'access', 'calendar', 'pedagogy'])
             }, 'Escola criada com sucesso.') : blockUnauthorizedAction()}
             onUpdate={(id, draft) => isAdminProfile(roleProfile) ? runAction(async () => {
               const updated = await updateSchool(token, id, draft)
               updateScreenData('schools', (current) => ({ ...current, schools: replaceById(current.schools, updated) }))
-              invalidateScreens(['dashboard', 'access', 'calendar', 'pedagogy'])
+              invalidateScreens(['dashboard', 'teachers', 'students', 'access', 'calendar', 'pedagogy'])
             }, 'Escola atualizada.') : blockUnauthorizedAction()}
             onCreateClass={(draft) => isAdminProfile(roleProfile) ? runAction(async () => {
               const created = await createClassRoom(token, draft)
               updateScreenData('schools', (current) => ({ ...current, classes: [created, ...current.classes] }))
-              invalidateScreens(['dashboard', 'evaluations', 'calendar', 'pedagogy'])
+              invalidateScreens(['dashboard', 'teachers', 'students', 'evaluations', 'calendar', 'pedagogy'])
             }, 'Turma criada com sucesso.') : blockUnauthorizedAction()}
             onUpdateClass={(id, draft) => isAdminProfile(roleProfile) ? runAction(async () => {
               const updated = await updateClassRoom(token, id, draft)
               updateScreenData('schools', (current) => ({ ...current, classes: replaceById(current.classes, updated) }))
-              invalidateScreens(['dashboard', 'evaluations', 'calendar', 'pedagogy'])
+              invalidateScreens(['dashboard', 'teachers', 'students', 'evaluations', 'calendar', 'pedagogy'])
             }, 'Turma atualizada.') : blockUnauthorizedAction()}
             onCreateTeacher={(draft) => isAdminProfile(roleProfile) ? runAction(async () => {
               const created = await createTeacher(token, draft)
@@ -1514,12 +1626,12 @@ export default function App() {
                     : classRoom)
                   : current.classes,
               }))
-              invalidateScreens(['access', 'calendar', 'pedagogy'])
+              invalidateScreens(['teachers', 'access', 'calendar', 'pedagogy'])
             }, 'Professor criado e vinculado.') : blockUnauthorizedAction()}
             onUpdateTeacher={(id, draft) => isAdminProfile(roleProfile) ? runAction(async () => {
               const updated = await updateTeacher(token, id, draft)
               updateScreenData('schools', (current) => ({ ...current, teachers: replaceById(current.teachers, updated) }))
-              invalidateScreens(['access', 'calendar', 'pedagogy'])
+              invalidateScreens(['teachers', 'access', 'calendar', 'pedagogy'])
             }, 'Professor atualizado.') : blockUnauthorizedAction()}
             onCreateStudent={(draft) => isAdminProfile(roleProfile) ? runAction(async () => {
               const created = await createStudent(token, draft)
@@ -1530,12 +1642,12 @@ export default function App() {
                   ? { ...guardian, studentIds: Array.from(new Set([...guardian.studentIds, created.id])) }
                   : guardian),
               }))
-              invalidateScreens(['dashboard', 'access', 'pedagogy'])
+              invalidateScreens(['dashboard', 'students', 'access', 'pedagogy'])
             }, 'Aluno criado e vinculado.') : blockUnauthorizedAction()}
             onUpdateStudent={(id, draft) => isAdminProfile(roleProfile) ? runAction(async () => {
               const updated = await updateStudent(token, id, draft)
               updateScreenData('schools', (current) => ({ ...current, students: replaceById(current.students, updated) }))
-              invalidateScreens(['dashboard', 'access', 'pedagogy'])
+              invalidateScreens(['dashboard', 'students', 'access', 'pedagogy'])
             }, 'Aluno atualizado.') : blockUnauthorizedAction()}
             onCreateGuardian={(draft) => isAdminProfile(roleProfile) ? runAction(async () => {
               const created = await createGuardian(token, draft)
@@ -1546,12 +1658,12 @@ export default function App() {
                   ? { ...student, guardianIds: Array.from(new Set([...student.guardianIds, created.id])) }
                   : student),
               }))
-              invalidateScreens(['access'])
+              invalidateScreens(['students', 'access'])
             }, 'Responsavel criado e vinculado.') : blockUnauthorizedAction()}
             onUpdateGuardian={(id, draft) => isAdminProfile(roleProfile) ? runAction(async () => {
               const updated = await updateGuardian(token, id, draft)
               updateScreenData('schools', (current) => ({ ...current, guardians: replaceById(current.guardians, updated) }))
-              invalidateScreens(['access'])
+              invalidateScreens(['students', 'access'])
             }, 'Responsavel atualizado.') : blockUnauthorizedAction()}
           />
         )
@@ -1572,29 +1684,44 @@ export default function App() {
             onCreate={(draft) => isAdminProfile(roleProfile) ? runAction(async () => {
               const created = await createClassRoom(token, draft)
               updateScreenData('schools', (current) => ({ ...current, classes: [created, ...current.classes] }))
-              invalidateScreens(['dashboard', 'evaluations', 'calendar', 'pedagogy'])
+              invalidateScreens(['dashboard', 'teachers', 'students', 'evaluations', 'calendar', 'pedagogy'])
             }, 'Turma criada com sucesso.') : blockUnauthorizedAction()}
             onUpdate={(id, draft) => isAdminProfile(roleProfile) ? runAction(async () => {
               const updated = await updateClassRoom(token, id, draft)
               updateScreenData('schools', (current) => ({ ...current, classes: replaceById(current.classes, updated) }))
-              invalidateScreens(['dashboard', 'evaluations', 'calendar', 'pedagogy'])
+              invalidateScreens(['dashboard', 'teachers', 'students', 'evaluations', 'calendar', 'pedagogy'])
             }, 'Turma atualizada.') : blockUnauthorizedAction()}
           />
         )
       }
 
-      case 'people': {
-        const data = screenData.people
-        if (!data) return renderMissingScreen('people')
+      case 'teachers': {
+        const data = screenData.teachers
+        if (!data) return renderMissingScreen('teachers')
         const scopedData = getScopedSchoolsData(data)
 
         return (
-          <PeopleView
+          <TeachersView
             schoolsData={scopedData}
             currentUser={session.currentUser}
             currentRole={userRole}
             assetVersion={profileAssetVersion}
             onLoadTeachersPage={(params) => listTeachersPage(token, params, { networkScope: isNetworkAdminProfile(roleProfile) })}
+          />
+        )
+      }
+
+      case 'students': {
+        const data = screenData.students
+        if (!data) return renderMissingScreen('students')
+        const scopedData = getScopedSchoolsData(data)
+
+        return (
+          <StudentsView
+            schoolsData={scopedData}
+            currentUser={session.currentUser}
+            currentRole={userRole}
+            assetVersion={profileAssetVersion}
             onLoadStudentsPage={(params) => listStudentsPage(token, params, { networkScope: isNetworkAdminProfile(roleProfile) })}
           />
         )
@@ -1736,6 +1863,10 @@ export default function App() {
               }))
               updateScreenData('evaluation-corrections', (current) => ({
                 ...current,
+                evaluations: [
+                  createdWithBlueprint,
+                  ...current.evaluations.filter((evaluation) => evaluation.id !== createdWithBlueprint.id),
+                ],
                 answerCards: answerCards.length ? mergeById(answerCards, current.answerCards ?? []) : current.answerCards,
               }))
               invalidateScreens(['dashboard', 'calendar', 'pedagogy'])
@@ -1749,6 +1880,8 @@ export default function App() {
               }))
               updateScreenData('evaluation-corrections', (current) => ({
                 ...current,
+                evaluations: removeById(current.evaluations, id),
+                evaluationCorrections: current.evaluationCorrections?.filter((correction) => correction.evaluationId !== id),
                 answerCards: current.answerCards?.filter((card) => getAnswerCardEvaluationId(card) !== id),
               }))
               invalidateScreens(['dashboard', 'calendar', 'pedagogy'])
@@ -2125,22 +2258,26 @@ export default function App() {
             profile={roleProfile}
             schools={data.schools ?? []}
             assetVersion={profileAssetVersion}
-            onSave={(draft, avatarFile, bannerFile, visualAction) => runAction(async () => {
-              let updated = { ...data.currentUser, ...(await updateProfile(token, draft)) }
+            onSave={(draft, avatarFile, bannerFile, visualAction) => runAction(async (currentToken) => {
+              let updated = { ...data.currentUser, ...(await updateProfile(currentToken, draft)) }
               const nextAssetVersion = { avatar: 0, banner: 0 }
 
               if (visualAction?.removeAvatar) {
-                updated = { ...updated, ...(await removeProfileAvatar(token)) }
+                updated = { ...updated, ...(await removeProfileAvatar(currentToken)) }
                 nextAssetVersion.avatar = Date.now()
               } else if (avatarFile) {
-                updated = { ...updated, ...(await uploadProfileAvatar(token, avatarFile)) }
+                const uploadedAvatar = await uploadProfileAvatar(currentToken, avatarFile)
+                if (!uploadedAvatar.avatarUrl) throw new Error('A API nao retornou a URL da foto enviada.')
+                updated = { ...updated, ...uploadedAvatar }
                 nextAssetVersion.avatar = Date.now()
               }
               if (visualAction?.removeBanner) {
-                updated = { ...updated, ...(await removeProfileBanner(token)) }
+                updated = { ...updated, ...(await removeProfileBanner(currentToken)) }
                 nextAssetVersion.banner = Date.now()
               } else if (bannerFile) {
-                updated = { ...updated, ...(await uploadProfileBanner(token, bannerFile)) }
+                const uploadedBanner = await uploadProfileBanner(currentToken, bannerFile)
+                if (!uploadedBanner.bannerUrl) throw new Error('A API nao retornou a URL da capa enviada.')
+                updated = { ...updated, ...uploadedBanner }
                 nextAssetVersion.banner = Date.now()
               }
 
@@ -2876,8 +3013,8 @@ export function ScreenLoadingState({ title, description }: { title: string; desc
         {/* Text */}
         <div className="flex flex-col items-center gap-2 text-center">
           <h2
-            className="m-0 text-xl font-black tracking-tight text-slate-900"
-            style={{ fontFamily: "'Sora', system-ui, sans-serif", letterSpacing: "-0.025em" }}
+            className="font-DMSans m-0 text-xl font-black tracking-tight text-slate-900"
+            style={{ letterSpacing: "-0.025em" }}
           >
             {title}
           </h2>
