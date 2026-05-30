@@ -891,7 +891,7 @@ function CompositionPanel({ draft, selectedQuestions, selectedSkillCodes, select
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <button type="button" onClick={onOpenRegisteredEvaluations} className="inline-flex items-center gap-2 rounded-xl font-DMSans border-2 border-indigo-300 bg-white px-3 py-2 text-xs font-bold text-indigo-700 transition hover:bg-indigo-50">
+              <button type="button" onClick={onOpenRegisteredEvaluations} className="inline-flex items-center gap-2 rounded-lg font-DMSans border border-indigo-300 bg-white px-3 py-2 hover:bg-indigo-100/80 hover:-translate-y-0.5 text-xs font-bold text-indigo-700 transition hover:bg-indigo-50">
                 <ClipboardList className="h-3.5 w-3.5" />Provas cadastradas
                 <span className="rounded-full bg-indigo-500 px-2 py-0.5 text-[10px] font-black text-white">{registeredEvaluationsCount}</span>
               </button>

@@ -54,6 +54,8 @@ import type {
   SchoolsScreenPayload,
   SessionPayload,
   SettingsScreenPayload,
+  StudentSubjectCardsPagePayload,
+  StudentSubjectsPageQuery,
   Student,
   StudentsPageQuery,
   StudentsPagePayload,
@@ -136,6 +138,8 @@ const JSON_GET_CACHE_TTL_MS = 20_000
 
 type ScopedResourceOptions = {
   networkScope?: boolean
+  schoolId?: string | null
+  classId?: string | null
 }
 
 type RequestOptions = {
@@ -190,6 +194,15 @@ export function createIdempotencyKey(prefix = 'MeuEnsino') {
 
 function scopedResourcePath(resource: string, options: ScopedResourceOptions = {}) {
   return options.networkScope ? `/${resource}` : `/me/${resource}`
+}
+
+function scopedFilterParams(options: ScopedResourceOptions = {}) {
+  const schoolId = sanitizeApiSearchParam(options.schoolId)
+  const classId = sanitizeApiSearchParam(options.classId)
+  return {
+    schoolId: schoolId && schoolId !== 'all' ? schoolId : undefined,
+    classId: classId && classId !== 'all' ? classId : undefined,
+  }
 }
 
 function estimateBase64Bytes(value: string) {
@@ -624,20 +637,22 @@ type AcademicScopeLoadOptions = {
   studentsView?: string
   classesView?: string
   networkScope?: boolean
+  schoolId?: string | null
 }
 
 export async function loadAcademicScopeScreen(token: string, options: AcademicScopeLoadOptions = {}) {
   const includeTeachers = options.includeTeachers ?? true
   const includeStudents = options.includeStudents ?? true
+  const scopeParams = scopedFilterParams(options)
   const [schools, teachers, students, classes] = await Promise.all([
-    listAllResource<School, 'schools'>(token, scopedResourcePath('schools', options), 'schools', { view: options.schoolsView }),
+    listAllResource<School, 'schools'>(token, scopedResourcePath('schools', options), 'schools', { view: options.schoolsView, schoolId: scopeParams.schoolId }),
     includeTeachers
-      ? listResource<Teacher, 'teachers'>(token, scopedResourcePath('teachers', options), 'teachers')
+      ? listResource<Teacher, 'teachers'>(token, scopedResourcePath('teachers', options), 'teachers', { schoolId: scopeParams.schoolId })
       : Promise.resolve([]),
     includeStudents
-      ? listResource<Student, 'students'>(token, scopedResourcePath('students', options), 'students', { view: options.studentsView })
+      ? listResource<Student, 'students'>(token, scopedResourcePath('students', options), 'students', { view: options.studentsView, schoolId: scopeParams.schoolId })
       : Promise.resolve([]),
-    listAllResource<ClassRoom, 'classes'>(token, scopedResourcePath('classes', options), 'classes', { view: options.classesView }),
+    listAllResource<ClassRoom, 'classes'>(token, scopedResourcePath('classes', options), 'classes', { view: options.classesView, schoolId: scopeParams.schoolId }),
   ])
 
   return { schools, teachers, guardians: [], students, classes }
@@ -661,6 +676,8 @@ type EvaluationScreenLoadOptions = {
   includeAssessmentDescriptors?: boolean
   includeQuestionImportPlans?: boolean
   networkScope?: boolean
+  schoolId?: string | null
+  classId?: string | null
 }
 
 const defaultEvaluationScreenLoadOptions: Required<EvaluationScreenLoadOptions> = {
@@ -671,10 +688,13 @@ const defaultEvaluationScreenLoadOptions: Required<EvaluationScreenLoadOptions> 
   includeAssessmentDescriptors: true,
   includeQuestionImportPlans: true,
   networkScope: false,
+  schoolId: null,
+  classId: null,
 }
 
 export async function loadEvaluationsScreen(token: string, options: EvaluationScreenLoadOptions = {}) {
   const loadOptions = { ...defaultEvaluationScreenLoadOptions, ...options }
+  const scopeParams = scopedFilterParams(loadOptions)
   const [
     exams,
     classes,
@@ -684,15 +704,15 @@ export async function loadEvaluationsScreen(token: string, options: EvaluationSc
     assessmentDescriptors,
     questionImportPlans,
   ] = await Promise.all([
-    listResource<Evaluation, 'exams'>(token, scopedResourcePath('exams', loadOptions), 'exams'),
+    listResource<Evaluation, 'exams'>(token, scopedResourcePath('exams', loadOptions), 'exams', scopeParams),
     loadOptions.includeClasses
-      ? listResource<ClassRoom, 'classes'>(token, scopedResourcePath('classes', loadOptions), 'classes')
+      ? listResource<ClassRoom, 'classes'>(token, scopedResourcePath('classes', loadOptions), 'classes', { schoolId: scopeParams.schoolId })
       : Promise.resolve([]),
     loadOptions.includeCorrections
-      ? listResource<EvaluationCorrection, 'examCorrections'>(token, scopedResourcePath('exam-corrections', loadOptions), 'examCorrections')
+      ? listResource<EvaluationCorrection, 'examCorrections'>(token, scopedResourcePath('exam-corrections', loadOptions), 'examCorrections', scopeParams)
       : Promise.resolve([]),
     loadOptions.includeAnswerCards
-      ? listResource<EvaluationAnswerCard, 'answerCards'>(token, scopedResourcePath('answer-cards', loadOptions), 'answerCards')
+      ? listResource<EvaluationAnswerCard, 'answerCards'>(token, scopedResourcePath('answer-cards', loadOptions), 'answerCards', scopeParams)
       : Promise.resolve([]),
     loadOptions.includeCurriculumSkills
       ? listResource<CurriculumSkill, 'curriculumSkills'>(token, '/curriculum-skills', 'curriculumSkills')
@@ -756,11 +776,21 @@ type StudentGradeApiItem = {
   correctCount?: number
   totalQuestions?: number
   reviewedAt?: string | null
+  answerKey?: EvaluationCorrection['answerKey']
+  detectedAnswers?: EvaluationCorrection['detectedAnswers']
+  evaluationPdfUrl?: string | null
+  answerCardsPdfUrl?: string | null
+  questionIds?: string[]
+  questionSnapshots?: Question[]
 }
 
-export async function loadStudentGradesEvaluationsScreen(token: string) {
-  const grades = await listResource<StudentGradeApiItem, 'grades'>(token, '/me/grades', 'grades', { status: 'CONFIRMED', view: 'summary' })
-  const evaluations = grades.map<Evaluation>((grade) => ({
+type StudentGradeCorrectionDetail = EvaluationCorrection & {
+  evaluation?: Evaluation
+  questionSnapshots?: Question[]
+}
+
+function mapStudentGradeEvaluation(grade: StudentGradeApiItem): Evaluation {
+  return {
     id: grade.evaluationId,
     title: grade.evaluationTitle || 'Prova corrigida',
     classId: grade.classId,
@@ -773,43 +803,162 @@ export async function loadStudentGradesEvaluationsScreen(token: string) {
     participants: 0,
     averageScore: 0,
     triLevel: '',
-  }))
-  const corrections = grades.map<EvaluationCorrection>((grade) => {
-    const totalQuestions = Math.max(0, Number(grade.totalQuestions ?? 0) || 0)
-    const correctCount = Math.max(0, Number(grade.correctCount ?? 0) || 0)
-    const score = grade.score == null ? null : Number(grade.score)
+    answerKey: grade.answerKey ?? [],
+    evaluationPdfUrl: grade.evaluationPdfUrl ?? null,
+    answerCardsPdfUrl: grade.answerCardsPdfUrl ?? null,
+    questionIds: grade.questionIds ?? [],
+    questionSnapshots: grade.questionSnapshots ?? [],
+  }
+}
 
+function mapStudentGradeCorrection(grade: StudentGradeApiItem): EvaluationCorrection {
+  const totalQuestions = Math.max(0, Number(grade.totalQuestions ?? 0) || 0)
+  const correctCount = Math.max(0, Number(grade.correctCount ?? 0) || 0)
+  const score = grade.score == null ? null : Number(grade.score)
+
+  return {
+    id: grade.id,
+    evaluationId: grade.evaluationId,
+    schoolId: grade.schoolId,
+    classId: grade.classId,
+    subject: grade.subject,
+    cardId: null,
+    studentId: grade.studentId,
+    studentName: grade.studentName,
+    status: grade.status,
+    imageUrl: null,
+    suggestedScore: score ?? 0,
+    finalScore: score,
+    correctCount,
+    wrongCount: Math.max(0, totalQuestions - correctCount),
+    blankCount: 0,
+    multipleCount: 0,
+    totalQuestions,
+    confidence: 0,
+    requiresReview: false,
+    shouldRetakeImage: false,
+    failures: [],
+    detectedAnswers: grade.detectedAnswers ?? [],
+    answerKey: grade.answerKey ?? [],
+    rawOmrResponse: {},
+    teacherNotes: null,
+    reviewedById: null,
+    reviewedAt: grade.reviewedAt ?? null,
+    createdById: '',
+    createdAt: grade.reviewedAt ?? '',
+    updatedAt: grade.reviewedAt ?? '',
+  }
+}
+
+function mergeStudentGradeCorrection(base: EvaluationCorrection, detail?: EvaluationCorrection | null): EvaluationCorrection {
+  if (!detail) return base
+  return {
+    ...base,
+    ...detail,
+    answerKey: detail.answerKey?.length ? detail.answerKey : base.answerKey,
+    detectedAnswers: detail.detectedAnswers?.length ? detail.detectedAnswers : base.detectedAnswers,
+    failures: detail.failures?.length ? detail.failures : base.failures,
+  }
+}
+
+async function listStudentGradeItems(token: string) {
+  try {
+    return await listResource<StudentGradeApiItem, 'grades'>(token, '/me/grades', 'grades', { status: 'CONFIRMED', view: 'detail' })
+  } catch (error) {
+    if (error instanceof ApiError && error.statusCode === 400) {
+      return listResource<StudentGradeApiItem, 'grades'>(token, '/me/grades', 'grades', { status: 'CONFIRMED' })
+    }
+    throw error
+  }
+}
+
+async function listAllStudentGradeItems(token: string) {
+  try {
+    return await listAllResource<StudentGradeApiItem, 'grades'>(token, '/me/grades', 'grades', { status: 'CONFIRMED', view: 'detail' })
+  } catch (error) {
+    if (error instanceof ApiError && error.statusCode === 400) {
+      return listAllResource<StudentGradeApiItem, 'grades'>(token, '/me/grades', 'grades', { status: 'CONFIRMED' })
+    }
+    throw error
+  }
+}
+
+async function listStudentGradeCorrections(token: string) {
+  try {
+    return await listAllResource<EvaluationCorrection, 'examCorrections'>(
+      token,
+      '/me/exam-corrections',
+      'examCorrections',
+      { status: 'CONFIRMED', view: 'detail' },
+    )
+  } catch (error) {
+    if (error instanceof ApiError && error.statusCode === 400) {
+      return listAllResource<EvaluationCorrection, 'examCorrections'>(
+        token,
+        '/me/exam-corrections',
+        'examCorrections',
+        { status: 'CONFIRMED' },
+      )
+    }
+    if (error instanceof ApiError && [403, 404, 405].includes(error.statusCode)) return []
+    throw error
+  }
+}
+
+async function listStudentGradeExams(token: string) {
+  try {
+    return await listAllResource<Evaluation, 'exams'>(token, '/me/exams', 'exams', { view: 'detail' })
+  } catch (error) {
+    if (error instanceof ApiError && error.statusCode === 400) {
+      return listAllResource<Evaluation, 'exams'>(token, '/me/exams', 'exams')
+    }
+    if (error instanceof ApiError && [403, 404, 405].includes(error.statusCode)) return []
+    throw error
+  }
+}
+
+function mergeStudentGradeEvaluation(base: Evaluation, detail?: Evaluation | null): Evaluation {
+  if (!detail) return base
+  return {
+    ...base,
+    ...detail,
+    title: detail.title || base.title,
+    classId: detail.classId || base.classId,
+    schoolId: detail.schoolId ?? base.schoolId,
+    subject: detail.subject || base.subject,
+    questions: detail.questions || base.questions,
+    scheduledAt: detail.scheduledAt || base.scheduledAt,
+    answerKey: detail.answerKey?.length ? detail.answerKey : base.answerKey,
+    questionIds: detail.questionIds?.length ? detail.questionIds : base.questionIds,
+    questionSnapshots: detail.questionSnapshots?.length ? detail.questionSnapshots : base.questionSnapshots,
+    evaluationPdfUrl: detail.evaluationPdfUrl ?? base.evaluationPdfUrl,
+    answerCardsPdfUrl: detail.answerCardsPdfUrl ?? base.answerCardsPdfUrl,
+  }
+}
+
+export async function loadStudentGradesEvaluationsScreen(token: string) {
+  const [grades, detailedCorrections, detailedExams] = await Promise.all([
+    listStudentGradeItems(token),
+    listStudentGradeCorrections(token),
+    listStudentGradeExams(token),
+  ])
+  const detailById = new Map(detailedCorrections.map((correction) => [correction.id, correction]))
+  const detailByStudentExam = new Map(detailedCorrections.map((correction) => [`${correction.evaluationId}:${correction.studentId}`, correction]))
+  const examById = new Map(detailedExams.map((evaluation) => [evaluation.id, evaluation]))
+  const corrections = grades.map<EvaluationCorrection>((grade) => {
+    const detail = detailById.get(grade.id) ?? detailByStudentExam.get(`${grade.evaluationId}:${grade.studentId}`)
+    return mergeStudentGradeCorrection(mapStudentGradeCorrection(grade), detail)
+  })
+  const correctionById = new Map(corrections.map((correction) => [correction.id, correction]))
+  const evaluations = grades.map<Evaluation>((grade) => {
+    const evaluation = mergeStudentGradeEvaluation(
+      mapStudentGradeEvaluation(grade),
+      examById.get(grade.evaluationId),
+    )
+    const correctionAnswerKey = correctionById.get(grade.id)?.answerKey
     return {
-      id: grade.id,
-      evaluationId: grade.evaluationId,
-      schoolId: grade.schoolId,
-      classId: grade.classId,
-      subject: grade.subject,
-      cardId: null,
-      studentId: grade.studentId,
-      studentName: grade.studentName,
-      status: grade.status,
-      imageUrl: null,
-      suggestedScore: score ?? 0,
-      finalScore: score,
-      correctCount,
-      wrongCount: Math.max(0, totalQuestions - correctCount),
-      blankCount: 0,
-      multipleCount: 0,
-      totalQuestions,
-      confidence: 0,
-      requiresReview: false,
-      shouldRetakeImage: false,
-      failures: [],
-      detectedAnswers: [],
-      answerKey: [],
-      rawOmrResponse: {},
-      teacherNotes: null,
-      reviewedById: null,
-      reviewedAt: grade.reviewedAt ?? null,
-      createdById: '',
-      createdAt: grade.reviewedAt ?? '',
-      updatedAt: grade.reviewedAt ?? '',
+      ...evaluation,
+      answerKey: evaluation.answerKey?.length ? evaluation.answerKey : correctionAnswerKey ?? [],
     }
   })
 
@@ -822,6 +971,46 @@ export async function loadStudentGradesEvaluationsScreen(token: string) {
     assessmentDescriptors: [],
     questionBank: [],
     questionImportPlans: [],
+  }
+}
+
+export async function getStudentGradeCorrectionDetail(token: string, correctionId: string): Promise<StudentGradeCorrectionDetail> {
+  try {
+    return await apiRequest<StudentGradeCorrectionDetail>(`/me/exam-corrections/${encodeURIComponent(correctionId)}`, { token })
+  } catch (error) {
+    if (!(error instanceof ApiError) || ![403, 404, 405].includes(error.statusCode)) throw error
+  }
+
+  try {
+    const corrections = await listStudentGradeCorrections(token) as StudentGradeCorrectionDetail[]
+    const correction = corrections.find((item) => item.id === correctionId)
+    if (correction) return correction
+  } catch (error) {
+    if (!(error instanceof ApiError) || ![400, 403, 404, 405].includes(error.statusCode)) throw error
+  }
+
+  try {
+    const grades = await listAllStudentGradeItems(token)
+    const grade = grades.find((item) => item.id === correctionId)
+    if (grade) {
+      const evaluation = mapStudentGradeEvaluation(grade)
+      return {
+        ...mapStudentGradeCorrection(grade),
+        evaluation,
+        questionSnapshots: evaluation.questionSnapshots ?? [],
+      }
+    }
+  } catch (error) {
+    if (!(error instanceof ApiError) || ![403, 404, 405].includes(error.statusCode)) throw error
+  }
+
+  try {
+    return await getEvaluationCorrection(token, correctionId) as StudentGradeCorrectionDetail
+  } catch (fallbackError) {
+    if (fallbackError instanceof ApiError && [403, 404, 405].includes(fallbackError.statusCode)) {
+      throw new ApiError('Nao foi possivel carregar os detalhes da nota deste aluno.', fallbackError.statusCode)
+    }
+    throw fallbackError
   }
 }
 
@@ -959,6 +1148,18 @@ export async function listTeacherSubjectCardsPage(token: string, params: Teacher
   return apiRequest<TeacherSubjectCardsPagePayload>(`${scopedResourcePath('teacher-subjects', options)}?${search}`, { token })
 }
 
+export async function listStudentSubjectCardsPage(token: string, params: StudentSubjectsPageQuery) {
+  const query = new URLSearchParams({
+    page: String(clampApiPage(params.page)),
+    limit: String(clampApiPageLimit(params.limit)),
+  })
+
+  const sanitizedSearch = sanitizeApiSearchParam(params.search)
+  if (sanitizedSearch) query.set('search', sanitizedSearch)
+
+  return apiRequest<StudentSubjectCardsPagePayload>(`/me/student-subjects?${query.toString()}`, { token })
+}
+
 function buildStudentsPageQuery(params: StudentsPageQuery) {
   const query = new URLSearchParams({
     page: String(clampApiPage(params.page)),
@@ -976,6 +1177,14 @@ function buildStudentsPageQuery(params: StudentsPageQuery) {
 
 export async function listStudentsPage(token: string, params: StudentsPageQuery, options: ScopedResourceOptions = {}) {
   return apiRequest<StudentsPagePayload>(`${scopedResourcePath('students', options)}?${buildStudentsPageQuery(params)}`, { token })
+}
+
+export async function searchStudentsForGuardian(token: string, params: StudentsPageQuery, options: ScopedResourceOptions = {}) {
+  return listStudentsPage(token, {
+    ...params,
+    page: 1,
+    limit: Math.min(5, clampApiPageLimit(params.limit ?? 5)),
+  }, options)
 }
 
 export async function loadSettingsScreen(token: string) {
@@ -1171,6 +1380,23 @@ export async function downloadEvaluationFile(token: string, id: string, kind: Ev
   )
 }
 
+export async function downloadStudentEvaluationFile(token: string, id: string, kind: EvaluationDownloadKind = 'complete') {
+  const encodedId = encodeURIComponent(id)
+  if (kind === 'answer_cards') {
+    throw new ApiError('O aluno nao pode baixar cartoes resposta da turma.', 403)
+  }
+
+  return apiFileRequest(
+    kind === 'answer_key'
+      ? `/me/exams/${encodedId}/download?kind=answer_key`
+      : `/me/exams/${encodedId}/download`,
+    {
+      token,
+      filenameFallback: kind === 'answer_key' ? `gabarito-${id}.pdf` : `prova-${id}.pdf`,
+    },
+  )
+}
+
 export async function processEvaluationOmr(token: string, evaluationId: string, studentId: string, image: File) {
   const validation = await validateOmrFile(image)
   if (!validation.ok) throw new ApiError(validation.message ?? 'Arquivo OMR invalido.', 415)
@@ -1196,6 +1422,14 @@ export async function processEvaluationOmrBatch(token: string, evaluationId: str
 
 export async function getEvaluationCorrectionCardFile(token: string, correctionId: string) {
   return apiFileRequest(`/evaluation-corrections/${encodeURIComponent(correctionId)}/image`, {
+    token,
+    filenameFallback: `cartao-resposta-${correctionId}`,
+    accept: 'image/*,application/pdf',
+  })
+}
+
+export async function getStudentEvaluationCorrectionCardFile(token: string, correctionId: string) {
+  return apiFileRequest(`/me/exam-corrections/${encodeURIComponent(correctionId)}/image`, {
     token,
     filenameFallback: `cartao-resposta-${correctionId}`,
     accept: 'image/*,application/pdf',

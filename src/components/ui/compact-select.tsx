@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { CSSProperties, KeyboardEvent } from 'react'
+import type { CSSProperties, KeyboardEvent, ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Check, ChevronDown } from 'lucide-react'
 import { motion, AnimatePresence } from 'motion/react'
@@ -37,13 +37,14 @@ interface CompactSelectProps<TValue extends string = string> {
   hint?: string
   error?: string | null
   disabled?: boolean
+  leftIcon?: ReactNode
   className?: string
   wrapperClassName?: string
   dropdownClassName?: string
   optionClassName?: string
   dropdownMinWidth?: number
   dropdownOffset?: number
-  dropdownAnchor?: 'self' | 'parent'
+  dropdownAnchor?: 'self' | 'parent' | 'button'
   dropdownWidth?: 'content' | 'trigger'
   growOnOpen?: boolean
 }
@@ -59,6 +60,7 @@ export function CompactSelect<TValue extends string = string>({
   hint,
   error,
   disabled,
+  leftIcon,
   className,
   wrapperClassName,
   dropdownClassName,
@@ -94,6 +96,7 @@ export function CompactSelect<TValue extends string = string>({
   const hasSwatch = options.some((o) => o.swatch)
 
   function getAnchorElement() {
+    if (dropdownAnchor === 'button') return buttonRef.current ?? rootRef.current
     return dropdownAnchor === 'parent'
       ? rootRef.current?.parentElement ?? rootRef.current ?? buttonRef.current
       : rootRef.current ?? buttonRef.current
@@ -431,6 +434,12 @@ export function CompactSelect<TValue extends string = string>({
       >
         {/* Selected value / placeholder */}
         <span className="flex min-w-0 flex-1 items-center gap-2">
+          {leftIcon ? (
+            <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center text-slate-400">
+              {leftIcon}
+            </span>
+          ) : null}
+
           {/* Swatch for selected */}
           {selectedOption?.swatch && (
             <span

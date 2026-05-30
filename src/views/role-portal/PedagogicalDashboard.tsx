@@ -98,12 +98,32 @@ type LessonRecord = {
   notes: string
   attendance?: Record<string, boolean>
 }
+type Evaluation = {
+  id: string
+  classId: string
+  schoolId?: string
+  subject: string
+}
+type EvaluationCorrection = {
+  id: string
+  evaluationId: string
+  classId: string
+  schoolId?: string
+  subject?: string
+  status: string
+  suggestedScore?: number
+  finalScore?: number | null
+  correctCount?: number
+  totalQuestions?: number
+}
 
 type PedagogicalDashboardProps = {
   classes: ClassRoom[]
   students: Student[]
   teachers: Teacher[]
   lessonRecords: LessonRecord[]
+  evaluations?: Evaluation[]
+  evaluationCorrections?: EvaluationCorrection[]
 }
 
 /* ─── Design tokens ──────────────────────────────────────────────────────── */
@@ -1236,6 +1256,8 @@ export function PedagogicalDashboard({
   students,
   teachers,
   lessonRecords,
+  evaluations = [],
+  evaluationCorrections = [],
 }: PedagogicalDashboardProps) {
   const [tab, setTab] = useState<'general' | 'action'>('general')
   const [classFilter, setClassFilter] = useState('all')
@@ -1402,11 +1424,617 @@ export function PedagogicalDashboard({
   })
 
   const selectedAlertForModal = selectedAlertId ?? alertStudents[0]?.id ?? null
+  const visibleLessonRecords =
+    classFilter === 'all'
+      ? lessonRecords
+      : lessonRecords.filter((record) => scopeIds.has(record.classId))
+  const recentLessonRecords = [...visibleLessonRecords]
+    .sort((a, b) => `${b.date} ${b.time}`.localeCompare(`${a.date} ${a.time}`))
+    .slice(0, 5)
+  const visibleSubjectData = Object.values(
+    visibleLessonRecords.reduce<Record<string, { name: string; value: number }>>((acc, record) => {
+      const subject = getAcademicSubjectLabel(record.subject).trim() || 'Sem matéria'
+      acc[subject] = acc[subject]
+        ? { ...acc[subject], value: acc[subject].value + 1 }
+        : { name: subject, value: 1 }
+      return acc
+    }, {}),
+  ).sort((a, b) => b.value - a.value)
+  const maxSubjectRecords = Math.max(1, ...visibleSubjectData.map((subject) => subject.value))
+  const maxClassRecordCount = Math.max(
+    1,
+    ...scopeSummaries.map((summary) => recByClass[summary.classRoom.id] ?? 0),
+  )
+  const latestRecordDate = recentLessonRecords[0]?.date ?? null
+  const evaluationById = new Map(evaluations.map((evaluation) => [evaluation.id, evaluation]))
+  const subjectDifficultyData = Object.values(
+    evaluationCorrections.reduce<Record<string, {
+      subject: string
+      attempts: number
+      performanceTotal: number
+      totalCorrect: number
+      totalQuestions: number
+    }>>((acc, correction) => {
+      const evaluation = evaluationById.get(correction.evaluationId)
+      const correctionClassId = correction.classId || evaluation?.classId
+      if (!correctionClassId || !scopeIds.has(correctionClassId)) return acc
+      if (correction.status === 'REJECTED' || correction.status === 'NEEDS_RETAKE') return acc
+
+      const rawSubject = correction.subject || evaluation?.subject || ''
+      const subject = getAcademicSubjectLabel(rawSubject).trim() || 'Sem matéria'
+      const totalQuestions = Math.max(0, Number(correction.totalQuestions ?? 0) || 0)
+      const correctCount = Math.max(0, Number(correction.correctCount ?? 0) || 0)
+      const score = correction.finalScore ?? correction.suggestedScore
+      const performance =
+        totalQuestions > 0
+          ? Math.min(100, (correctCount / totalQuestions) * 100)
+          : typeof score === 'number' && Number.isFinite(score)
+            ? Math.min(100, Math.max(0, score * 10))
+            : null
+
+      if (performance === null) return acc
+
+      const current = acc[subject] ?? {
+        subject,
+        attempts: 0,
+        performanceTotal: 0,
+        totalCorrect: 0,
+        totalQuestions: 0,
+      }
+      current.attempts += 1
+      current.performanceTotal += performance
+      current.totalCorrect += correctCount
+      current.totalQuestions += totalQuestions
+      acc[subject] = current
+      return acc
+    }, {}),
+  )
+    .map((item) => {
+      const averagePerformance = item.attempts ? Math.round(item.performanceTotal / item.attempts) : 0
+      return {
+        ...item,
+        averagePerformance,
+        difficulty: Math.max(0, 100 - averagePerformance),
+        averageScore: Number((averagePerformance / 10).toFixed(1)),
+      }
+    })
+    .sort((a, b) => b.difficulty - a.difficulty || b.attempts - a.attempts || a.subject.localeCompare(b.subject, 'pt-BR'))
+  const maxSubjectDifficulty = Math.max(1, ...subjectDifficultyData.map((subject) => subject.difficulty))
 
   /* ─────────────────────────────────────────────────────────────────────── */
   return (
     <>
       <style>{GLOBAL_STYLES}</style>
+
+      <main className="space-y-7">
+        <FadeUp delay={0}>
+          <div className="flex flex-col gap-3 rounded-2xl border-2 border-stone-200 bg-white p-4 shadow-sm lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border-2 border-indigo-200 bg-indigo-50 text-indigo-600">
+                <GraduationCap size={20} />
+              </div>
+              <div className="min-w-0">
+                <Label className="mb-1 text-indigo-500">Painel pedagógico</Label>
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs font-bold text-stone-500 font-['Outfit']">
+                  <span className="text-stone-900">
+                    {classFilter === 'all'
+                      ? 'Todas as turmas'
+                      : classes.find((c) => c.id === classFilter)?.name ?? 'Turma'}
+                  </span>
+                  <span className="text-stone-300">•</span>
+                  <span>{scopeStudents.length} alunos</span>
+                  <span className="text-stone-300">•</span>
+                  <span>
+                    {scopeClasses.length} turma{scopeClasses.length !== 1 ? 's' : ''}
+                  </span>
+                  <span className="text-stone-300">•</span>
+                  <span>{latestRecordDate ? `Último registro: ${latestRecordDate}` : 'Sem registros recentes'}</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <select
+                value={classFilter}
+                onChange={(e) => setClassFilter(e.target.value)}
+                className="h-10 rounded-xl border-2 border-stone-300 bg-stone-50 px-3 text-xs font-bold text-stone-700 shadow-sm outline-none transition-all font-['Outfit'] focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+              >
+                <option value="all">Todas as turmas</option>
+                {classes.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => openLesson(classFilter)}
+                className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border-2 border-indigo-300 bg-indigo-600 px-4 text-xs font-black text-white shadow-sm transition-all hover:bg-indigo-700 font-['Outfit']"
+              >
+                <ClipboardList size={14} />
+                Registros
+              </button>
+            </div>
+          </div>
+        </FadeUp>
+
+        <section>
+          <SectionDivider label="Indicadores gerais" icon={<BarChart2 size={13} />} />
+          <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <KpiCard
+              label="Alunos"
+              value={String(scopeStudents.length)}
+              numericValue={scopeStudents.length}
+              sub="Total no escopo atual"
+              tone="indigo"
+              icon={<Users size={16} />}
+              delay={0}
+            />
+            <KpiCard
+              label="Frequência"
+              value={`${avgAtt}%`}
+              sub={avgAtt >= 75 ? 'Acima da meta de 75%' : 'Abaixo da meta de 75%'}
+              tone={avgAtt < 75 ? 'rose' : 'emerald'}
+              icon={<CalendarDays size={16} />}
+              ring={avgAtt}
+              delay={70}
+            />
+            <KpiCard
+              label="Desempenho"
+              value={`${Math.round((avgScore / 10) * 100)}%`}
+              sub={`Nota média ${avgScore.toFixed(1)} de 10`}
+              tone={avgScore < 6 ? 'amber' : 'indigo'}
+              icon={<TrendingUp size={16} />}
+              ring={(avgScore / 10) * 100}
+              delay={140}
+            />
+            <KpiCard
+              label="Em alerta"
+              value={String(alertStudents.length)}
+              numericValue={alertStudents.length}
+              sub="Alunos com baixa frequência ou média"
+              tone={alertStudents.length > 0 ? 'rose' : 'emerald'}
+              icon={<AlertTriangle size={16} />}
+              delay={210}
+              onClick={
+                alertStudents.length > 0
+                  ? () => {
+                      setSelectedAlertId(selectedAlertForModal)
+                      setAlertModal(true)
+                    }
+                  : undefined
+              }
+            />
+          </div>
+        </section>
+
+        <section>
+          <SectionDivider label="Turmas e desempenho" icon={<School size={13} />} />
+          <div className="mt-3 grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(320px,0.9fr)]">
+            <div className="space-y-3">
+              {scopeSummaries.length > 0 ? (
+                scopeSummaries.map((summary, index) => {
+                  const attendance = summary.attendance ?? 0
+                  const performance = summary.score === null ? 0 : Number((summary.score * 10).toFixed(1))
+                  const recordCount = recByClass[summary.classRoom.id] ?? 0
+                  return (
+                    <FadeUp key={summary.classRoom.id} delay={index * 55}>
+                      <article className="rounded-2xl border-2 border-stone-200 bg-white p-5 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md">
+                        <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+                          <div className="flex min-w-0 items-center gap-3">
+                            <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border-2 border-indigo-200 bg-indigo-50 text-sm font-black text-indigo-600 font-['Outfit']">
+                              {summary.classRoom.name.slice(0, 2).toUpperCase()}
+                            </div>
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-bold text-stone-900 font-['Fraunces']">
+                                {summary.classRoom.name}
+                              </p>
+                              <p className="text-[10px] font-bold uppercase tracking-wider text-stone-400 font-['Outfit']">
+                                {summary.classRoom.grade} • {summary.classRoom.shift}
+                              </p>
+                            </div>
+                          </div>
+                          <StatusBadge status={summary.status} />
+                        </div>
+
+                        <div className="mb-4 flex flex-wrap items-center gap-2 text-xs font-semibold text-stone-500 font-['Outfit']">
+                          <GraduationCap size={14} className="text-stone-400" />
+                          <span>{summary.teacherName}</span>
+                          <span className="text-stone-300">•</span>
+                          <span>{summary.studentsCount} alunos</span>
+                          <span className="text-stone-300">•</span>
+                          <span>{recordCount} registros</span>
+                        </div>
+
+                        <div className="grid gap-4 sm:grid-cols-2">
+                          <div>
+                            <div className="mb-1.5 flex justify-between text-xs font-bold font-['Outfit']">
+                              <span className="text-stone-500">Frequência</span>
+                              <span className={attendance < 75 ? 'text-rose-600' : 'text-emerald-600'}>
+                                {summary.attendance === null ? 'Sem dados' : `${attendance}%`}
+                              </span>
+                            </div>
+                            <div className="h-2.5 overflow-hidden rounded-full border border-stone-200 bg-stone-100">
+                              <div
+                                className={`h-full rounded-full ${attendance < 75 ? 'bg-rose-500' : 'bg-emerald-500'}`}
+                                style={{ width: `${Math.min(100, attendance)}%` }}
+                              />
+                            </div>
+                          </div>
+                          <div>
+                            <div className="mb-1.5 flex justify-between text-xs font-bold font-['Outfit']">
+                              <span className="text-stone-500">Desempenho</span>
+                              <span className={performance < 60 ? 'text-amber-600' : 'text-indigo-600'}>
+                                {summary.score === null ? 'Sem dados' : `${performance}%`}
+                              </span>
+                            </div>
+                            <div className="h-2.5 overflow-hidden rounded-full border border-stone-200 bg-stone-100">
+                              <div
+                                className={`h-full rounded-full ${performance < 60 ? 'bg-amber-500' : 'bg-indigo-500'}`}
+                                style={{ width: `${Math.min(100, performance)}%` }}
+                              />
+                            </div>
+                          </div>
+                        </div>
+
+                        {summary.alertCount > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => openLesson(summary.classRoom.id)}
+                            className="mt-4 flex w-full items-center justify-between gap-2 rounded-xl border-2 border-amber-300 bg-amber-50 px-3 py-2 text-left text-xs font-bold text-amber-800 transition-colors hover:bg-amber-100 font-['Outfit']"
+                          >
+                            <span className="inline-flex items-center gap-2">
+                              <AlertTriangle size={14} />
+                              {summary.alertCount} aluno{summary.alertCount !== 1 ? 's' : ''} em atenção
+                            </span>
+                            <ChevronRight size={14} />
+                          </button>
+                        )}
+                      </article>
+                    </FadeUp>
+                  )
+                })
+              ) : (
+                <Panel delay={0}>
+                  <div className="py-14 text-center">
+                    <GraduationCap size={40} className="mx-auto mb-3 text-stone-300" />
+                    <p className="text-sm font-semibold text-stone-400 font-['Outfit']">Nenhuma turma no escopo</p>
+                  </div>
+                </Panel>
+              )}
+            </div>
+
+            <div className="space-y-4">
+              <Panel delay={80}>
+                <PanelHead
+                  icon={<BookOpen size={15} />}
+                  title="Dificuldade por matéria"
+                  sub={`${subjectDifficultyData.length} matéria${subjectDifficultyData.length !== 1 ? 's' : ''} com correções`}
+                  tone={subjectDifficultyData.some((subject) => subject.difficulty >= 40) ? 'rose' : 'indigo'}
+                />
+                <div className="space-y-3.5 p-5">
+                  {subjectDifficultyData.length > 0 ? (
+                    subjectDifficultyData.map((subject, index) => (
+                      <div key={subject.subject}>
+                        <div className="mb-1.5 flex justify-between text-xs font-bold font-['Outfit']">
+                          <span className="truncate text-stone-600">{subject.subject}</span>
+                          <span className={subject.difficulty >= 40 ? 'text-rose-600' : subject.difficulty >= 25 ? 'text-amber-600' : 'text-emerald-600'}>
+                            {subject.difficulty}% dificuldade
+                          </span>
+                        </div>
+                        <div className="h-2.5 overflow-hidden rounded-full border border-stone-200 bg-stone-100">
+                          <div
+                            className="h-full rounded-full"
+                            style={{
+                              width: `${Math.max(8, (subject.difficulty / maxSubjectDifficulty) * 100)}%`,
+                              backgroundColor:
+                                subject.difficulty >= 40
+                                  ? '#e11d48'
+                                  : subject.difficulty >= 25
+                                    ? '#d97706'
+                                    : CHART_PALETTE[index % CHART_PALETTE.length],
+                            }}
+                          />
+                        </div>
+                        <p className="mt-1 text-[10px] font-semibold text-stone-400 font-['Outfit']">
+                          Média {subject.averageScore.toFixed(1)} · {subject.attempts} correção{subject.attempts !== 1 ? 'ões' : ''}
+                        </p>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="py-10 text-center">
+                      <BookOpen size={34} className="mx-auto mb-3 text-stone-300" />
+                      <p className="text-sm font-semibold text-stone-400 font-['Outfit']">
+                        Sem correções suficientes para calcular dificuldade
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </Panel>
+
+              <Panel delay={130}>
+                <PanelHead
+                  icon={<ClipboardList size={15} />}
+                  title="Cobertura de registros"
+                  sub={`${coverage}% das turmas com alunos`}
+                  tone={coverage >= 80 ? 'emerald' : coverage >= 50 ? 'amber' : 'rose'}
+                  actions={
+                    <ActionBtn onClick={() => openLesson(classFilter)} icon={<Eye size={11} />} size="xs">
+                      Ver diário
+                    </ActionBtn>
+                  }
+                />
+                <div className="space-y-3 p-5">
+                  {scopeSummaries.map((summary, index) => {
+                    const recordCount = recByClass[summary.classRoom.id] ?? 0
+                    return (
+                      <div key={summary.classRoom.id}>
+                        <div className="mb-1.5 flex justify-between text-xs font-bold font-['Outfit']">
+                          <span className="truncate text-stone-600">{summary.classRoom.name}</span>
+                          <span className={recordCount > 0 ? 'text-emerald-600' : 'text-stone-400'}>
+                            {recordCount}
+                          </span>
+                        </div>
+                        <div className="h-2 overflow-hidden rounded-full bg-stone-100">
+                          <div
+                            className={recordCount > 0 ? 'h-full rounded-full bg-emerald-500' : 'h-full rounded-full bg-stone-300'}
+                            style={{
+                              width:
+                                recordCount > 0
+                                  ? `${Math.max(12, (recordCount / maxClassRecordCount) * 100)}%`
+                                  : '0%',
+                            }}
+                          />
+                        </div>
+                        {index < scopeSummaries.length - 1 && <div className="mt-3 border-b border-stone-100" />}
+                      </div>
+                    )
+                  })}
+                </div>
+              </Panel>
+            </div>
+          </div>
+        </section>
+
+        <section>
+          <SectionDivider label="Comparativo por turma" icon={<Activity size={13} />} />
+          <Panel delay={120} className="mt-3">
+            <PanelHead
+              icon={<BarChart3 size={15} />}
+              title="Frequência, desempenho e alertas"
+              sub="Dados consolidados por turma"
+              tone="violet"
+            />
+            <div className="flex flex-wrap items-center gap-4 px-5 pt-4 pb-1">
+              {[
+                { color: '#059669', label: 'Frequência (%)' },
+                { color: '#4f46e5', label: 'Desempenho (%)' },
+                { color: '#e11d48', label: 'Alertas (qtd)' },
+              ].map(({ color, label }) => (
+                <div key={label} className="flex items-center gap-1.5">
+                  <span className="h-3 w-5 rounded-sm" style={{ backgroundColor: color }} />
+                  <span className="text-[10px] font-bold text-stone-500 font-['Outfit']">{label}</span>
+                </div>
+              ))}
+            </div>
+            <div className="h-72 overflow-x-auto px-4 pb-4">
+              {classChartData.length > 0 ? (
+                <div className="h-full" style={{ minWidth: chartMin }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart
+                      data={classChartData}
+                      margin={{ top: 28, right: 36, left: -16, bottom: 24 }}
+                      barCategoryGap="30%"
+                      barGap={4}
+                    >
+                      <CartesianGrid strokeDasharray="3 0" vertical={false} stroke="#f5f5f4" />
+                      <XAxis
+                        dataKey="name"
+                        tick={{ fontSize: 10, fontWeight: 700, fill: '#78716c', fontFamily: 'Outfit' }}
+                        interval={0}
+                        angle={-8}
+                        textAnchor="end"
+                        height={42}
+                        tickLine={false}
+                        axisLine={{ stroke: '#d6d3d1' }}
+                      />
+                      <YAxis
+                        yAxisId="pct"
+                        domain={[0, 100]}
+                        tickFormatter={fmtPct}
+                        tick={{ fontSize: 9, fontWeight: 700, fill: '#a8a29e', fontFamily: 'Outfit' }}
+                        tickLine={false}
+                        axisLine={false}
+                      />
+                      <YAxis
+                        yAxisId="count"
+                        orientation="right"
+                        allowDecimals={false}
+                        tick={{ fontSize: 9, fontWeight: 700, fill: '#a8a29e', fontFamily: 'Outfit' }}
+                        tickLine={false}
+                        axisLine={false}
+                      />
+                      <Tooltip content={<ChartTooltip />} cursor={{ fill: '#fafaf9', radius: 6 }} />
+                      <Bar
+                        yAxisId="pct"
+                        dataKey="frequencia"
+                        name="Frequência (%)"
+                        fill="#059669"
+                        radius={[6, 6, 0, 0]}
+                        barSize={bsz}
+                        animationDuration={1000}
+                      >
+                        <LabelList
+                          dataKey="frequencia"
+                          position="top"
+                          formatter={fmtPct}
+                          style={{ fill: '#57534e', fontSize: 8, fontWeight: 700, fontFamily: 'Outfit' }}
+                        />
+                      </Bar>
+                      <Bar
+                        yAxisId="pct"
+                        dataKey="desempenho"
+                        name="Desempenho (%)"
+                        fill="#4f46e5"
+                        radius={[6, 6, 0, 0]}
+                        barSize={bsz}
+                        animationBegin={150}
+                        animationDuration={1000}
+                      >
+                        <LabelList
+                          dataKey="desempenho"
+                          position="top"
+                          formatter={fmtPct}
+                          style={{ fill: '#57534e', fontSize: 8, fontWeight: 700, fontFamily: 'Outfit' }}
+                        />
+                      </Bar>
+                      <Bar
+                        yAxisId="count"
+                        dataKey="alertas"
+                        name="Alertas (qtd)"
+                        fill="#e11d48"
+                        radius={[6, 6, 0, 0]}
+                        barSize={bsz}
+                        animationBegin={300}
+                        animationDuration={1000}
+                      >
+                        <LabelList
+                          dataKey="alertas"
+                          position="top"
+                          formatter={fmt}
+                          style={{ fill: '#57534e', fontSize: 8, fontWeight: 700, fontFamily: 'Outfit' }}
+                        />
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              ) : (
+                <div className="flex h-full items-center justify-center">
+                  <p className="text-sm font-semibold text-stone-400 font-['Outfit']">Nenhuma turma disponível</p>
+                </div>
+              )}
+            </div>
+          </Panel>
+        </section>
+
+        <section>
+          <SectionDivider label="Alunos em alerta" icon={<AlertCircle size={13} />} />
+          <Panel delay={150} className="mt-3">
+            <PanelHead
+              icon={<AlertCircle size={15} />}
+              tone="rose"
+              title="Alunos que precisam de atenção"
+              sub={`${alertStudents.length} aluno${alertStudents.length !== 1 ? 's' : ''} identificado${alertStudents.length !== 1 ? 's' : ''}`}
+              actions={
+                alertStudents.length > 0 ? (
+                  <ActionBtn
+                    tone="rose"
+                    onClick={() => {
+                      setSelectedAlertId(selectedAlertForModal)
+                      setAlertModal(true)
+                    }}
+                    icon={<Eye size={11} />}
+                    size="xs"
+                  >
+                    Ver todos
+                  </ActionBtn>
+                ) : undefined
+              }
+            />
+            {alertStudents.length > 0 ? (
+              <div className="grid gap-2.5 p-4 md:grid-cols-2 xl:grid-cols-3">
+                {alertStudents.slice(0, 9).map((student, index) => (
+                  <AlertCard
+                    key={student.id}
+                    student={student}
+                    className={getClassName(student.classId)}
+                    delay={index * 45}
+                    onOpen={() => {
+                      setSelectedAlertId(student.id)
+                      setAlertModal(true)
+                    }}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className="py-16 text-center">
+                <CheckCircle size={40} className="mx-auto mb-3 text-emerald-400" />
+                <p className="text-sm font-bold text-stone-400 font-['Outfit']">Nenhum aluno em alerta no escopo</p>
+              </div>
+            )}
+          </Panel>
+        </section>
+
+        <section>
+          <SectionDivider label="Registros recentes de aula" icon={<BookOpenCheck size={13} />} />
+          <Panel delay={180} className="mt-3">
+            <PanelHead
+              icon={<BookOpen size={15} />}
+              title="Registros de aula"
+              sub={`${visibleLessonRecords.length} registro${visibleLessonRecords.length !== 1 ? 's' : ''} no escopo`}
+              tone="stone"
+              actions={
+                <ActionBtn onClick={() => openLesson(classFilter)} icon={<ClipboardList size={11} />} size="xs">
+                  Ver diário
+                </ActionBtn>
+              }
+            />
+            {recentLessonRecords.length > 0 ? (
+              <div className="space-y-3 p-4">
+                {recentLessonRecords.map((record, index) => (
+                  <FadeUp key={record.id} delay={index * 45}>
+                    <article className="rounded-2xl border-2 border-stone-200 bg-stone-50/70 p-4 transition-colors hover:bg-white">
+                      <div className="mb-2 flex flex-wrap items-center gap-2">
+                        <span className="rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-0.5 text-[10px] font-bold text-indigo-700 font-['Outfit']">
+                          {getClassName(record.classId)}
+                        </span>
+                        <span className="inline-flex items-center gap-1 text-xs font-semibold text-stone-500 font-['Outfit']">
+                          <CalendarDays size={12} />
+                          {record.date}
+                        </span>
+                        <span className="rounded-full border border-stone-200 bg-white px-2.5 py-0.5 text-[10px] font-bold text-stone-500 font-['Outfit']">
+                          {getAcademicSubjectLabel(record.subject) || 'Sem matéria'}
+                        </span>
+                      </div>
+                      <p className="mb-3 text-sm font-bold text-stone-900 font-['Fraunces']">
+                        {record.content || 'Conteúdo não informado'}
+                      </p>
+                      <div className="grid gap-3 sm:grid-cols-3">
+                        <div>
+                          <Label className="mb-0.5">Plano</Label>
+                          <p className="truncate text-xs font-semibold text-stone-700 font-['Outfit']">
+                            {record.plan || 'Não informado'}
+                          </p>
+                        </div>
+                        <div>
+                          <Label className="mb-0.5">Recursos</Label>
+                          <p className="truncate text-xs font-semibold text-stone-700 font-['Outfit']">
+                            {record.resources || 'Não informado'}
+                          </p>
+                        </div>
+                        <div>
+                          <Label className="mb-0.5">Atividade</Label>
+                          <p className="truncate text-xs font-semibold text-stone-700 font-['Outfit']">
+                            {record.activity || 'Não informada'}
+                          </p>
+                        </div>
+                      </div>
+                    </article>
+                  </FadeUp>
+                ))}
+              </div>
+            ) : (
+              <div className="py-16 text-center">
+                <FileText size={36} className="mx-auto mb-3 text-stone-300" />
+                <p className="text-sm font-semibold text-stone-400 font-['Outfit']">Nenhum registro encontrado</p>
+              </div>
+            )}
+          </Panel>
+        </section>
+      </main>
+
+      {false && (
+        <>
 
       {/* ── Tabs ── */}
       <FadeUp delay={0}>
@@ -1736,12 +2364,12 @@ export function PedagogicalDashboard({
                 sub="% de alunos com dificuldade"
               />
               <div className="p-5 space-y-4">
-                {['Matemática', 'Português', 'Ciências', 'História', 'Geografia'].map((subject, i) => {
-                  const diff = Math.round(40 + Math.random() * 50)
+                {visibleSubjectData.map((subject, i) => {
+                  const diff = Math.round((subject.value / maxSubjectRecords) * 100)
                   return (
                     <DiffBar
-                      key={subject}
-                      label={subject}
+                      key={subject.name}
+                      label={subject.name}
                       value={diff}
                       color={diff >= 70 ? '#e11d48' : diff >= 50 ? '#d97706' : '#4f46e5'}
                       delay={i * 80}
@@ -1893,6 +2521,9 @@ export function PedagogicalDashboard({
       )}
 
       {/* ── Alert Modal ── */}
+        </>
+      )}
+
       {alertModal && (
         <AlertModal
           students={alertStudents}

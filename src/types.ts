@@ -1160,6 +1160,7 @@ export interface EvaluationsScreenPayload {
 
 export interface PedagogyScreenPayload extends SchoolsScreenPayload {
   evaluations: Evaluation[]
+  evaluationCorrections?: EvaluationCorrection[]
   curriculumSkills?: CurriculumSkill[]
   assessmentDescriptors?: AssessmentDescriptor[]
   questionBank?: Question[]
@@ -1248,6 +1249,32 @@ export interface TeacherSubjectCardsPagePayload {
     subjects: number
     classes: number
     lessons: number
+  }
+}
+
+export interface StudentSubjectSummaryCard {
+  id: string
+  subject: string
+  classRoom?: ClassRoom | null
+  gradesCount?: number
+  latestScore?: number | null
+  bestScore?: number | null
+  latestEvaluationTitle?: string | null
+  updatedAt?: string | null
+}
+
+export interface StudentSubjectsPageQuery {
+  page: number
+  limit: number
+  search?: string
+}
+
+export interface StudentSubjectCardsPagePayload {
+  subjectCards: StudentSubjectSummaryCard[]
+  pagination: PaginationMeta
+  totals: {
+    subjects: number
+    grades: number
   }
 }
 

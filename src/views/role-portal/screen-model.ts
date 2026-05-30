@@ -7,7 +7,9 @@ import type {
   ClassRoom,
   CreateLessonRecordPayload,
   CreateRoomReservationPayload,
+  EvaluationDownloadKind,
   EvaluationsScreenPayload,
+  EvaluationCorrection,
   Guardian,
   LessonRecord,
   Role,
@@ -16,6 +18,8 @@ import type {
   School,
   SchoolsScreenPayload,
   Student,
+  StudentSubjectCardsPagePayload,
+  StudentSubjectsPageQuery,
   TeacherSubjectCardsPagePayload,
   TeacherSubjectsPageQuery,
   Teacher,
@@ -37,6 +41,12 @@ export type SubjectCardModel = {
   lessons: LessonRecord[]
 }
 
+export type RolePortalFileResponse = {
+  blob: Blob
+  filename: string
+  contentType: string
+}
+
 export interface RolePortalScreenModel {
   section: AppSection
   profile: RoleCode
@@ -51,12 +61,16 @@ export interface RolePortalScreenModel {
   onCreateLessonRecord?: (draft: CreateLessonRecordPayload) => Promise<LessonRecord>
   onUpdateLessonRecord?: (id: string, draft: UpdateLessonRecordPayload) => Promise<LessonRecord>
   onLoadTeacherSubjectCardsPage?: (params: TeacherSubjectsPageQuery) => Promise<TeacherSubjectCardsPagePayload>
+  onLoadStudentSubjectCardsPage?: (params: StudentSubjectsPageQuery) => Promise<StudentSubjectCardsPagePayload>
   onLoadEvaluationsData?: () => Promise<Pick<
     EvaluationsScreenPayload,
     'evaluations' | 'evaluationCorrections' | 'curriculumSkills' | 'assessmentDescriptors' | 'questionBank'
   >>
   onDownloadEvaluation?: (evaluationId: string) => Promise<void>
   onDownloadAnswerKey?: (evaluationId: string) => Promise<void>
+  onLoadEvaluationFile?: (evaluationId: string, kind?: EvaluationDownloadKind) => Promise<RolePortalFileResponse>
+  onLoadCorrectionDetail?: (correctionId: string) => Promise<EvaluationCorrection>
+  onLoadCorrectionCardPreview?: (correctionId: string) => Promise<RolePortalFileResponse>
   schools: School[]
   classes: ClassRoom[]
   students: Student[]

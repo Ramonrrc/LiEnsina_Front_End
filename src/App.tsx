@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { motion, AnimatePresence, useTransform, useMotionValue, animate } from "motion/react"
 import {
   ApiError,
@@ -13,6 +13,8 @@ import {
   generateQuestionSelection,
   getEvaluationCorrection,
   getEvaluationCorrectionCardFile,
+  getStudentEvaluationCorrectionCardFile,
+  getStudentGradeCorrectionDetail,
   createMealItem,
   createMealManagement,
   createMealFoodRequest,
@@ -25,6 +27,7 @@ import {
   deleteQuestion,
   deleteMealFoodRequest,
   downloadEvaluationFile,
+  downloadStudentEvaluationFile,
   loadAcademicScopeScreen,
   loadAccessScreen,
   loadCalendarScreen,
@@ -47,8 +50,10 @@ import {
   listClassesPage,
   listSchoolsPage,
   listQuestionsPage,
+  listStudentSubjectCardsPage,
   listTeacherSubjectCardsPage,
   searchAccessUsers,
+  searchStudentsForGuardian,
   listStudentsPage,
   listTeachersPage,
   listMealManagementSchoolPage,
@@ -118,6 +123,7 @@ import type {
   Teacher,
   UserAccount,
 } from './types'
+import { cn } from './lib/cn'
 
 const ACCESS_TOKEN_REFRESH_FALLBACK_MS = 12 * 60 * 1000
 const ACCESS_TOKEN_REFRESH_SKEW_MS = 60 * 1000
@@ -155,8 +161,8 @@ type RoleProfile = RoleCode
 type NavigationItem = (typeof navItems)[number]
 
 const superAdminSections: AppSection[] = ['dashboard', 'schools', 'teachers', 'students', 'evaluations', 'evaluation-corrections', 'meals', 'access', 'notifications', 'settings']
-const adminSections: AppSection[] = ['dashboard', 'schools', 'teachers', 'students', 'evaluations', 'evaluation-corrections', 'meals', 'notifications', 'settings']
-const schoolAdminSections: AppSection[] = ['dashboard', 'schools', 'teachers', 'students', 'evaluations', 'evaluation-corrections', 'meals', 'notifications', 'settings']
+const adminSections: AppSection[] = ['dashboard', 'schools', 'teachers', 'students', 'evaluations', 'evaluation-corrections', 'calendar', 'meals', 'notifications', 'settings']
+const schoolAdminSections: AppSection[] = ['dashboard', 'schools', 'teachers', 'students', 'evaluations', 'evaluation-corrections', 'calendar', 'meals', 'notifications', 'settings']
 const directorSections: AppSection[] = ['dashboard', 'schools', 'teachers', 'students', 'evaluations', 'evaluation-corrections', 'meals', 'notifications', 'settings']
 const coordinatorSections: AppSection[] = ['pedagogy', 'evaluations', 'evaluation-corrections', 'calendar', 'notifications', 'settings']
 const teacherSections: AppSection[] = ['teacher-subjects', 'room-reservations', 'evaluations', 'evaluation-corrections', 'calendar', 'notifications', 'settings']
@@ -186,12 +192,14 @@ const sectionLabels: Partial<Record<RoleProfile, Partial<Record<AppSection, Pick
   },
   ADMIN: {
     dashboard: { label: 'Dashboard Geral', description: 'Rede, escolas e resultados' },
+    calendar: { label: 'Calendario Escolar', description: 'Eventos das escolas vinculadas' },
     meals: { label: 'Gestao Alimentar', description: 'Cardapios, estoque e orcamento da rede' },
     notifications: { label: 'Notificações', description: 'Alertas e comunicados' },
     settings: { label: 'Meu Perfil', description: 'Conta do administrador' },
   },
   ADMIN_ESCOLA: {
     dashboard: { label: 'Dashboard da Escola', description: 'Indicadores da unidade' },
+    calendar: { label: 'Calendario Escolar', description: 'Eventos da escola' },
     meals: { label: 'Gestao Alimentar', description: 'Cardapios, estoque e orcamento da escola' },
     notifications: { label: 'Notificacoes', description: 'Alertas e comunicados' },
     settings: { label: 'Meu Perfil', description: 'Conta do administrador escolar' },
@@ -226,7 +234,7 @@ const sectionLabels: Partial<Record<RoleProfile, Partial<Record<AppSection, Pick
   },
   ALUNO: {
     'student-performance': { label: 'Frequencia e Desempenho', description: 'Presencas, notas e alertas' },
-    'student-grades': { label: 'Notas', description: 'Provas e resultados confirmados' },
+    'student-grades': { label: 'Minhas Materias', description: 'Materias e notas confirmadas' },
     calendar: { label: 'Calendario e Comunicados', description: 'Eventos e avisos' },
     notifications: { label: 'Notificações', description: 'Alertas academicos' },
     settings: { label: 'Meu Perfil', description: 'Dados do aluno' },
@@ -368,6 +376,9 @@ export function getExplicitAllowedSections(profile: RoleProfile | null, permissi
   if (backendSections.has('people')) {
     backendSections.add('teachers')
     backendSections.add('students')
+  }
+  if ((profile === 'ADMIN' || profile === 'ADMIN_ESCOLA') && backendSections.has('dashboard')) {
+    backendSections.add('calendar')
   }
   return getSectionsForProfile(profile).filter((section) => backendSections.has(section))
 }
@@ -709,9 +720,16 @@ async function loadSectionPayload(section: AppSection, token: string, profile: R
     case 'notifications':
       return loadNotificationsScreen(token)
     case 'pedagogy':
-      return loadAcademicScopeWithLessonRecords().then((scopePayload) => ({
+      return Promise.all([
+        loadAcademicScopeWithLessonRecords(),
+        loadTeacherSubjectEvaluationsScreen(token, scopedOptions),
+      ]).then(([scopePayload, evaluationsPayload]) => ({
         ...scopePayload,
-        evaluations: [],
+        evaluations: evaluationsPayload.evaluations,
+        evaluationCorrections: evaluationsPayload.evaluationCorrections,
+        curriculumSkills: evaluationsPayload.curriculumSkills,
+        assessmentDescriptors: evaluationsPayload.assessmentDescriptors,
+        questionBank: evaluationsPayload.questionBank,
       }))
     case 'schools':
       return loadSchoolsScreen(token, scopedOptions)
@@ -767,7 +785,7 @@ async function loadSectionPayload(section: AppSection, token: string, profile: R
         students: scopePayload.students,
       }))
     case 'calendar':
-      return loadCalendarScreen(token, scopedOptions).then((calendarPayload) => ({
+      return loadCalendarScreen(token, { networkScope: isSuperAdminProfile(profile) }).then((calendarPayload) => ({
         ...calendarPayload,
         scope: {
           schools: calendarPayload.schools,
@@ -1341,7 +1359,7 @@ export default function App() {
   }
 
   function getScopedCalendarData(data: CalendarScreenPayload): CalendarScreenPayload {
-    if (!session || isNetworkAdminProfile(roleProfile)) return data
+    if (!session || isSuperAdminProfile(roleProfile)) return data
 
     const scopeSource = data.scope ?? screenData.schools
     const scopedSchools = data.scope
@@ -1591,6 +1609,10 @@ export default function App() {
             readOnly={!isAdminProfile(roleProfile)}
             onLoadSchoolsPage={(params: SchoolsPageQuery) => listSchoolsPage(token, params, { networkScope: isNetworkAdminProfile(roleProfile) })}
             onLoadClassesPage={(params: ClassesPageQuery) => listClassesPage(token, params, { networkScope: isNetworkAdminProfile(roleProfile) })}
+            onSearchStudents={(params) => searchStudentsForGuardian(token, {
+              ...params,
+              schoolId: roleProfile === 'DIRETOR' ? session.currentUser.schoolId ?? params.schoolId : params.schoolId,
+            }, { networkScope: isNetworkAdminProfile(roleProfile) })}
             onCreate={(draft) => isAdminProfile(roleProfile) ? runAction(async () => {
               const created = await createSchool(token, draft)
               updateScreenData('schools', (current) => ({ ...current, schools: [created, ...current.schools] }))
@@ -1742,13 +1764,17 @@ export default function App() {
         const scopedData = activeSection === 'room-reservations'
           ? data
           : getScopedSchoolsData(data)
-        const evaluationsData = activeSection === 'pedagogy'
-          ? undefined
-          : 'evaluations' in data
-            ? getScopedEvaluationsData(data as EvaluationsScreenPayload)
-            : screenData.evaluations
-            ? getScopedEvaluationsData(screenData.evaluations)
-            : undefined
+        const evaluationsData = 'evaluations' in data
+          ? getScopedEvaluationsData({
+              ...(data as EvaluationsScreenPayload),
+              schools: scopedData.schools,
+              classes: scopedData.classes,
+              teachers: scopedData.teachers,
+              students: scopedData.students,
+            })
+          : screenData.evaluations
+          ? getScopedEvaluationsData(screenData.evaluations)
+          : undefined
 
         return (
           <RolePortalView
@@ -1809,14 +1835,28 @@ export default function App() {
               return updatedLesson
             }}
             onLoadTeacherSubjectCardsPage={(params) => listTeacherSubjectCardsPage(token, params, { networkScope: isNetworkAdminProfile(roleProfile) })}
+            onLoadStudentSubjectCardsPage={(params) => listStudentSubjectCardsPage(token, params)}
             onDownloadEvaluation={(id) => runAction(async () => {
-              const file = await downloadEvaluationFile(token, id)
+              const file = activeSection === 'student-grades'
+                ? await downloadStudentEvaluationFile(token, id)
+                : await downloadEvaluationFile(token, id)
               saveDownloadedFile(file)
             }, 'Download da prova iniciado.')}
             onDownloadAnswerKey={(id) => runAction(async () => {
-              const file = await downloadEvaluationFile(token, id, 'answer_key')
+              const file = activeSection === 'student-grades'
+                ? await downloadStudentEvaluationFile(token, id, 'answer_key')
+                : await downloadEvaluationFile(token, id, 'answer_key')
               saveDownloadedFile(file)
             }, 'Download do gabarito iniciado.')}
+            onLoadEvaluationFile={(id, kind) => activeSection === 'student-grades'
+              ? downloadStudentEvaluationFile(token, id, kind)
+              : downloadEvaluationFile(token, id, kind)}
+            onLoadCorrectionDetail={(correctionId) => activeSection === 'student-grades'
+              ? getStudentGradeCorrectionDetail(token, correctionId)
+              : getEvaluationCorrection(token, correctionId)}
+            onLoadCorrectionCardPreview={(correctionId) => activeSection === 'student-grades'
+              ? getStudentEvaluationCorrectionCardFile(token, correctionId)
+              : getEvaluationCorrectionCardFile(token, correctionId)}
           />
         )
       }
@@ -1982,9 +2022,25 @@ export default function App() {
           <EvaluationCorrectionsView
             evaluations={scopedData.evaluations}
             classes={scopedData.classes}
+            schools={scopedData.schools ?? []}
             students={scopedData.students ?? []}
             corrections={scopedData.evaluationCorrections ?? []}
             answerCards={scopedData.answerCards ?? []}
+            canFilterBySchool={isNetworkAdminProfile(roleProfile)}
+            onLoadSchoolScope={isNetworkAdminProfile(roleProfile) ? async (schoolId) => {
+              const schoolFilter = schoolId && schoolId !== 'all' ? { schoolId } : {}
+              const [evaluationsPayload, scopePayload] = await Promise.all([
+                loadEvaluationCorrectionsScreen(token, { networkScope: true, ...schoolFilter }),
+                loadAcademicScopeScreen(token, { networkScope: true, ...schoolFilter }),
+              ])
+              return {
+                ...evaluationsPayload,
+                schools: scopePayload.schools,
+                classes: scopePayload.classes,
+                teachers: scopePayload.teachers,
+                students: scopePayload.students,
+              }
+            } : undefined}
             onLoadStudentsPage={(params) => listStudentsPage(token, params, { networkScope: isNetworkAdminProfile(roleProfile) })}
             onDownloadEvaluation={(id) => runAction(async () => {
               const file = await downloadEvaluationFile(token, id)
@@ -2860,82 +2916,6 @@ function CoreSpinner() {
   )
 }
 
-function StepRow({ step, index, activeIndex }: { step: typeof LOADING_STEPS[number]; index: number; activeIndex: number }) {
-  const state = index < activeIndex ? "done" : index === activeIndex ? "active" : "pending"
-
-  return (
-    <motion.div
-      initial={{ opacity: 0, x: -12 }}
-      animate={{ opacity: 1, x: 0 }}
-      transition={{ delay: 0.3 + index * 0.08, duration: 0.4, ease: "easeOut" }}
-      className="flex items-center gap-3"
-    >
-      {/* Status indicator */}
-      <div className="relative flex h-5 w-5 flex-shrink-0 items-center justify-center">
-        <AnimatePresence mode="wait">
-          {state === "done" && (
-            <motion.svg
-              key="check"
-              width={16} height={16} viewBox="0 0 24 24"
-              fill="none" stroke="#22c55e" strokeWidth={2.5}
-              strokeLinecap="round" strokeLinejoin="round"
-              initial={{ scale: 0, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0, opacity: 0 }}
-              transition={{ duration: 0.25, ease: [0.34, 1.56, 0.64, 1] }}
-            >
-              <polyline points="20 6 9 17 4 12" />
-            </motion.svg>
-          )}
-          {state === "active" && (
-            <motion.span
-              key="dot"
-              className="block h-2 w-2 rounded-full bg-indigo-500"
-              initial={{ scale: 0 }}
-              animate={{ scale: [1, 1.5, 1] }}
-              transition={{ duration: 0.9, repeat: Infinity, ease: "easeInOut" }}
-            />
-          )}
-          {state === "pending" && (
-            <motion.span
-              key="idle"
-              className="block h-1.5 w-1.5 rounded-full bg-slate-300"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-            />
-          )}
-        </AnimatePresence>
-      </div>
-
-      {/* Label */}
-      <span
-        className="text-[13px] font-medium transition-colors duration-300"
-        style={{
-          color: state === "done" ? "#22c55e" : state === "active" ? "#4f46e5" : "#94a3b8",
-          fontFamily: "'DM Sans', sans-serif",
-        }}
-      >
-        {step.label}
-      </span>
-
-      {/* Active shimmer bar */}
-      {state === "active" && (
-        <motion.div
-          className="ml-auto h-[2px] w-12 overflow-hidden rounded-full bg-indigo-100"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-        >
-          <motion.div
-            className="h-full w-6 rounded-full bg-indigo-500"
-            animate={{ x: [-24, 48] }}
-            transition={{ duration: 1, repeat: Infinity, ease: "easeInOut" }}
-          />
-        </motion.div>
-      )}
-    </motion.div>
-  )
-}
-
 function ScanLine({ delay }: { delay: number }) {
   return (
     <motion.div
@@ -2948,139 +2928,396 @@ function ScanLine({ delay }: { delay: number }) {
   )
 }
 
-export function ScreenLoadingState({ title, description }: { title: string; description: string }) {
-  const [activeStep, setActiveStep] = useState(0)
-  const [percentText, setPercentText] = useState(0)
-  const progressMotion = useMotionValue(0)
-  const widthPercent = useTransform(progressMotion, [0, 1], ["0%", "100%"])
+const STEPS = [
+  {
+    id: 0,
+    label: 'Conectando ao banco de dados',
+    sub: 'Estabelecendo conexão segura…',
+    stage: 'Conectando',
+    icon: 'database',
+  },
+  {
+    id: 1,
+    label: 'Carregando alunos e turmas',
+    sub: 'Sincronizando registros…',
+    stage: 'Sincronizando',
+    icon: 'users',
+  },
+  {
+    id: 2,
+    label: 'Verificando frequências',
+    sub: 'Processando dados…',
+    stage: 'Processando',
+    icon: 'calendar-stats',
+  },
+  {
+    id: 3,
+    label: 'Finalizando ambiente',
+    sub: 'Quase lá…',
+    stage: 'Finalizando',
+    icon: 'circle-check',
+  },
+] as const
 
+const STEP_TIMINGS = [0, 900, 1900, 3000] // ms
+const PROGRESS_DURATION = 3800 // ms
+const PROGRESS_TARGET = 86 // %
+
+// ─── Utilitário — easing quadrático ──────────────────────────────────────────
+
+function easeInOut(t: number) {
+  return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t
+}
+
+function Spinner() {
+  return (
+    <div className="ls-spinner" aria-hidden>
+      <div className="ls-ring ls-ring-outer" />
+      <div className="ls-ring ls-ring-mid" />
+      <div className="ls-ring ls-ring-inner" />
+      <div className="ls-core">
+        <i className="ti ti-school" />
+      </div>
+    </div>
+  )
+}
+
+type StepState = 'pending' | 'active' | 'done'
+
+function StepRow({
+  step,
+  state,
+}: {
+  step: (typeof STEPS)[number]
+  state: StepState
+}) {
+  return (
+    <div className="ls-step">
+      <div className={cn('ls-step-icon', state)}>
+        {state === 'done' ? (
+          <i className="ti ti-check" />
+        ) : (
+          <i className={`ti ti-${step.icon}`} />
+        )}
+      </div>
+      <div className="ls-step-text">
+        <span className={cn('ls-step-label', state)}>{step.label}</span>
+        <span className={cn('ls-step-sub', state)}>{step.sub}</span>
+      </div>
+    </div>
+  )
+}
+
+function PulsingDots() {
+  return (
+    <div className="ls-dots" aria-hidden>
+      <span className="ls-dot" />
+      <span className="ls-dot" style={{ animationDelay: '.2s' }} />
+      <span className="ls-dot" style={{ animationDelay: '.4s' }} />
+    </div>
+  )
+}
+
+export function ScreenLoadingState({
+  title,
+  description,
+}: {
+  title: string
+  description: string
+}) {
+  const [activeStep, setActiveStep] = useState(0)
+  const [pct, setPct]               = useState(0)
+  const rafRef                      = useRef<number>(0)
+
+  // Avança steps nos timings definidos
   useEffect(() => {
-    // Advance steps
-    const timings = [0, 600, 1400, 2400]
-    const timers = timings.map((t, i) =>
-      window.setTimeout(() => setActiveStep(i), t)
+    const timers = STEP_TIMINGS.map((t, i) =>
+      window.setTimeout(() => setActiveStep(i), t),
     )
     return () => timers.forEach(clearTimeout)
   }, [])
 
+  // Progresso via rAF — zero JS de animação CSS duplicado
   useEffect(() => {
-    // Animate progress value
-    const ctrl = animate(progressMotion, 0.85, {
-      duration: 3.5,
-      ease: [0.22, 1, 0.36, 1],
-    })
-    return ctrl.stop
+    const start = performance.now()
+
+    function tick(now: number) {
+      const raw = Math.min((now - start) / PROGRESS_DURATION, 1)
+      setPct(Math.round(easeInOut(raw) * PROGRESS_TARGET))
+      if (raw < 1) rafRef.current = requestAnimationFrame(tick)
+    }
+
+    rafRef.current = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(rafRef.current)
   }, [])
 
-  useEffect(() => {
-    // Tick percentage display
-    const unsub = progressMotion.on("change", (v) => {
-      setPercentText(Math.round(v * 100))
-    })
-    return unsub
-  }, [])
+  const currentStage = STEPS[Math.min(activeStep, STEPS.length - 1)].stage
 
   return (
-    <div
-      className="relative flex min-h-[calc(100vh-80px)] flex-col items-center justify-center overflow-hidden p-6"
-      style={{ background: "transparent" }}
-    >
-      {/* Scan lines */}
-      {SCAN_LINES.map((i) => (
-        <ScanLine key={i} delay={i * 0.5} />
-      ))}
+    <div className="ls-wrap">
+      {/* Fundo pontilhado */}
+      <div className="ls-dots-bg" aria-hidden />
 
-      {/* Dot grid */}
-      <div
-        className="pointer-events-none absolute inset-0 opacity-[0.035]"
-        style={{
-          backgroundImage: "radial-gradient(circle, #6366f1 1px, transparent 1px)",
-          backgroundSize: "28px 28px",
-          maskImage: "radial-gradient(ellipse 65% 55% at 50% 50%, black 0%, transparent 100%)",
-        }}
-      />
+      {/* Scan lines — CSS puro */}
+      <div className="ls-scan" aria-hidden />
+      <div className="ls-scan" style={{ animationDelay: '-1.8s' }} aria-hidden />
+      <div className="ls-scan" style={{ animationDelay: '-.9s', opacity: 0.5 }} aria-hidden />
 
-      {/* Content card */}
-      <motion.div
-        initial={{ opacity: 0, y: 20, scale: 0.97 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
-        className="relative z-10 flex w-full max-w-sm flex-col items-center gap-7"
-      >
+      <div className="ls-card">
         {/* Spinner */}
-        <CoreSpinner />
+        <Spinner />
 
-        {/* Text */}
-        <div className="flex flex-col items-center gap-2 text-center">
-          <h2
-            className="font-DMSans m-0 text-xl font-black tracking-tight text-slate-900"
-            style={{ letterSpacing: "-0.025em" }}
-          >
-            {title}
-          </h2>
-          <p className="m-0 max-w-xs text-sm leading-relaxed text-slate-500">
-            {description}
-          </p>
+        {/* Texto */}
+        <div className="ls-text">
+          <h2 className="ls-title">{title}</h2>
+          <p className="ls-desc">{description}</p>
         </div>
 
-        {/* Steps list */}
-        <div
-          className="w-full rounded-2xl border border-slate-100 bg-white/80 p-4 shadow-sm backdrop-blur-sm"
-          style={{ display: "flex", flexDirection: "column", gap: 10 }}
-        >
-          {LOADING_STEPS.map((step, i) => (
-            <StepRow key={step.label} step={step} index={i} activeIndex={activeStep} />
-          ))}
+        {/* Steps */}
+        <div className="ls-steps" role="list" aria-label="Etapas de carregamento">
+          {STEPS.map((step, i) => {
+            const state: StepState =
+              i < activeStep ? 'done' : i === activeStep ? 'active' : 'pending'
+            return <StepRow key={step.id} step={step} state={state} />
+          })}
         </div>
 
-        {/* Progress bar + percent */}
-        <div className="flex w-full flex-col gap-2">
-          <div className="relative h-1 overflow-hidden rounded-full bg-slate-100">
-            <motion.div
-              className="absolute inset-y-0 left-0 rounded-full bg-indigo-600"
-              style={{ width: widthPercent }}
-            />
-            {/* Shimmer */}
-            <motion.div
-              className="absolute inset-y-0 w-12 rounded-full bg-white/50"
-              style={{ left: widthPercent }}
-              animate={{ opacity: [0, 1, 0] }}
-              transition={{ duration: 0.9, repeat: Infinity, ease: "easeOut" }}
-            />
+        {/* Barra de progresso */}
+        <div className="ls-progress-wrap">
+          <div className="ls-progress-bar" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
+            <div className="ls-progress-fill" style={{ width: `${pct}%` }} />
+            <div className="ls-shimmer" aria-hidden />
           </div>
-
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-1.5">
-              <AnimatePresence mode="wait">
-                <motion.span
-                  key={activeStep}
-                  className="text-[11px] font-semibold uppercase tracking-[0.12em] text-indigo-500"
-                  initial={{ opacity: 0, y: 4, filter: "blur(3px)" }}
-                  animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-                  exit={{ opacity: 0, y: -4, filter: "blur(3px)" }}
-                  transition={{ duration: 0.25, ease: "easeOut" }}
-                >
-                  {LOADING_STEPS[Math.min(activeStep, LOADING_STEPS.length - 1)].label}
-                </motion.span>
-              </AnimatePresence>
-              <div className="flex gap-[4px]">
-                {[0, 1, 2].map((i) => (
-                  <PulsingDot key={i} delay={i * 0.2} />
-                ))}
-              </div>
+          <div className="ls-progress-meta">
+            <div className="ls-label-group">
+              <span className="ls-label">{currentStage}</span>
+              <PulsingDots />
             </div>
-            <motion.span
-              className="text-[12px] font-bold tabular-nums text-slate-400"
-              style={{ fontFamily: "monospace" }}
-            >
-              {percentText}%
-            </motion.span>
+            <span className="ls-percent">{pct}%</span>
           </div>
         </div>
-      </motion.div>
+      </div>
+
+      <style>{CSS}</style>
     </div>
   )
 }
+
+const CSS = `
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+
+@keyframes lsSpinOuter  { to { transform: rotate(360deg); } }
+@keyframes lsSpinMid    { to { transform: rotate(-360deg); } }
+@keyframes lsCorePulse  {
+  0%,100% { transform: scale(1); opacity: 1; }
+  50%     { transform: scale(1.12); opacity: .7; }
+}
+@keyframes lsFadeUp {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes lsStepIn {
+  from { opacity: 0; transform: translateX(-6px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes lsDotBlink {
+  0%,80%,100% { opacity: .25; }
+  40%         { opacity: 1; }
+}
+@keyframes lsScanMove {
+  from { top: -2px; }
+  to   { top: 100%; }
+}
+@keyframes lsShimmerSlide {
+  0%   { left: -10%; opacity: 0; }
+  20%  { opacity: 1; }
+  100% { left: 110%; opacity: 0; }
+}
+@keyframes lsRingPop {
+  0%   { transform: scale(.82); opacity: 0; }
+  60%  { transform: scale(1.04); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+/* ── Layout ── */
+.ls-wrap {
+  font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+  background: transparent;
+  min-height: calc(100vh - 80px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 20px;
+  position: relative;
+  overflow: hidden;
+}
+
+/* ── Fundo decorativo ── */
+.ls-dots-bg {
+  position: absolute; inset: 0; pointer-events: none;
+  background-image: radial-gradient(circle, rgba(99,102,241,.18) 1px, transparent 1px);
+  background-size: 26px 26px;
+  mask-image: radial-gradient(ellipse 70% 60% at 50% 50%, black 0%, transparent 100%);
+  -webkit-mask-image: radial-gradient(ellipse 70% 60% at 50% 50%, black 0%, transparent 100%);
+  opacity: .4;
+}
+.ls-scan {
+  position: absolute; left: 0; right: 0; height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(99,102,241,.25), transparent);
+  animation: lsScanMove 3.6s linear infinite;
+  pointer-events: none;
+}
+
+/* ── Card central ── */
+.ls-card {
+  position: relative; z-index: 10;
+  width: 100%; max-width: 340px;
+  display: flex; flex-direction: column; align-items: center; gap: 24px;
+  animation: lsFadeUp .55s cubic-bezier(.22,1,.36,1) both;
+}
+
+/* ── Spinner ── */
+.ls-spinner {
+  position: relative; width: 72px; height: 72px;
+  animation: lsRingPop .6s cubic-bezier(.22,1,.36,1) both;
+}
+.ls-ring {
+  position: absolute; inset: 0; border-radius: 50%;
+  border: 2px solid transparent;
+}
+.ls-ring-outer {
+  border-top-color: #6366f1;
+  border-right-color: rgba(99,102,241,.25);
+  animation: lsSpinOuter 1.1s linear infinite;
+}
+.ls-ring-mid {
+  inset: 8px;
+  border-right-color: #818cf8;
+  border-bottom-color: #818cf8;
+  animation: lsSpinMid .8s linear infinite;
+}
+.ls-ring-inner {
+  inset: 17px; border-radius: 50%;
+  background: rgba(99,102,241,.08);
+  border: 1.5px solid rgba(99,102,241,.18);
+}
+.ls-core {
+  position: absolute; inset: 21px; border-radius: 50%;
+  background: linear-gradient(145deg, #4338ca, #6366f1);
+  animation: lsCorePulse 1.8s ease-in-out infinite;
+  display: grid; place-items: center;
+}
+.ls-core i { font-size: 14px; color: #fff; }
+
+/* ── Texto ── */
+.ls-text { text-align: center; display: flex; flex-direction: column; gap: 6px; }
+.ls-title {
+  font-size: 18px; font-weight: 800; letter-spacing: -.03em;
+  color: #1e1b4b; margin: 0;
+  animation: lsFadeUp .5s .1s cubic-bezier(.22,1,.36,1) both;
+}
+.ls-desc {
+  font-size: 13px; color: #6b7280; margin: 0; line-height: 1.55;
+  animation: lsFadeUp .5s .18s cubic-bezier(.22,1,.36,1) both;
+}
+
+/* ── Steps ── */
+.ls-steps {
+  width: 100%;
+  background: rgba(255,255,255,.85);
+  border: 1px solid rgba(99,102,241,.12);
+  border-radius: 16px;
+  padding: 14px 16px;
+  display: flex; flex-direction: column; gap: 8px;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  animation: lsFadeUp .5s .25s cubic-bezier(.22,1,.36,1) both;
+}
+.ls-step {
+  display: flex; align-items: center; gap: 10px;
+  animation: lsStepIn .4s cubic-bezier(.22,1,.36,1) both;
+}
+.ls-step:nth-child(1) { animation-delay: .32s; }
+.ls-step:nth-child(2) { animation-delay: .46s; }
+.ls-step:nth-child(3) { animation-delay: .60s; }
+.ls-step:nth-child(4) { animation-delay: .74s; }
+
+.ls-step-icon {
+  width: 28px; height: 28px; border-radius: 8px;
+  display: grid; place-items: center; flex-shrink: 0;
+  font-size: 13px;
+  transition: background .28s ease, border-color .28s ease, color .28s ease;
+}
+.ls-step-icon.pending {
+  background: rgba(99,102,241,.07);
+  border: 1px solid rgba(99,102,241,.14);
+  color: rgba(99,102,241,.35);
+}
+.ls-step-icon.active {
+  background: rgba(99,102,241,.12);
+  border: 1px solid rgba(99,102,241,.28);
+  color: #4f46e5;
+}
+.ls-step-icon.done {
+  background: rgba(16,185,129,.10);
+  border: 1px solid rgba(16,185,129,.25);
+  color: #059669;
+}
+
+.ls-step-text { flex: 1; min-width: 0; }
+.ls-step-label {
+  font-size: 12.5px; font-weight: 600; color: #374151;
+  display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  transition: color .28s ease;
+}
+.ls-step-label.active { color: #4338ca; }
+.ls-step-label.done   { color: #9ca3af; }
+.ls-step-sub {
+  font-size: 11px; color: #9ca3af; display: block; margin-top: 1px;
+  transition: color .28s ease;
+}
+.ls-step-sub.active { color: rgba(99,102,241,.7); }
+
+/* ── Barra de progresso ── */
+.ls-progress-wrap {
+  width: 100%;
+  animation: lsFadeUp .5s .35s cubic-bezier(.22,1,.36,1) both;
+}
+.ls-progress-bar {
+  height: 4px; border-radius: 99px;
+  background: rgba(99,102,241,.12);
+  position: relative; overflow: hidden;
+}
+.ls-progress-fill {
+  height: 100%; border-radius: 99px;
+  background: linear-gradient(90deg, #4338ca, #6366f1, #818cf8);
+  transition: width .12s linear;
+}
+.ls-shimmer {
+  position: absolute; top: 0; bottom: 0; width: 40px;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.6), transparent);
+  animation: lsShimmerSlide 2s ease-in-out infinite;
+  animation-delay: .5s;
+}
+.ls-progress-meta {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-top: 8px;
+}
+.ls-label-group { display: flex; align-items: center; gap: 6px; }
+.ls-label {
+  font-size: 11px; font-weight: 700;
+  letter-spacing: .1em; text-transform: uppercase; color: #6366f1;
+}
+.ls-dots { display: flex; gap: 3px; align-items: center; }
+.ls-dot {
+  width: 3px; height: 3px; border-radius: 50%; background: #6366f1;
+  animation: lsDotBlink 1.2s ease-in-out infinite;
+}
+.ls-percent {
+  font-size: 12px; font-weight: 700; color: #9ca3af;
+  font-family: monospace; letter-spacing: .02em;
+}
+`
 
 const GLITCH_CHARS = "!@#$%^&*<>[]{}|~"
 

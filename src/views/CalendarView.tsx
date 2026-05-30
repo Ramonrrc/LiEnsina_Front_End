@@ -385,6 +385,7 @@ type CronogramaCalendarProps = {
   canCreateEvent: boolean
   showCreateEventActions: boolean
   createEventHint: string
+  filterControls?: React.ReactNode
   eventsForDate: (date: string) => VisualCalendarEvent[]
   onPrevMonth: () => void
   onNextMonth: () => void
@@ -400,6 +401,7 @@ function CronogramaCalendar({
   canCreateEvent,
   showCreateEventActions,
   createEventHint,
+  filterControls,
   eventsForDate,
   onPrevMonth,
   onNextMonth,
@@ -413,28 +415,37 @@ function CronogramaCalendar({
   const monthName = calendarMonthLabels[currentMonth.getMonth()]
   const visibleYear = currentMonth.getFullYear()
   const maxVisibleEvents = 4
+  const actionControlsClass = showCreateEventActions
+    ? 'grid min-h-8 w-full max-w-full grid-cols-1 items-center gap-1.5 min-[380px]:grid-cols-2 min-[380px]:gap-4 min-[560px]:grid-cols-[136px_136px_136px] sm:w-auto sm:justify-end md:justify-center'
+    : 'grid min-h-8 w-full max-w-full grid-cols-1 items-center gap-1.5 min-[380px]:grid-cols-2 min-[560px]:grid-cols-[136px_136px] sm:w-auto sm:justify-end md:justify-center'
 
   return (
     <div className="flex w-full max-w-full flex-col justify-center overflow-hidden rounded-xl border border-[#e2e0da] bg-[#f4f3ef] px-2.5 py-3 font-DMSans sm:rounded-2xl sm:px-7 sm:py-7">
-      <div className="mb-3 flex flex-col items-stretch gap-2.5 sm:mb-5 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+      <div className="mb-3 flex flex-col items-stretch gap-2.5 sm:mb-5 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
         <div className="min-w-0">
           <h1 className="text-[24px] font-black leading-none tracking-normal text-[#1a1814] sm:text-[32px]">
-            <span className="rounded-md bg-[#5b4fe8] px-2 py-0.5 text-white">calen</span>dário
+            <span className="rounded-md bg-white px-2 py-0.5 text-slate-900">Calendário</span>
           </h1>
           <p className="mt-1 max-w-xl text-[11px] italic text-[#7a776e] sm:mt-1.5 sm:text-[12px]">
             Clique em um dia para ver horario, progresso e onde a turma parou.
           </p>
         </div>
-        {showCreateEventActions && (
-          <button
-            type="button"
-            onClick={onCreateEvent}
-            disabled={!canCreateEvent}
-            title={createEventHint}
-            className="inline-flex h-8 w-full shrink-0 items-center justify-center gap-1.5 rounded-lg border border-indigo-500 bg-indigo-600 px-3 text-[12px] font-bold text-white shadow-sm transition hover:bg-indigo-700 active:scale-95 disabled:cursor-not-allowed disabled:border-[#d6d3cc] disabled:bg-white disabled:text-[#9d9a93] sm:w-auto"
-          >
-            <Plus size={14} /> Novo evento
-          </button>
+        {(filterControls || showCreateEventActions) && (
+          <div className={actionControlsClass}>
+            {filterControls}
+            {showCreateEventActions && (
+              <button
+                type="button"
+                onClick={onCreateEvent}
+                disabled={!canCreateEvent}
+                title={createEventHint}
+                className="flex h-10 min-h-10 w-full min-w-0 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-indigo-500 bg-indigo-600 px-3 py-0 text-[12px] font-bold leading-none text-white shadow-sm transition hover:bg-indigo-700 active:scale-95 disabled:cursor-not-allowed disabled:border-[#d6d3cc] disabled:bg-white disabled:text-[#9d9a93] min-[380px]:col-span-2 min-[560px]:col-span-1"
+              >
+                <Plus size={14} className="shrink-0" />
+                <span className="leading-none">Novo evento</span>
+              </button>
+            )}
+          </div>
         )}
       </div>
 
@@ -522,8 +533,8 @@ function CronogramaCalendar({
               >
                   <div className="relative flex h-full min-h-[72px] flex-col gap-1 px-1.5 py-1.5 sm:min-h-[112px] sm:gap-1 sm:px-2 sm:py-2">
                     {isToday && (
-                    <span className="pointer-events-none absolute left-1/2 top-1/2 z-[2] aspect-square w-[min(calc(100%_-_8px),2.8rem)] -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-[#5b4fe8] sm:w-[min(calc(100%_-_14px),9.5rem)]" />
-                  )}
+                      <span className="pointer-events-none absolute left-1/2 top-1/2 z-[2] -translate-x-1/2 -translate-y-1/2 aspect-square h-[calc(100%-6px)] max-h-[calc(100%-6px)] w-auto rounded-full border-2 border-[#5b4fe8] sm:h-[calc(100%-8px)]" />
+                    )}
                   <span
                     className={`relative z-[5] mb-0.5 block font-['Lora',serif] text-[10px] leading-none sm:mb-1 sm:text-[11px]
                       ${isToday ? 'font-extrabold text-[#5b4fe8]' : cell.otherMonth ? 'text-[#c5c2bb]' : 'text-[#8a877f]'}
@@ -614,10 +625,9 @@ function MetricCard({
 /* ─────────────────────────────────────────────
    Filter group
 ───────────────────────────────────────────── */
-function FilterGroup({ icon, children }: { icon: React.ReactNode; children: React.ReactNode }) {
+function FilterGroup({ children, className = '' }: { children: React.ReactNode; className?: string }) {
   return (
-    <div className="flex min-h-8 items-center gap-1.5 bg-white border border-stone-300 rounded-lg px-2.5 py-1 transition-all hover:border-stone-400">
-      <span className="flex items-center text-stone-400 flex-shrink-0">{icon}</span>
+    <div className={`relative flex h-8 min-w-0 items-center ${className}`}>
       {children}
     </div>
   )
@@ -707,7 +717,7 @@ const compactSelectCls =
   `${compactInputCls} !min-h-8 !px-2.5 !gap-1.5 !text-[12px] [&_span]:!text-[12px] [&_svg]:!h-3.5 [&_svg]:!w-3.5`
 
 const toolbarSelectCls =
-  'bg-transparent !min-h-7 !border-0 !shadow-none !px-0 !gap-1.5 outline-none text-[12px] font-semibold text-stone-900 cursor-pointer appearance-none disabled:cursor-not-allowed disabled:text-stone-400 font-DMSans [&_span]:!text-[12px] [&_svg]:!h-3.5 [&_svg]:!w-3.5'
+  '!h-8 !min-h-8 !rounded-lg !border-stone-300 !bg-white !px-2.5 !py-0 !gap-1.5 !text-[12px] font-bold text-stone-700 !shadow-sm hover:!border-indigo-300 hover:!shadow-sm disabled:!bg-stone-50 disabled:text-stone-400 font-DMSans [&_span]:!text-[12px] [&_svg]:!h-3.5 [&_svg]:!w-3.5'
 
 const compactSelectOptionCls =
   '!rounded-lg !px-2.5 !py-1.5'
@@ -961,7 +971,11 @@ export default function CalendarView({
 
   /* ── Select options ── */
   const schoolFilterOptions = useMemo<Array<CompactSelectOption<string>>>(() => {
-    const allOpt = { value: 'all', label: isFamilyScopedAccess ? 'Todas as escolas dos filhos' : 'Todas as escolas' }
+    const allOpt = {
+      value: 'all',
+      label: isFamilyScopedAccess ? 'Escolas dos filhos' : 'Escolas',
+      description: isFamilyScopedAccess ? 'Todas as escolas dos filhos' : 'Todas as escolas',
+    }
     const showAll = !isProfessorAccess && (!isFamilyScopedAccess || accessibleSchools.length !== 1)
     return [
       ...(showAll ? [allOpt] : []),
@@ -970,9 +984,9 @@ export default function CalendarView({
   }, [accessibleSchools, isFamilyScopedAccess, isProfessorAccess])
 
   const classFilterOptions = useMemo<Array<CompactSelectOption<string>>>(() => {
-    if (!schoolFilter || schoolFilter === 'all') return [{ value: 'all', label: 'Selecione uma escola primeiro', disabled: true }]
+    if (!schoolFilter || schoolFilter === 'all') return [{ value: 'all', label: 'Turmas', description: 'Selecione uma escola primeiro', disabled: true }]
     return [
-      { value: 'all', label: isProfessorAccess ? 'Eventos da escola' : 'Todas as turmas da escola' },
+      { value: 'all', label: 'Turmas', description: isProfessorAccess ? 'Eventos da escola' : 'Todas as turmas da escola' },
       ...classesAvailableForSelectedSchool.map((c) => ({
         value: c.id, label: c.name, description: `${formatClassGrade(c.grade)} · ${c.shift}`,
       })),
@@ -1186,6 +1200,44 @@ export default function CalendarView({
 
   /* ── Render setup ── */
   /* ── Render ── */
+  const calendarFilterControls = (
+    <>
+      <FilterGroup className="w-full min-w-0">
+        <CompactSelect
+          id="cv-school-filter"
+          value={schoolFilter}
+          onChange={(id) => { setSchoolFilter(id); setClassFilter('all') }}
+          options={schoolFilterOptions}
+          disabled={isProfessorAccess && accessibleSchools.length <= 1}
+          leftIcon={<School size={13} />}
+          wrapperClassName="w-full min-w-0"
+          className={toolbarSelectCls}
+          dropdownAnchor="button"
+          dropdownOffset={4}
+          dropdownMinWidth={200}
+          optionClassName={compactSelectOptionCls}
+        />
+      </FilterGroup>
+
+      <FilterGroup className="w-full min-w-0">
+        <CompactSelect
+          id="cv-class-filter"
+          value={classFilter}
+          onChange={setClassFilter}
+          options={classFilterOptions}
+          disabled={!schoolFilter || schoolFilter === 'all' || (isProfessorAccess && classesAvailableForSelectedSchool.length === 0)}
+          leftIcon={<Users size={13} />}
+          wrapperClassName="w-full min-w-0"
+          className={toolbarSelectCls}
+          dropdownAnchor="button"
+          dropdownOffset={4}
+          dropdownMinWidth={200}
+          optionClassName={compactSelectOptionCls}
+        />
+      </FilterGroup>
+    </>
+  )
+
   return (
     <>
       <style>{`
@@ -1374,72 +1426,23 @@ export default function CalendarView({
             </div>
           )}
 
-          {/* ══ CALLOUT BAR ══ */}
           {/* ══ CALENDAR PANEL ══ */}
-          <section className="animate-in fade-in slide-in-from-bottom-2 duration-500 delay-[350ms] fill-mode-both overflow-hidden rounded-2xl border border-stone-300 bg-white shadow-sm">
-            <div className="h-0.5 bg-gradient-to-r from-indigo-500 via-violet-500 to-purple-500" />
-            {/* Panel header */}
-            <div className="px-3 py-3 border-b border-stone-200 bg-stone-50 flex items-center justify-between gap-3 flex-wrap sm:px-5 sm:py-4">
-              <div className="flex items-center gap-3">
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-500 shadow-sm sm:h-9 sm:w-9 sm:rounded-xl">
-                  <CalendarDays size={16} className="text-white" />
-                </div>
-                <div>
-                  <Eyebrow className="text-indigo-500">Agenda visual</Eyebrow>
-                  <p className="font-DMSans text-sm font-semibold text-stone-900 leading-snug mt-0.5">Calendário escolar</p>
-                </div>
-              </div>
-
-              <div className="cv-filter-bar flex items-center gap-1.5 flex-wrap">
-                <FilterGroup icon={<School size={13} />}>
-                  <CompactSelect
-                    id="cv-school-filter"
-                    value={schoolFilter}
-                    onChange={(id) => { setSchoolFilter(id); setClassFilter('all') }}
-                    options={schoolFilterOptions}
-                    disabled={isProfessorAccess && accessibleSchools.length <= 1}
-                    wrapperClassName="flex min-w-0 max-w-[185px] self-stretch items-center"
-                    className={toolbarSelectCls}
-                    dropdownAnchor="parent"
-                    dropdownOffset={4}
-                    dropdownMinWidth={200}
-                    optionClassName={compactSelectOptionCls}
-                  />
-                </FilterGroup>
-
-                <FilterGroup icon={<Users size={13} />}>
-                  <CompactSelect
-                    id="cv-class-filter"
-                    value={classFilter}
-                    onChange={setClassFilter}
-                    options={classFilterOptions}
-                    disabled={!schoolFilter || schoolFilter === 'all' || (isProfessorAccess && classesAvailableForSelectedSchool.length === 0)}
-                    wrapperClassName="flex min-w-0 max-w-[175px] self-stretch items-center"
-                    className={toolbarSelectCls}
-                    dropdownAnchor="parent"
-                    dropdownOffset={4}
-                    dropdownMinWidth={200}
-                    optionClassName={compactSelectOptionCls}
-                  />
-                </FilterGroup>
-
-              </div>
-            </div>
-
+          <section className="animate-in fade-in slide-in-from-bottom-2 duration-500 delay-[350ms] fill-mode-both">
             {/* Cronograma */}
             {loading ? (
-              <div className="p-5">
+              <div>
                 <Bone className="w-full h-[480px]"/>
               </div>
             ) : (
               <>
-                <div className="cv-desktop-calendar bg-[#ebe9e3] p-2 sm:p-5">
+                <div className="cv-desktop-calendar">
                   <CronogramaCalendar
                     currentMonth={currentMonth}
                     activeFilters={activeCalendarFilters}
                     canCreateEvent={canCreateEvent}
                     showCreateEventActions={showCreateEventActions}
                     createEventHint={createEventHint}
+                    filterControls={calendarFilterControls}
                     eventsForDate={getEventsForDate}
                     onPrevMonth={() => moveCalendarMonth(-1)}
                     onNextMonth={() => moveCalendarMonth(1)}

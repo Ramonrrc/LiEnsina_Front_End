@@ -62,6 +62,8 @@ import type {
   EvaluationCorrectionConfirmManyResponse,
   EvaluationCorrectionReviewPayload,
   EvaluationOmrBatchResponse,
+  EvaluationsScreenPayload,
+  School,
   Student,
   StudentsPageQuery,
   StudentsPagePayload,
@@ -72,9 +74,15 @@ import type {
 type EvaluationCorrectionsViewProps = {
   evaluations: Evaluation[]
   classes: ClassRoom[]
+  schools?: School[]
   students: Student[]
   corrections: EvaluationCorrection[]
   answerCards?: EvaluationAnswerCard[]
+  canFilterBySchool?: boolean
+  onLoadSchoolScope?: (schoolId: string) => Promise<Pick<
+    EvaluationsScreenPayload,
+    'evaluations' | 'classes' | 'students' | 'evaluationCorrections' | 'answerCards' | 'schools'
+  >>
   onProcess: (evaluationId: string, studentId: string, image: File) => Promise<EvaluationCorrection>
   onBatchProcess?: (evaluationId: string, files: File[]) => Promise<EvaluationOmrBatchResponse>
   onReview: (correctionId: string, payload: EvaluationCorrectionReviewPayload) => Promise<EvaluationCorrection>
@@ -851,10 +859,31 @@ function LightModal({
 /* ─── Main ───────────────────────────────────────────────────────────────── */
 
 export default function EvaluationCorrectionsView({
-  evaluations, classes, students, corrections,
-  answerCards = [], onProcess, onBatchProcess, onReview, onReviewMany,
-  onLoadStudentsPage, onDownloadEvaluation, onDownloadAnswerCards, onLoadCorrectionDetail, onLoadCorrectionCardPreview,
+  evaluations: allEvaluations,
+  classes: allClasses,
+  schools = [],
+  students: allStudents,
+  corrections: allCorrections,
+  answerCards: allAnswerCards = [],
+  canFilterBySchool = false,
+  onLoadSchoolScope,
+  onProcess,
+  onBatchProcess,
+  onReview,
+  onReviewMany,
+  onLoadStudentsPage,
+  onDownloadEvaluation,
+  onDownloadAnswerCards,
+  onLoadCorrectionDetail,
+  onLoadCorrectionCardPreview,
 }: EvaluationCorrectionsViewProps) {
+  const [schoolId, setSchoolId] = useState('')
+  const [schoolScopeData, setSchoolScopeData] = useState<Pick<
+    EvaluationsScreenPayload,
+    'evaluations' | 'classes' | 'students' | 'evaluationCorrections' | 'answerCards' | 'schools'
+  > | null>(null)
+  const [schoolScopeLoading, setSchoolScopeLoading] = useState(false)
+  const [schoolScopeError, setSchoolScopeError] = useState<string | null>(null)
   const [classId, setClassId] = useState('')
   const [evaluationId, setEvaluationId] = useState('')
   const [selectedCorrectionId, setSelectedCorrectionId] = useState('')
@@ -885,9 +914,103 @@ export default function EvaluationCorrectionsView({
   const batchFileUrlsRef = useRef<string[]>([])
   const previewRequestRef = useRef(0)
 
+  useEffect(() => {
+    if (!canFilterBySchool || !schoolId || !onLoadSchoolScope) {
+      setSchoolScopeData(null)
+      setSchoolScopeLoading(false)
+      setSchoolScopeError(null)
+      return
+    }
+
+    let cancelled = false
+    setSchoolScopeLoading(true)
+    setSchoolScopeError(null)
+    onLoadSchoolScope(schoolId)
+      .then((payload) => {
+        if (!cancelled) setSchoolScopeData(payload)
+      })
+      .catch((err) => {
+        if (cancelled) return
+        setSchoolScopeData(null)
+        setSchoolScopeError(err instanceof Error ? err.message : 'Não foi possível carregar dados desta escola.')
+      })
+      .finally(() => {
+        if (!cancelled) setSchoolScopeLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [canFilterBySchool, onLoadSchoolScope, schoolId])
+
+  useEffect(() => {
+    setClassId('')
+    setEvaluationId('')
+    setSelectedCorrectionId('')
+    setStudentPage(1)
+    setStudentSearch('')
+  }, [schoolId])
+
+  const schoolOptions = useMemo<Array<CompactSelectOption<string>>>(() => [
+    { value: '', label: 'Todas as escolas' },
+    ...schools.map((school) => ({ value: school.id, label: school.name, description: school.city })),
+  ], [schools])
+
+  const classes = useMemo(() => {
+    if (schoolScopeData?.classes) return schoolScopeData.classes
+    if (!schoolId) return allClasses
+    return allClasses.filter((classRoom) => classRoom.schoolId === schoolId)
+  }, [allClasses, schoolId, schoolScopeData?.classes])
+
+  const classIds = useMemo(() => new Set(classes.map((classRoom) => classRoom.id)), [classes])
+
+  const evaluations = useMemo(() => {
+    const source = schoolScopeData?.evaluations ?? allEvaluations
+    return source.filter((evaluation) => {
+      const matchesSchool = !schoolId || evaluation.schoolId === schoolId || classIds.has(evaluation.classId)
+      const matchesClassScope = classIds.size === 0 || classIds.has(evaluation.classId)
+      return matchesSchool && matchesClassScope
+    })
+  }, [allEvaluations, classIds, schoolId, schoolScopeData?.evaluations])
+
+  const evaluationIds = useMemo(() => new Set(evaluations.map((evaluation) => evaluation.id)), [evaluations])
+
+  const students = useMemo(() => {
+    const source = schoolScopeData?.students ?? allStudents
+    return source.filter((student) => {
+      if (classIds.size && classIds.has(student.classId)) return true
+      return !schoolId || student.schoolId === schoolId
+    })
+  }, [allStudents, classIds, schoolId, schoolScopeData?.students])
+
+  const corrections = useMemo(() => {
+    const source = schoolScopeData?.evaluationCorrections ?? allCorrections
+    return source.filter((correction) => {
+      if (evaluationIds.has(correction.evaluationId)) return true
+      if (classIds.has(correction.classId)) return true
+      return Boolean(schoolId && correction.schoolId === schoolId)
+    })
+  }, [allCorrections, classIds, evaluationIds, schoolId, schoolScopeData?.evaluationCorrections])
+
+  const answerCards = useMemo(() => {
+    const source = schoolScopeData?.answerCards ?? allAnswerCards
+    return source.filter((card) => {
+      const evaluationId = getAnswerCardEvaluationId(card)
+      if (evaluationId && evaluationIds.has(evaluationId)) return true
+      const classId = card.classId ?? card.turma_id
+      if (classId && classIds.has(classId)) return true
+      const cardSchoolId = card.schoolId ?? card.escola_id
+      return Boolean(schoolId && cardSchoolId === schoolId)
+    })
+  }, [allAnswerCards, classIds, evaluationIds, schoolId, schoolScopeData?.answerCards])
+
   /* Bootstrap */
   useEffect(() => {
-    if (!classId && classes.length) setClassId(classes[0].id)
+    if (!classes.length) {
+      if (classId) setClassId('')
+      return
+    }
+    if (!classId || !classes.some((classRoom) => classRoom.id === classId)) setClassId(classes[0].id)
   }, [classId, classes])
 
   const classOptions = useMemo<Array<CompactSelectOption<string>>>(() => [
@@ -1252,12 +1375,35 @@ export default function EvaluationCorrectionsView({
             <div className="rounded-3xl border border-white/90 bg-white shadow-lg shadow-slate-200/60 overflow-hidden">
               <div className="h-1 bg-gradient-to-r from-indigo-400 via-violet-500 to-purple-400" />
 
-              <div className="grid sm:grid-cols-[1fr_1fr_auto] divide-x divide-slate-300">
+              <div className={`grid divide-y divide-slate-300 lg:divide-y-0 lg:divide-x ${canFilterBySchool ? 'lg:grid-cols-[minmax(220px,0.8fr)_1fr_1fr_auto]' : 'sm:grid-cols-[1fr_1fr_auto]'}`}>
+
+                {canFilterBySchool && (
+                  <div className="p-5 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <span className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-700 text-[9px] font-black text-white shrink-0">1</span>
+                      <Label>Selecione a escola</Label>
+                    </div>
+                    <CompactSelect
+                      value={schoolId}
+                      onChange={v => setSchoolId(v)}
+                      options={schoolOptions}
+                      disabled={schoolScopeLoading}
+                      className="min-h-10 rounded-xl border border-slate-300 bg-slate-50 px-3 text-sm font-semibold text-slate-800 transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 hover:border-indigo-300 font-['DM_Sans']"
+                      dropdownMinWidth={280}
+                    />
+                    {schoolScopeLoading && (
+                      <p className="text-xs font-semibold text-indigo-500 font-['DM_Sans']">Carregando turmas e provas...</p>
+                    )}
+                    {schoolScopeError && (
+                      <p className="text-xs font-semibold text-amber-600 font-['DM_Sans']">{schoolScopeError}</p>
+                    )}
+                  </div>
+                )}
 
                 {/* Seleção de turma — Passo 1 */}
                 <div className="p-5 space-y-2">
                   <div className="flex items-center gap-2">
-                    <span className="flex h-5 w-5 items-center justify-center rounded-full bg-indigo-600 text-[9px] font-black text-white shrink-0">1</span>
+                    <span className="flex h-5 w-5 items-center justify-center rounded-full bg-indigo-600 text-[9px] font-black text-white shrink-0">{canFilterBySchool ? '2' : '1'}</span>
                     <Label>Selecione a turma</Label>
                   </div>
                   <CompactSelect
@@ -1272,7 +1418,7 @@ export default function EvaluationCorrectionsView({
                 {/* Seleção de prova — Passo 2 */}
                 <div className="p-5 space-y-2">
                   <div className="flex items-center gap-2">
-                    <span className={`flex h-5 w-5 items-center justify-center rounded-full text-[9px] font-black shrink-0 transition-colors ${classId ? 'bg-violet-600 text-white' : 'bg-slate-300 text-slate-500'}`}>2</span>
+                    <span className={`flex h-5 w-5 items-center justify-center rounded-full text-[9px] font-black shrink-0 transition-colors ${classId ? 'bg-violet-600 text-white' : 'bg-slate-300 text-slate-500'}`}>{canFilterBySchool ? '3' : '2'}</span>
                     <Label>Selecione a prova</Label>
                   </div>
                   <CompactSelect

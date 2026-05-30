@@ -203,7 +203,7 @@ export default function LoginView({ errorMessage, isSubmitting, onBackToLanding,
 
         /* feature cards strip */
         .lv-features{display:flex;flex-direction:column;gap:7px;}
-        .lv-feat{display:flex;align-items:flex-start;gap:12px;border-radius:14px;padding:10px 13px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.07);}
+        .lv-feat{display:flex;align-items:center;gap:12px;border-radius:14px;padding:10px 13px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.07);}
         .lv-feat-icon{width:28px;height:28px;border-radius:9px;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,0.10);color:rgba(255,255,255,0.65);}
         .lv-feat p{font-size:12.5px;line-height:1.65;font-family:'DM Sans',sans-serif;color:rgba(255,255,255,0.50);}
 
@@ -413,7 +413,7 @@ export default function LoginView({ errorMessage, isSubmitting, onBackToLanding,
               <span className="font-DMSans">{appName}</span>
             </div>
 
-            <h1 style={{ fontFamily:"'Cormorant Garamond','Lora',Georgia,serif", fontSize:'2.1rem', fontWeight:600, lineHeight:1.22, letterSpacing:'-.01em', color:'rgba(255,255,255,0.95)', marginBottom:8 }}>
+            <h1 className="font-DMSans" style={{ fontSize:'2.1rem', fontWeight:600, lineHeight:1.22, letterSpacing:'-.01em', color:'rgba(255,255,255,0.95)', marginBottom:8 }}>
               Gestão Escolar<br />
               <span style={{ color:'rgba(255,255,255,0.40)' }}>Integrada</span>
             </h1>
@@ -457,10 +457,8 @@ export default function LoginView({ errorMessage, isSubmitting, onBackToLanding,
             style={{ position:'relative', zIndex:1 }}
           >
             {([
-              { icon: <Zap size={14} />, label: 'Dados', value: 'Backend', detail: 'Sem credenciais locais', dot: '#d4af5a', glow: 'rgba(212,175,90,0.65)' },
-              { icon: <ShieldCheck size={14} />, label: 'Autenticação', value: 'JWT', detail: 'Sessão persistida', dot: '#7ab4e8', glow: 'rgba(122,180,232,0.6)' },
-              { icon: <Users size={14} />, label: 'Turmas', value: 'Ativo', detail: 'Gestão completa', dot: '#7ab4e8', glow: 'rgba(122,180,232,0.6)' },
-              { icon: <BarChart3 size={14} />, label: 'Relatórios', value: 'Tempo real', detail: 'Exportação ativa', dot: '#d4af5a', glow: 'rgba(212,175,90,0.65)' },
+              { icon: <Zap size={14} />, label: 'Criação de Provas', value: 'Automaticamente', detail: 'Criação de Questões', dot: '#d4af5a', glow: 'rgba(212,175,90,0.65)' },
+              { icon: <ShieldCheck size={14} />, label: 'Correção de Provas', value: 'Lançamento de Notas', detail: 'Sistema de correção', dot: '#7ab4e8', glow: 'rgba(122,180,232,0.6)' },
             ]).map(({ icon, label, value, detail, dot, glow }, i) => (
               <div key={i} className="lv-stat">
                 <div className="lv-stat-head">
@@ -468,7 +466,7 @@ export default function LoginView({ errorMessage, isSubmitting, onBackToLanding,
                   <span className="lv-stat-dot" style={{ background: dot, boxShadow: `0 0 5px ${glow}` }} />
                 </div>
                 <p className="lv-stat-label">{label}</p>
-                <p className="lv-stat-value">{value}</p>
+                <p className="lv-stat-value font-DMSans">{value}</p>
                 <p className="lv-stat-detail">{detail}</p>
               </div>
             ))}
@@ -486,7 +484,7 @@ export default function LoginView({ errorMessage, isSubmitting, onBackToLanding,
             transition={{ delay: 0.10, duration: 0.48, ease: [0.16, 1, 0.3, 1] }}
           >
             <p className="lv-eyebrow">Acesso seguro</p>
-            <h2 className="lv-title">Entrar no sistema</h2>
+            <h2 className="lv-title font-DMSans">Entrar no sistema</h2>
             <p className="lv-subtitle">Insira as credenciais cadastradas no sistema.</p>
 
             <form onSubmit={handleSubmit} noValidate>

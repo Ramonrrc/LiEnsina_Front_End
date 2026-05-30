@@ -12,11 +12,11 @@ import { CompactSelect, type CompactSelectOption } from '../components/ui/compac
 import { DEFAULT_PAGE_SIZE, PaginationControls, getLocalPagination } from '../components/ui/pagination-controls'
 import { AvatarHoverPreview } from '../components/profile/AvatarSign'
 import { FieldMessage, fieldStateClass, zodFieldErrors, type FieldErrors } from '../components/ui/form-field'
-import { getOfficialAcademicSubjectList, getOfficialAcademicSubjectListForGrade } from '../components/role-portal/portal-components'
+import { getOfficialAcademicSubjectList, getOfficialAcademicSubjectListForGrade, getOfficialAcademicSubjectsForGrade } from '../components/role-portal/portal-components'
 import { resolveApiAssetUrl } from '../api'
 import { formatClassGrade, getClassGradeOptions } from '../class-grade-options'
 import { getAverageLessonAttendanceRate, getStudentAttendanceRateFromLessons } from '../lib/lesson-attendance'
-import type { ClassesPagePayload, ClassesPageQuery, ClassRoom, Desempenho, Guardian, LessonRecord, PaginationMeta, Role, School, SchoolsPagePayload, SchoolsPageQuery, Student, Teacher, UserAccount } from '../types'
+import type { ClassesPagePayload, ClassesPageQuery, ClassRoom, Desempenho, Guardian, LessonRecord, PaginationMeta, Role, School, SchoolsPagePayload, SchoolsPageQuery, Student, StudentsPagePayload, StudentsPageQuery, Teacher, UserAccount } from '../types'
 
 /* ─── Types ─── */
 interface SchoolsViewProps {
@@ -34,6 +34,7 @@ interface SchoolsViewProps {
   readOnly?: boolean
   onLoadSchoolsPage?: (params: SchoolsPageQuery) => Promise<SchoolsPagePayload>
   onLoadClassesPage?: (params: ClassesPageQuery) => Promise<ClassesPagePayload>
+  onSearchStudents?: (params: StudentsPageQuery) => Promise<StudentsPagePayload>
   onCreate: (draft: Partial<School>) => Promise<void>
   onUpdate: (id: string, draft: Partial<School>) => Promise<void>
   onCreateClass: (draft: Partial<ClassRoom>) => Promise<void>
@@ -642,7 +643,7 @@ function ClassCard({
 export default function SchoolsView({
   currentUser, currentRole, schools, schoolsPagination, classes, classesPagination, students, teachers, guardians,
   lessonRecords = [], assetVersion, readOnly = false,
-  onLoadSchoolsPage, onLoadClassesPage,
+  onLoadSchoolsPage, onLoadClassesPage, onSearchStudents,
   onCreate, onUpdate, onCreateClass, onUpdateClass,
   onCreateTeacher, onCreateStudent, onCreateGuardian,
 }: SchoolsViewProps) {
@@ -683,6 +684,11 @@ export default function SchoolsView({
   const [isGuardianModalOpen, setIsGuardianModalOpen] = useState(false)
   const [guardianFieldErrors, setGuardianFieldErrors] = useState<FieldErrors<GuardianFormField>>({})
   const [guardianSaving, setGuardianSaving] = useState(false)
+  const [guardianStudentSearch, setGuardianStudentSearch] = useState('')
+  const [guardianStudentResults, setGuardianStudentResults] = useState<Student[]>([])
+  const [guardianStudentCache, setGuardianStudentCache] = useState<Student[]>([])
+  const [guardianStudentSearchLoading, setGuardianStudentSearchLoading] = useState(false)
+  const [guardianStudentSearchError, setGuardianStudentSearchError] = useState<string | null>(null)
 
   const [query, setQuery] = useState('')
   const [schoolBackendSearch, setSchoolBackendSearch] = useState('')
@@ -801,6 +807,60 @@ export default function SchoolsView({
     }
   }, [classBackendSearch, classLimit, classPage, selectedSchoolId, classes])
 
+  useEffect(() => {
+    if (!isGuardianModalOpen) return
+
+    const search = guardianStudentSearch.trim()
+    if (search.length < 2) {
+      setGuardianStudentResults([])
+      setGuardianStudentSearchError(null)
+      setGuardianStudentSearchLoading(false)
+      return
+    }
+
+    let active = true
+    const timer = window.setTimeout(() => {
+      const params: StudentsPageQuery = {
+        page: 1,
+        limit: 5,
+        search,
+        schoolId: isDirectorView ? linkedSchoolId : undefined,
+      }
+
+      setGuardianStudentSearchLoading(true)
+      setGuardianStudentSearchError(null)
+
+      const request = onSearchStudents
+        ? onSearchStudents(params)
+        : Promise.resolve({ students: searchLocalGuardianStudents(search, params.schoolId), pagination: getLocalPagination(searchLocalGuardianStudents(search, params.schoolId).length, 1, 5) })
+
+      request
+        .then((payload) => {
+          if (!active) return
+          const results = payload.students.slice(0, 5)
+          setGuardianStudentResults(results)
+          setGuardianStudentCache((current) => {
+            const map = new Map(current.map((student) => [student.id, student]))
+            results.forEach((student) => map.set(student.id, student))
+            return Array.from(map.values())
+          })
+        })
+        .catch((error) => {
+          if (!active) return
+          setGuardianStudentResults(onSearchStudents ? [] : searchLocalGuardianStudents(search, params.schoolId))
+          setGuardianStudentSearchError(error instanceof Error ? error.message : 'Nao foi possivel buscar alunos no banco.')
+        })
+        .finally(() => {
+          if (active) setGuardianStudentSearchLoading(false)
+        })
+    }, 300)
+
+    return () => {
+      active = false
+      window.clearTimeout(timer)
+    }
+  }, [guardianStudentSearch, isDirectorView, isGuardianModalOpen, linkedSchoolId, onSearchStudents, students])
+
   const schoolsForList = onLoadSchoolsPage ? schoolPageSchools : schools
   const classesForList = onLoadClassesPage ? classPageClasses : classes
 
@@ -858,13 +918,27 @@ export default function SchoolsView({
   const classTeacherCandidates = useMemo(() => teachers.filter(t => !classDraft.schoolId || t.schoolId === classDraft.schoolId), [classDraft.schoolId, teachers])
   const classGradeOptions = useMemo<Array<CompactSelectOption<string>>>(() => getClassGradeOptions(classDraft.grade), [classDraft.grade])
   const classOptions = useMemo<Array<CompactSelectOption<string>>>(() => [{ value: '', label: 'Sem turma vinculada' }, ...classes.filter(c => !teacherDraft.schoolId || c.schoolId === teacherDraft.schoolId).map(c => ({ value: c.id, label: c.name, description: getSchoolName(c.schoolId) }))], [classes, teacherDraft.schoolId])
+  const officialTeacherSubjects = useMemo(() => Array.from(new Set([
+    ...getOfficialAcademicSubjectsForGrade('EF1'),
+    ...getOfficialAcademicSubjectsForGrade('EF6'),
+    ...getOfficialAcademicSubjectsForGrade('EM1'),
+  ])), [])
+  const selectedTeacherSubjects = useMemo(() => getReadableDisciplines(splitDisciplineList(teacherDraft.specialty ?? '')), [teacherDraft.specialty])
   const studentClassOptions = useMemo<Array<CompactSelectOption<string>>>(() => [{ value: '', label: 'Selecione a turma', disabled: true }, ...classes.filter(c => !studentDraft.schoolId || c.schoolId === studentDraft.schoolId).map(c => ({ value: c.id, label: c.name, description: getSchoolName(c.schoolId) }))], [classes, studentDraft.schoolId])
-  const guardianSchoolStudents = useMemo(() => students.filter(s => !guardianDraft.schoolId || s.schoolId === guardianDraft.schoolId), [guardianDraft.schoolId, students])
+  const guardianKnownStudents = useMemo(() => {
+    const map = new Map<string, Student>()
+    ;[...students, ...guardianStudentResults, ...guardianStudentCache].forEach((student) => map.set(student.id, student))
+    return map
+  }, [guardianStudentCache, guardianStudentResults, students])
+  const guardianSelectedStudents = useMemo(() => (
+    (guardianDraft.studentIds ?? []).map((id) => guardianKnownStudents.get(id)).filter((student): student is Student => Boolean(student))
+  ), [guardianDraft.studentIds, guardianKnownStudents])
   const studentSchoolGuardians = useMemo(() => guardians.filter(g => !studentDraft.schoolId || g.schoolId === studentDraft.schoolId), [guardians, studentDraft.schoolId])
   const shiftOptions: Array<CompactSelectOption<ClassRoom['shift']>> = [{ value: 'Manha', label: 'Manhã' }, { value: 'Tarde', label: 'Tarde' }, { value: 'Noite', label: 'Noite' }]
   const performanceOptions: Array<CompactSelectOption<Desempenho>> = [{ value: 'Otimo', label: 'Ótimo' }, { value: 'Medio', label: 'Médio' }, { value: 'Baixo', label: 'Baixo' }]
 
   function getSchoolName(id: string) { return schools.find(s => s.id === id)?.name ?? 'Escola não localizada' }
+  function getClassName(id: string) { return classes.find(c => c.id === id)?.name ?? 'Turma não localizada' }
   function getClassTeachers(cr: ClassRoom) {
     const ids = new Set([cr.teacherId, ...(cr.teacherIds ?? [])].filter(Boolean))
     return teachers.filter(t => ids.has(t.id))
@@ -879,6 +953,39 @@ export default function SchoolsView({
   }
   function getGuardianName(id: string) { return guardians.find(g => g.id === id)?.name ?? 'Responsável pendente' }
   function getDefaultSchoolId() { return selectedSchoolId || linkedSchoolId }
+  function normalizeSearchText(value?: string | null) {
+    return String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim()
+  }
+  function searchLocalGuardianStudents(search: string, schoolId?: string) {
+    const q = normalizeSearchText(search)
+    if (!q) return []
+    return students
+      .filter((student) => (
+        (!schoolId || student.schoolId === schoolId)
+        && [
+          student.name,
+          student.registrationNumber,
+          student.registration,
+          getClassName(student.classId),
+          getSchoolName(student.schoolId),
+        ].some((value) => normalizeSearchText(value).includes(q))
+      ))
+      .sort((a, b) => {
+        const an = normalizeSearchText(a.name)
+        const bn = normalizeSearchText(b.name)
+        const aScore = an === q ? 0 : an.startsWith(q) ? 1 : an.includes(q) ? 2 : 3
+        const bScore = bn === q ? 0 : bn.startsWith(q) ? 1 : bn.includes(q) ? 2 : 3
+        return aScore - bScore || an.localeCompare(bn)
+      })
+      .slice(0, 5)
+  }
+  function toggleTeacherSubject(subject: string) {
+    const current = new Set(selectedTeacherSubjects)
+    if (current.has(subject)) current.delete(subject)
+    else current.add(subject)
+    setTeacherDraft({ ...teacherDraft, specialty: Array.from(current).join(', ') })
+    clearF(setTeacherFieldErrors, 'specialty')
+  }
 
   const clearF = <T extends string>(setter: React.Dispatch<React.SetStateAction<FieldErrors<T>>>, field: T) =>
     setter(cur => ({ ...cur, [field]: undefined }))
@@ -965,9 +1072,21 @@ export default function SchoolsView({
   function openCreateGuardianModal(cr?: ClassRoom) {
     setGuardianFieldErrors({})
     setGuardianDraft({ ...emptyGuardian, schoolId: cr?.schoolId ?? getDefaultSchoolId(), studentIds: cr ? students.filter(s => s.classId === cr.id).map(s => s.id) : [] })
+    setGuardianStudentSearch('')
+    setGuardianStudentResults([])
+    setGuardianStudentCache(cr ? students.filter(s => s.classId === cr.id) : [])
+    setGuardianStudentSearchError(null)
     setIsGuardianModalOpen(true)
   }
-  function closeGuardianModal() { setGuardianFieldErrors({}); setGuardianDraft({ ...emptyGuardian }); setIsGuardianModalOpen(false) }
+  function closeGuardianModal() {
+    setGuardianFieldErrors({})
+    setGuardianDraft({ ...emptyGuardian })
+    setGuardianStudentSearch('')
+    setGuardianStudentResults([])
+    setGuardianStudentCache([])
+    setGuardianStudentSearchError(null)
+    setIsGuardianModalOpen(false)
+  }
   async function handleGuardianSubmit(e: FormEvent) {
     e.preventDefault()
     const result = guardianFormSchema.safeParse(guardianDraft)
@@ -982,8 +1101,15 @@ export default function SchoolsView({
     const cur = studentDraft.guardianIds ?? []
     setStudentDraft({ ...studentDraft, guardianIds: cur.includes(id) ? cur.filter(x => x !== id) : [...cur, id] })
   }
-  function toggleGuardianStudent(id: string) {
+  function toggleGuardianStudent(id: string, student?: Student) {
     const cur = guardianDraft.studentIds ?? []
+    if (student) {
+      setGuardianStudentCache((current) => {
+        const map = new Map(current.map((item) => [item.id, item]))
+        map.set(student.id, student)
+        return Array.from(map.values())
+      })
+    }
     setGuardianDraft({ ...guardianDraft, studentIds: cur.includes(id) ? cur.filter(x => x !== id) : [...cur, id] })
   }
 
@@ -1410,7 +1536,7 @@ export default function SchoolsView({
                   {[
                     { label: 'Professor', icon: UserRound, action: () => { setClassDetailsId(null); openCreateTeacherModal(detailsClass) }, cls: 'border-indigo-200 text-indigo-700 hover:border-indigo-400 hover:bg-indigo-50' },
                     { label: 'Aluno', icon: GraduationCap, action: () => { setClassDetailsId(null); openCreateStudentModal(detailsClass) }, cls: 'border-violet-200 text-violet-700 hover:border-violet-400 hover:bg-violet-50' },
-                    { label: 'Responsável', icon: Shield, action: () => { setClassDetailsId(null); openCreateGuardianModal(detailsClass) }, cls: 'border-slate-200 text-slate-600 hover:border-slate-400 hover:bg-slate-50' },
+                    { label: 'Responsável', icon: Shield, action: () => { setClassDetailsId(null); openCreateGuardianModal(detailsClass) }, cls: 'border-slate-300 text-slate-600 hover:border-slate-400 hover:bg-slate-50' },
                   ].map(btn => (
                     <button key={btn.label} type="button" onClick={btn.action}
                       className={`inline-flex items-center gap-1.5 rounded-md border bg-white px-2.5 py-1 text-xs font-semibold transition-all font-['DM_Sans'] ${btn.cls}`}>
@@ -1426,7 +1552,7 @@ export default function SchoolsView({
                   <UserRound size={13} className="text-indigo-500" />
                   <Eyebrow>Professores</Eyebrow>
                 </div>
-                <div className="grid grid-cols-2 gap-2 max-[640px]:grid-cols-1">
+                <div className="grid max-h-[220px] grid-cols-2 gap-2 overflow-y-auto overscroll-contain pr-1 max-[640px]:max-h-[180px] max-[640px]:grid-cols-1">
                   {classTeachers.map((t, i) => {
                     const p = withCurrentUserVisuals(t)
                     const rowColors = ['border-indigo-300/80 bg-indigo-50/60', 'border-violet-100 bg-violet-50/60', 'border-slate-100 bg-slate-50', 'border-slate-100 bg-slate-50']
@@ -1675,7 +1801,26 @@ export default function SchoolsView({
               </div>
             </Field>
             <Field label="Disciplinas" error={teacherFieldErrors.specialty} icon={BookOpen}>
-              <input className={`${inputCls} ${teacherFieldErrors.specialty ? inputErrCls : ''}`} value={teacherDraft.specialty ?? ''} onChange={e => { clearF(setTeacherFieldErrors, 'specialty'); setTeacherDraft({ ...teacherDraft, specialty: e.target.value }) }} placeholder="Matemática, Física" />
+              <div className={`max-h-[176px] overflow-y-auto rounded-xl border bg-white p-2 ${teacherFieldErrors.specialty ? inputErrCls : 'border-slate-300'}`}>
+                <div className="grid grid-cols-2 gap-1.5 max-[520px]:grid-cols-1">
+                  {officialTeacherSubjects.map((subject) => {
+                    const checked = selectedTeacherSubjects.includes(subject)
+                    return (
+                      <button
+                        key={subject}
+                        type="button"
+                        onClick={() => toggleTeacherSubject(subject)}
+                        className={`flex min-h-8 items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-left text-[12px] font-semibold transition-all font-['DM_Sans'] ${
+                          checked ? 'border-indigo-400 bg-indigo-50 text-indigo-700' : 'border-slate-200 bg-white text-slate-600 hover:border-indigo-200 hover:bg-indigo-50/60'
+                        }`}
+                      >
+                        <span className="truncate">{subject}</span>
+                        {checked && <Check className="h-3.5 w-3.5 shrink-0" />}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
             </Field>
             <Field label="Telefone" error={teacherFieldErrors.phone} icon={Phone}>
               <div className="relative">
@@ -1813,15 +1958,68 @@ export default function SchoolsView({
               <Users size={12} className="text-violet-500" />
               <Eyebrow>Alunos acompanhados</Eyebrow>
             </div>
-            <div className="grid grid-cols-2 gap-2 max-[640px]:grid-cols-1">
-              {guardianSchoolStudents.map(s => (
-                <label key={s.id} className={`flex cursor-pointer items-center gap-3 rounded-lg border px-3.5 py-2.5 text-sm font-semibold text-slate-700 transition-all
-                  ${(guardianDraft.studentIds ?? []).includes(s.id) ? 'border-violet-400 bg-violet-50' : 'border-slate-200 bg-white hover:border-violet-200'}`}>
-                  <input type="checkbox" className="h-4 w-4 accent-violet-600" checked={(guardianDraft.studentIds ?? []).includes(s.id)} onChange={() => toggleGuardianStudent(s.id)} />
-                  <span className="truncate">{s.name}</span>
-                </label>
-              ))}
-              {guardianSchoolStudents.length === 0 && <p className="col-span-2 py-4 text-center text-sm text-slate-400">Selecione uma escola com alunos.</p>}
+            <div className="space-y-3">
+              <div className="relative">
+                <Search size={14} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-violet-500" />
+                <input
+                  className={`${inputCls} pl-10 pr-10`}
+                  value={guardianStudentSearch}
+                  onChange={e => setGuardianStudentSearch(e.target.value)}
+                  placeholder="Buscar aluno por nome ou matrícula"
+                />
+                {guardianStudentSearchLoading && (
+                  <span className="absolute right-3.5 top-1/2 -translate-y-1/2">
+                    <Spin sm dark />
+                  </span>
+                )}
+              </div>
+
+              {guardianSelectedStudents.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {guardianSelectedStudents.map((student) => (
+                    <button
+                      key={student.id}
+                      type="button"
+                      onClick={() => toggleGuardianStudent(student.id, student)}
+                      className="inline-flex max-w-full items-center gap-1.5 rounded-lg border border-violet-300 bg-violet-50 px-2.5 py-1 text-[11px] font-semibold text-violet-700 transition hover:border-violet-400 hover:bg-violet-100 font-['DM_Sans']"
+                    >
+                      <span className="truncate">{student.name}</span>
+                      <X className="h-3 w-3 shrink-0" />
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {guardianStudentSearchError && (
+                <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-semibold text-amber-700 font-['DM_Sans']">{guardianStudentSearchError}</p>
+              )}
+
+              <div className="grid grid-cols-2 gap-2 max-[640px]:grid-cols-1">
+                {guardianStudentResults.map(s => {
+                  const checked = (guardianDraft.studentIds ?? []).includes(s.id)
+                  return (
+                    <button
+                      key={s.id}
+                      type="button"
+                      onClick={() => toggleGuardianStudent(s.id, s)}
+                      className={`flex min-w-0 items-center gap-3 rounded-lg border px-3.5 py-2.5 text-left text-sm font-semibold transition-all ${
+                        checked ? 'border-violet-400 bg-violet-50 text-violet-700' : 'border-slate-200 bg-white text-slate-700 hover:border-violet-200 hover:bg-violet-50/60'
+                      }`}
+                    >
+                      <span className={`grid h-4 w-4 shrink-0 place-items-center rounded border ${checked ? 'border-violet-500 bg-violet-500 text-white' : 'border-slate-300 bg-white'}`}>
+                        {checked && <Check className="h-3 w-3" />}
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block truncate">{s.name}</span>
+                        <span className="block truncate text-[10px] font-normal text-slate-400">{getClassName(s.classId)} · {getSchoolName(s.schoolId)}</span>
+                      </span>
+                    </button>
+                  )
+                })}
+                {guardianStudentSearch.trim().length >= 2 && !guardianStudentSearchLoading && guardianStudentResults.length === 0 && (
+                  <p className="col-span-2 py-4 text-center text-sm text-slate-400">Nenhum aluno encontrado.</p>
+                )}
+              </div>
             </div>
           </div>
 

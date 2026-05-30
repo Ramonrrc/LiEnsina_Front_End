@@ -62,7 +62,7 @@ import { StudentLegacyPerformanceView } from './role-portal/StudentLegacyPerform
 import { StudentGuardianProgressView } from './role-portal/StudentGuardianProgressView'
 import { StudentGradesView } from './role-portal/StudentGradesView'
 import { RolePortalFallbackView } from './role-portal/RolePortalFallbackView'
-import type { RolePortalScreenModel } from './role-portal/screen-model'
+import type { RolePortalFileResponse, RolePortalScreenModel } from './role-portal/screen-model'
 import { formatClassGrade } from '../class-grade-options'
 import {
   ActionButton,
@@ -100,6 +100,8 @@ import type {
   ClassRoom,
   CreateLessonRecordPayload,
   CreateRoomReservationPayload,
+  EvaluationCorrection,
+  EvaluationDownloadKind,
   EvaluationsScreenPayload,
   LessonRecord,
   Role,
@@ -107,6 +109,8 @@ import type {
   RoomReservation,
   SchoolsScreenPayload,
   Student,
+  StudentSubjectCardsPagePayload,
+  StudentSubjectsPageQuery,
   TeacherSubjectCardsPagePayload,
   TeacherSubjectsPageQuery,
   UpdateLessonRecordPayload,
@@ -127,12 +131,16 @@ interface RolePortalViewProps {
   onCreateLessonRecord?: (draft: CreateLessonRecordPayload) => Promise<LessonRecord>
   onUpdateLessonRecord?: (id: string, draft: UpdateLessonRecordPayload) => Promise<LessonRecord>
   onLoadTeacherSubjectCardsPage?: (params: TeacherSubjectsPageQuery) => Promise<TeacherSubjectCardsPagePayload>
+  onLoadStudentSubjectCardsPage?: (params: StudentSubjectsPageQuery) => Promise<StudentSubjectCardsPagePayload>
   onLoadEvaluationsData?: () => Promise<Pick<
     EvaluationsScreenPayload,
     'evaluations' | 'evaluationCorrections' | 'curriculumSkills' | 'assessmentDescriptors' | 'questionBank'
   >>
   onDownloadEvaluation?: (evaluationId: string) => Promise<void>
   onDownloadAnswerKey?: (evaluationId: string) => Promise<void>
+  onLoadEvaluationFile?: (evaluationId: string, kind?: EvaluationDownloadKind) => Promise<RolePortalFileResponse>
+  onLoadCorrectionDetail?: (correctionId: string) => Promise<EvaluationCorrection>
+  onLoadCorrectionCardPreview?: (correctionId: string) => Promise<RolePortalFileResponse>
 }
 
 
@@ -330,9 +338,13 @@ export default function RolePortalView({
   onCreateLessonRecord,
   onUpdateLessonRecord,
   onLoadTeacherSubjectCardsPage,
+  onLoadStudentSubjectCardsPage,
   onLoadEvaluationsData,
   onDownloadEvaluation,
   onDownloadAnswerKey,
+  onLoadEvaluationFile,
+  onLoadCorrectionDetail,
+  onLoadCorrectionCardPreview,
 }: RolePortalViewProps) {
   const { schools, classes, students, teachers, guardians } = schoolsData
   const [lazyEvaluationsData, setLazyEvaluationsData] = useState(evaluationsData)
@@ -824,7 +836,7 @@ export default function RolePortalView({
   const reservationSelectClass = 'min-h-10 w-full min-w-0 rounded-sm border border-slate-400 bg-white px-3 text-sm font-bold'
 
   const screenModel: RolePortalScreenModel = {
-    section, profile, currentUser, currentRole, schoolsData, evaluationsData: lazyEvaluationsData, onCreateRoomReservation, onCreateLessonRecord, onUpdateLessonRecord, onLoadTeacherSubjectCardsPage, onLoadEvaluationsData: handleLoadEvaluationsData, onDownloadEvaluation, onDownloadAnswerKey,
+    section, profile, currentUser, currentRole, schoolsData, evaluationsData: lazyEvaluationsData, onCreateRoomReservation, onCreateLessonRecord, onUpdateLessonRecord, onLoadTeacherSubjectCardsPage, onLoadStudentSubjectCardsPage, onLoadEvaluationsData: handleLoadEvaluationsData, onDownloadEvaluation, onDownloadAnswerKey, onLoadEvaluationFile, onLoadCorrectionDetail, onLoadCorrectionCardPreview,
     schools, classes, students, teachers, guardians, selectedClassId, setSelectedClassId, selectedStudentId, setSelectedStudentId, activeSubject, setActiveSubject, subjectModal, setSubjectModal, createdLessonRecords, setCreatedLessonRecords, lessonHistoryPage, setLessonHistoryPage, subjectHistoryPage, setSubjectHistoryPage, reservations, setReservations, selectedReservation, setSelectedReservation, lessonRecordStep, setLessonRecordStep, lessonError, setLessonError, lessonFieldErrors, setLessonFieldErrors, isSavingLesson, setIsSavingLesson, isSavingReservation, setIsSavingReservation, reservationError, setReservationError, reservationFieldErrors, setReservationFieldErrors, attendance, setAttendance, savedAttendance, setSavedAttendance, attendanceDirtyKeys, setAttendanceDirtyKeys, lessonDraft, setLessonDraft, reservationDraft, setReservationDraft, linkedTeacher, teacherClasses, visibleTeacherClasses, activeSubjectClasses, lessonRecords, classScope, selectedClass, selectedStudent, selectedClassStudents, averageScore, averageAttendance, lowAttendanceStudents, lowScoreStudents, subjectCards, modalCard, sortedSubjectHistoryRecords, subjectHistoryTotalPages, safeSubjectHistoryPage, subjectHistoryStartIndex, subjectHistoryEndIndex, visibleSubjectHistoryRecords, modalClasses, modalSelectedClass, modalSelectedStudents, lessonClass, lessonTimeOptions, lessonAttendanceStudents, lessonAttendanceKeys, lessonAttendanceHasChanges, modalAttendanceKeys, modalAttendanceHasChanges, lessonPresentCount, lessonDetailsReady, sortedLessonRecords, lessonHistoryTotalPages, safeLessonHistoryPage, lessonHistoryStartIndex, lessonHistoryEndIndex, visibleLessonHistoryRecords, reservationEndTimeOptions, getSchoolName, getClassName, getClassRoom, getReservationSchoolName, clearLessonFieldError, clearReservationFieldError, updateLessonDraftField, updateReservationDraftField, updateAttendance, commitAttendanceChanges, handleSaveLessonAttendance, openLessonRecord, openAttendanceList, getLessonValidationMessage, handleGoToLessonAttendance, handleSaveLesson, handleSaveReservation, handleReservationStartTimeChange, lessonHistoryPageSize, reservationStartTimeOptions, today, formatReservationDate, formatReservationTime, getLessonAttendanceKey, getFirstLessonTimeForClass, compareLessonRecordsByNewest, reservationFieldClass, reservationLabelClass, reservationInputClass, reservationSelectClass,
   }
 

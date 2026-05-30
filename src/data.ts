@@ -45,7 +45,7 @@ export const navItems: Array<{ id: AppSection; label: string; description: strin
   { id: 'lesson-records', label: 'Registro de Aula', description: 'Conteudo ministrado', icon: ClipboardList },
   { id: 'attendance-list', label: 'Lista de Frequencia', description: 'Chamada por turma', icon: ListChecks },
   { id: 'student-performance', label: 'Frequencia e Desempenho', description: 'Presencas, notas e alertas', icon: BarChart3 },
-  { id: 'student-grades', label: 'Notas', description: 'Provas confirmadas', icon: Award },
+  { id: 'student-grades', label: 'Minhas Materias', description: 'Materias e notas', icon: Award },
   { id: 'student-attendance', label: 'Minha Frequencia', description: 'Presencas e faltas', icon: ListChecks },
   { id: 'child-attendance', label: 'Frequencia e Desempenho', description: 'Presencas, notas e alertas', icon: ListChecks },
   { id: 'child-performance', label: 'Frequencia e Desempenho', description: 'Presencas, notas e alertas', icon: BarChart3 },

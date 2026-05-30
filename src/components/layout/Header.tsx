@@ -388,7 +388,7 @@ function IconButton({
       onClick={onClick}
       aria-label={label}
       whileTap={{ scale: 0.94 }}
-      className={`relative grid h-9 w-9 place-items-center rounded-xl outline-none transition-all duration-150 focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-1 ${className}`}
+      className={`relative grid h-9 w-9 place-items-center rounded-xl outline-none transition-all duration-150 focus-visible:ring-2 focus-visible:ring-indigo-400 focus-visible:ring-offset-1 ${className}`}
       style={{
         border: active ? '1.5px solid #bfdbfe' : '1.5px solid #C1C9D2',
         background: active
@@ -625,7 +625,7 @@ export function Header({
               {activeLabel}
             </p>
             {!activeBreadcrumb && (
-              <p className="truncate text-[11px] font-medium leading-tight text-slate-400">
+              <p className="truncate text-[11px] font-medium font-DMSans leading-tight text-slate-400">
                 {userRole} — {userName}
               </p>
             )}

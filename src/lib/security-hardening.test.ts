@@ -40,7 +40,7 @@ describe('security hardening helpers', () => {
     expect(getNavItemsForProfile(null)).toEqual([])
   })
 
-  it('requires explicit backend permissions and keeps ADMIN away from global access management', () => {
+  it('keeps ADMIN away from global access management and enables linked-school calendar', () => {
     const adminPermissions: MePermissionsPayload = {
       role: null,
       roleCode: 'ADMIN',
@@ -51,9 +51,14 @@ describe('security hardening helpers', () => {
       ...adminPermissions,
       roleCode: 'SUPERADMIN',
     }
+    const adminCalendarPermissions: MePermissionsPayload = {
+      ...adminPermissions,
+      allowedSections: ['dashboard', 'calendar', 'access'],
+    }
 
     expect(getExplicitAllowedSections(null, adminPermissions)).toEqual([])
-    expect(getExplicitAllowedSections('ADMIN', adminPermissions)).toEqual(['dashboard'])
+    expect(getExplicitAllowedSections('ADMIN', adminPermissions)).toEqual(['dashboard', 'calendar'])
+    expect(getExplicitAllowedSections('ADMIN', adminCalendarPermissions)).toEqual(['dashboard', 'calendar'])
     expect(getExplicitAllowedSections('SUPERADMIN', superAdminPermissions)).toEqual(['dashboard', 'access'])
   })
 
