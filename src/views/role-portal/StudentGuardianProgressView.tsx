@@ -69,7 +69,16 @@ import {
   getStudentAttendanceRateFromLessons,
   getStudentLessonAttendanceRows,
 } from '../../lib/lesson-attendance'
+import type { CurriculumSkill, Evaluation, EvaluationCorrection, Student } from '../../types'
 import type { RolePortalScreenModel } from './screen-model'
+
+type StudentGradeSummaryRow = {
+  id: string
+  subject: string
+  title: string
+  score: number
+  date: string | null
+}
 
 /* ─── Eyebrow ─── */
 function Eyebrow({ children, className = '' }: { children: React.ReactNode; className?: string }) {
@@ -177,6 +186,43 @@ function DisciplineRow({ name, index = 0 }: { name: string; index?: number }) {
 }
 
 /* ─── Info detail row (label + value) ─── */
+function GradeRowsPreview({
+  grades,
+  formatDate,
+}: {
+  grades: StudentGradeSummaryRow[]
+  formatDate: (value: string) => string
+}) {
+  if (!grades.length) return null
+
+  return (
+    <div className="grid gap-2">
+      <Eyebrow className="text-stone-500">Notas confirmadas no banco</Eyebrow>
+      {grades.slice(0, 4).map((grade, index) => (
+        <div
+          key={grade.id}
+          className="flex items-center justify-between gap-3 rounded-xl border border-stone-300 bg-stone-50 px-3 py-2.5"
+          style={{ animation: 'fadeSlideUp 0.35s ease-out forwards', opacity: 0, animationDelay: `${index * 35}ms` }}
+        >
+          <div className="min-w-0">
+            <strong className="block truncate text-sm font-semibold text-stone-900 font-['DM_Sans']">
+              {grade.subject}
+            </strong>
+            <span className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[11px] text-stone-400 font-['DM_Sans']">
+              <CalendarDays size={11} className="shrink-0" />
+              <span className="truncate">{grade.title}</span>
+              {grade.date && <span className="shrink-0">- {formatDate(grade.date)}</span>}
+            </span>
+          </div>
+          <span className="shrink-0 rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-sm font-bold text-indigo-700 font-['Lora']">
+            {grade.score.toFixed(1)}
+          </span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function DetailRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-xl border border-stone-300 bg-stone-50 px-3 py-2.5">
@@ -274,6 +320,55 @@ function ProgressRow({
 }
 
 /* ─── Alert strip ─── */
+function getCorrectionScore(correction: EvaluationCorrection) {
+  if (correction.finalScore == null) return null
+  const score = Number(correction.finalScore)
+  return Number.isFinite(score) ? score : null
+}
+
+function buildStudentGradeRowsByStudentId(
+  corrections: EvaluationCorrection[],
+  evaluationsById: Map<string, Evaluation>,
+  curriculumSkills: CurriculumSkill[],
+) {
+  const rowsByStudent = new Map<string, StudentGradeSummaryRow[]>()
+
+  for (const correction of corrections) {
+    if (correction.status !== 'CONFIRMED') continue
+    const score = getCorrectionScore(correction)
+    if (score === null) continue
+
+    const evaluation = evaluationsById.get(correction.evaluationId)
+    const rawSubject = correction.subject || evaluation?.subject || ''
+    const subject = getAcademicSubjectLabel(rawSubject, curriculumSkills) || rawSubject || 'Materia nao informada'
+    const row: StudentGradeSummaryRow = {
+      id: correction.id,
+      subject,
+      title: evaluation?.title || 'Nota confirmada',
+      score,
+      date: evaluation?.scheduledAt || correction.reviewedAt || correction.updatedAt || correction.createdAt || null,
+    }
+    rowsByStudent.set(correction.studentId, [...(rowsByStudent.get(correction.studentId) ?? []), row])
+  }
+
+  rowsByStudent.forEach((rows) => {
+    rows.sort((a, b) => String(b.date ?? '').localeCompare(String(a.date ?? '')))
+  })
+
+  return rowsByStudent
+}
+
+function getStudentScoreFromGradeRows(
+  student: Pick<Student, 'averageScore'> | null | undefined,
+  gradeRows: StudentGradeSummaryRow[],
+) {
+  if (gradeRows.length) {
+    return gradeRows.reduce((total, row) => total + row.score, 0) / gradeRows.length
+  }
+
+  return student?.averageScore ?? 0
+}
+
 function AlertStrip({ message, tone }: { message: string; tone: 'rose' | 'amber' }) {
   const cls = tone === 'rose'
     ? 'border-rose-300 bg-rose-50 text-rose-800'
@@ -426,12 +521,22 @@ export function StudentGuardianProgressView({ model }: { model: RolePortalScreen
   const isCombined = isGuardianCombined || isStudentCombined
   const isAttendance = !isCombined && section.includes('attendance')
   const classRoom = student ? getClassRoom(student.classId) : undefined
-  const disciplines = uniqueAcademicList(
-    (classRoom?.bnccFocus ?? [])
-      .flatMap(splitAcademicList)
-      .map((discipline) => getAcademicSubjectLabel(discipline, evaluationsData?.curriculumSkills ?? [])),
+  const curriculumSkills = evaluationsData?.curriculumSkills ?? []
+  const evaluationsById = new Map((evaluationsData?.evaluations ?? []).map((evaluation) => [evaluation.id, evaluation]))
+  const studentGradeRowsByStudentId = buildStudentGradeRowsByStudentId(
+    evaluationsData?.evaluationCorrections ?? [],
+    evaluationsById,
+    curriculumSkills,
   )
-  const score = student?.averageScore ?? 0
+  const studentGradeRows = student ? studentGradeRowsByStudentId.get(student.id) ?? [] : []
+  const getTrackedStudentScore = (item: Student) => getStudentScoreFromGradeRows(item, studentGradeRowsByStudentId.get(item.id) ?? [])
+  const disciplines = uniqueAcademicList([
+    ...(classRoom?.bnccFocus ?? [])
+      .flatMap(splitAcademicList)
+      .map((discipline) => getAcademicSubjectLabel(discipline, curriculumSkills)),
+    ...studentGradeRows.map((grade) => grade.subject),
+  ])
+  const score = getStudentScoreFromGradeRows(student, studentGradeRows)
   const attendanceRows = getStudentLessonAttendanceRows(student, lessonRecords, attendance, getLessonAttendanceKey)
   const classLessons = attendanceRows.map((row) => row.record)
   const attendanceRate = getAttendanceRateFromRows(attendanceRows) ?? student?.attendanceRate ?? 0
@@ -442,11 +547,11 @@ export function StudentGuardianProgressView({ model }: { model: RolePortalScreen
   const attendanceStatus = hasAttendanceAlert ? 'Atenção' : 'Em dia'
   const performanceStatus = hasAcademicAlert ? 'Acompanhar' : 'Adequado'
   const guardianChildrenWithAlerts = students.filter((item) => (
-    item.averageScore < 6 ||
+    getTrackedStudentScore(item) < 6 ||
     getStudentAttendanceRateFromLessons(item, lessonRecords, item.attendanceRate ?? 0, attendance, getLessonAttendanceKey) < 75
   ))
   const guardianAverageScore = students.length
-    ? students.reduce((total, item) => total + (item.averageScore ?? 0), 0) / students.length
+    ? students.reduce((total, item) => total + getTrackedStudentScore(item), 0) / students.length
     : 0
   const guardianAverageAttendance = students.length
     ? Math.round(students.reduce((total, item) => total + getStudentAttendanceRateFromLessons(item, lessonRecords, item.attendanceRate ?? 0, attendance, getLessonAttendanceKey), 0) / students.length)
@@ -644,6 +749,7 @@ export function StudentGuardianProgressView({ model }: { model: RolePortalScreen
                   detail="Escala de 0 a 10"
                   tone={hasAcademicAlert ? 'amber' : 'emerald'}
                 />
+                <GradeRowsPreview grades={studentGradeRows} formatDate={formatReservationDate} />
                 {disciplines.map((discipline, i) => (
                   <DisciplineRow key={discipline} name={discipline} index={i} />
                 ))}
@@ -816,6 +922,7 @@ export function StudentGuardianProgressView({ model }: { model: RolePortalScreen
                   detail="Escala de 0 a 10"
                   tone={hasAcademicAlert ? 'amber' : 'emerald'}
                 />
+                <GradeRowsPreview grades={studentGradeRows} formatDate={formatReservationDate} />
                 <ProgressRow
                   label="Frequência"
                   value={attendanceRate}

@@ -28,6 +28,8 @@ import type {
   CreateEvaluationApiResponse,
   EvaluationDownloadKind,
   EvaluationOmrBatchResponse,
+  EvaluationsPagePayload,
+  EvaluationsPageQuery,
   EvaluationsScreenPayload,
   GenerateQuestionSelectionRequest,
   GenerateQuestionSelectionResponse,
@@ -561,6 +563,8 @@ export async function loadDashboardScreen(token: string, queryParams?: Partial<D
   appendDashboardSelectionFilter(params, 'schoolId', queryParams?.schoolId)
   appendDashboardSelectionFilter(params, 'classId', queryParams?.classId)
   appendDashboardSelectionFilter(params, 'subject', queryParams?.subject)
+  const sanitizedSearch = sanitizeApiSearchParam(queryParams?.search)
+  if (sanitizedSearch) params.set('search', sanitizedSearch)
   if (queryParams?.period && dashboardPeriodFilters.has(queryParams.period)) params.set('period', queryParams.period)
 
   const query = params.toString()
@@ -696,7 +700,7 @@ export async function loadEvaluationsScreen(token: string, options: EvaluationSc
   const loadOptions = { ...defaultEvaluationScreenLoadOptions, ...options }
   const scopeParams = scopedFilterParams(loadOptions)
   const [
-    exams,
+    examsPage,
     classes,
     corrections,
     answerCards,
@@ -704,7 +708,7 @@ export async function loadEvaluationsScreen(token: string, options: EvaluationSc
     assessmentDescriptors,
     questionImportPlans,
   ] = await Promise.all([
-    listResource<Evaluation, 'exams'>(token, scopedResourcePath('exams', loadOptions), 'exams', scopeParams),
+    listEvaluationsPage(token, { page: 1, limit: DEFAULT_API_PAGE_LIMIT, ...scopeParams }, loadOptions),
     loadOptions.includeClasses
       ? listResource<ClassRoom, 'classes'>(token, scopedResourcePath('classes', loadOptions), 'classes', { schoolId: scopeParams.schoolId })
       : Promise.resolve([]),
@@ -726,7 +730,8 @@ export async function loadEvaluationsScreen(token: string, options: EvaluationSc
   ])
 
   return {
-    evaluations: exams,
+    evaluations: examsPage.evaluations,
+    evaluationsPagination: examsPage.pagination,
     classes,
     evaluationCorrections: corrections,
     answerCards,
@@ -863,10 +868,10 @@ function mergeStudentGradeCorrection(base: EvaluationCorrection, detail?: Evalua
 
 async function listStudentGradeItems(token: string) {
   try {
-    return await listResource<StudentGradeApiItem, 'grades'>(token, '/me/grades', 'grades', { status: 'CONFIRMED', view: 'detail' })
+    return await listAllResource<StudentGradeApiItem, 'grades'>(token, '/me/grades', 'grades', { status: 'CONFIRMED', view: 'detail' })
   } catch (error) {
     if (error instanceof ApiError && error.statusCode === 400) {
-      return listResource<StudentGradeApiItem, 'grades'>(token, '/me/grades', 'grades', { status: 'CONFIRMED' })
+      return listAllResource<StudentGradeApiItem, 'grades'>(token, '/me/grades', 'grades', { status: 'CONFIRMED' })
     }
     throw error
   }
@@ -1081,6 +1086,36 @@ export async function listClassesPage(token: string, params: ClassesPageQuery, o
     { token },
   )
   return normalizePagePayload(payload, 'classes') as ClassesPagePayload
+}
+
+function buildEvaluationsPageQuery(params: EvaluationsPageQuery) {
+  const query = new URLSearchParams({
+    page: String(clampApiPage(params.page)),
+    limit: String(clampApiPageLimit(params.limit)),
+  })
+
+  const sanitizedSearch = sanitizeApiSearchParam(params.search)
+  const sanitizedSchoolId = sanitizeApiSearchParam(params.schoolId)
+  const sanitizedClassId = sanitizeApiSearchParam(params.classId)
+  const sanitizedSubject = sanitizeApiSearchParam(params.subject)
+  const sanitizedTeacherId = sanitizeApiSearchParam(params.teacherId)
+  if (sanitizedSearch) query.set('search', sanitizedSearch)
+  if (sanitizedSchoolId && sanitizedSchoolId !== 'all') query.set('schoolId', sanitizedSchoolId)
+  if (sanitizedClassId && sanitizedClassId !== 'all') query.set('classId', sanitizedClassId)
+  if (sanitizedSubject && sanitizedSubject !== 'all') query.set('subject', sanitizedSubject)
+  if (sanitizedTeacherId && sanitizedTeacherId !== 'all') query.set('teacherId', sanitizedTeacherId)
+  if (params.status && params.status !== 'all') query.set('examStatus', params.status)
+
+  return query.toString()
+}
+
+export async function listEvaluationsPage(token: string, params: EvaluationsPageQuery, options: ScopedResourceOptions = {}) {
+  const payload = await apiRequest<PaginatedResponse<Evaluation, 'exams'> | Evaluation[]>(
+    `${scopedResourcePath('exams', options)}?${buildEvaluationsPageQuery(params)}`,
+    { token },
+  )
+  const page = normalizePagePayload(payload, 'exams') as PaginatedResponse<Evaluation, 'exams'>
+  return { evaluations: page.exams, pagination: page.pagination } as EvaluationsPagePayload
 }
 
 export async function searchMealFoods(token: string, search: string, limit = DEFAULT_API_PAGE_LIMIT) {
@@ -1596,11 +1631,11 @@ export async function createLessonRecord(token: string, payload: CreateLessonRec
 }
 
 export async function listLessonRecords(token: string, options: ScopedResourceOptions = {}) {
-  const payload = await apiRequest<PaginatedResponse<LessonRecord, 'lessonRecords'> | LessonRecord[]>(
-    `${scopedResourcePath('lesson-records', options)}${buildQuery({ page: 1, limit: DEFAULT_API_PAGE_LIMIT })}`,
-    { token },
+  return listAllResource<LessonRecord, 'lessonRecords'>(
+    token,
+    scopedResourcePath('lesson-records', options),
+    'lessonRecords',
   )
-  return normalizeResourceList(payload, 'lessonRecords')
 }
 
 export async function updateLessonRecord(token: string, id: string, payload: UpdateLessonRecordPayload) {

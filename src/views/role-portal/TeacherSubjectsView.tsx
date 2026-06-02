@@ -46,6 +46,7 @@ import { FieldMessage, fieldStateClass } from '../../components/ui/form-field'
 import { PaginationControls } from '../../components/ui/pagination-controls'
 import { PedagogicalDashboard } from './PedagogicalDashboard'
 import { formatClassGrade } from '../../class-grade-options'
+import { resolveApiAssetUrl } from '../../api'
 import {
   ActionButton,
   AlertBanner,
@@ -379,6 +380,47 @@ function SubjectCard({
 }
 
 /* ─── Attendance toggle ──────────────────────────────────────────────────── */
+function studentInitials(name?: string | null) {
+  return String(name ?? '')
+    .split(' ')
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((word) => word[0])
+    .join('')
+    .toUpperCase()
+}
+
+function StudentAvatar({
+  student,
+  className = 'h-9 w-9',
+  fallbackClassName = 'bg-indigo-100 text-indigo-500',
+}: {
+  student: { name: string; avatarUrl?: string | null }
+  className?: string
+  fallbackClassName?: string
+}) {
+  const avatarUrl = resolveApiAssetUrl(student.avatarUrl)
+  const initials = studentInitials(student.name)
+
+  return (
+    <span className={`grid shrink-0 place-items-center overflow-hidden rounded-full text-[11px] font-bold ${className} ${avatarUrl ? 'bg-white text-stone-500' : fallbackClassName}`}>
+      {avatarUrl ? (
+        <img
+          src={avatarUrl}
+          alt={student.name}
+          className="h-full w-full object-cover"
+          draggable={false}
+          referrerPolicy="no-referrer"
+        />
+      ) : initials ? (
+        initials
+      ) : (
+        <UserRound className="h-4 w-4" />
+      )}
+    </span>
+  )
+}
+
 function AttendanceRow({
   student, present, onToggle, animDelay,
 }: {
@@ -393,9 +435,10 @@ function AttendanceRow({
       style={{ animation: 'fadeSlideUp 0.3s ease-out forwards', opacity: 0, animationDelay: `${animDelay}ms` }}
     >
       <div className="flex items-center gap-3">
-        <div className={`grid h-9 w-9 shrink-0 place-items-center rounded-full transition-all ${present ? 'bg-emerald-500 text-white shadow-sm' : 'bg-stone-100 text-stone-400'}`}>
-          <UserRound className="h-4 w-4" />
-        </div>
+        <StudentAvatar
+          student={student}
+          fallbackClassName={present ? 'bg-emerald-500 text-white shadow-sm' : 'bg-stone-100 text-stone-400'}
+        />
         <div>
           <strong className="block text-sm font-semibold text-stone-900 leading-tight">{student.name}</strong>
           <span className="text-xs text-stone-400">{student.registrationNumber}</span>
@@ -455,10 +498,9 @@ export function TeacherSubjectsView({ model }: { model: RolePortalScreenModel })
     visibleTeacherClasses, activeSubjectClasses, lessonRecords, classScope,
     selectedClass, selectedStudent, selectedClassStudents, averageScore,
     averageAttendance, lowAttendanceStudents, lowScoreStudents, subjectCards,
-    modalCard, sortedSubjectHistoryRecords, subjectHistoryTotalPages,
-    safeSubjectHistoryPage, subjectHistoryStartIndex, subjectHistoryEndIndex,
-    visibleSubjectHistoryRecords, modalClasses, modalSelectedClass,
-    modalSelectedStudents, lessonClass, lessonTimeOptions, lessonAttendanceStudents,
+    modalCard: localModalCard, sortedSubjectHistoryRecords: localSortedSubjectHistoryRecords,
+    modalClasses: localModalClasses, modalSelectedClass: localModalSelectedClass,
+    modalSelectedStudents: localModalSelectedStudents, lessonClass, lessonTimeOptions, lessonAttendanceStudents,
     lessonAttendanceKeys, lessonAttendanceHasChanges, modalAttendanceKeys,
     modalAttendanceHasChanges, lessonPresentCount, lessonDetailsReady,
     sortedLessonRecords, lessonHistoryTotalPages, safeLessonHistoryPage,
@@ -475,10 +517,6 @@ export function TeacherSubjectsView({ model }: { model: RolePortalScreenModel })
     reservationSelectClass,
   } = model
 
-  const modalCardIndex = subjectCards.findIndex(
-    card => subjectModal && normalizeAcademicText(card.subject) === normalizeAcademicText(subjectModal.subject),
-  )
-  const modalIconStyle = getSubjectIconBg(modalCardIndex >= 0 ? modalCardIndex : 0)
   const subjectLessonCount = (subjectCards ?? []).reduce(
   (total, card) => total + card.lessons.length, 0
 )
@@ -534,11 +572,8 @@ export function TeacherSubjectsView({ model }: { model: RolePortalScreenModel })
   },
 }
   const canUseBackendSubjectCards = Boolean(onLoadTeacherSubjectCardsPage)
-  const backendSubjectCardsIncomplete = Boolean(
-  subjectCardsPage && subjectCards.length > (subjectCardsPage.totals?.subjects ?? 0),
-)
   const shouldUseBackendSubjectCards = Boolean(
-    subjectCardsPage && !subjectCardsError && !backendSubjectCardsIncomplete,
+    subjectCardsPage && !subjectCardsError,
   )
   const activeSubjectCardsPage =
   shouldUseBackendSubjectCards && subjectCardsPage
@@ -550,6 +585,30 @@ export function TeacherSubjectsView({ model }: { model: RolePortalScreenModel })
   const subjectStats = activeSubjectCardsPage.totals
   const subjectPageSource = shouldUseBackendSubjectCards ? 'backend' : 'local'
   const showSubjectSkeletons = canUseBackendSubjectCards && isSubjectCardsLoading && !subjectCardsPage
+  const backendModalCard = subjectModal
+    ? activeSubjectCardsPage.subjectCards.find((card) => normalizeAcademicText(card.subject) === normalizeAcademicText(subjectModal.subject)) ?? null
+    : null
+  const modalCard = shouldUseBackendSubjectCards
+    ? backendModalCard ?? localModalCard
+    : localModalCard
+  const modalClasses = modalCard
+    ? (modalCard.classes.length ? modalCard.classes : classScope)
+    : localModalClasses
+  const modalSelectedClass = modalClasses.find((classRoom) => classRoom.id === selectedClassId) ?? modalClasses[0] ?? localModalSelectedClass
+  const modalSelectedStudents = modalSelectedClass
+    ? getClassStudents(students, modalSelectedClass.id)
+    : localModalSelectedStudents
+  const sortedSubjectHistoryRecords = useMemo(
+    () => (modalCard ? [...(modalCard.lessons ?? [])].sort(compareLessonRecordsByNewest) : localSortedSubjectHistoryRecords),
+    [compareLessonRecordsByNewest, localSortedSubjectHistoryRecords, modalCard],
+  )
+  const subjectHistoryTotalPages = Math.max(1, Math.ceil(sortedSubjectHistoryRecords.length / lessonHistoryPageSize))
+  const safeSubjectHistoryPage = Math.min(Math.max(1, subjectHistoryPage), subjectHistoryTotalPages)
+  const subjectHistoryStartIndex = (safeSubjectHistoryPage - 1) * lessonHistoryPageSize
+  const visibleSubjectHistoryRecords = sortedSubjectHistoryRecords.slice(
+    subjectHistoryStartIndex,
+    subjectHistoryStartIndex + lessonHistoryPageSize,
+  )
   const headerStats = [
     { icon: LayoutGrid, iconBg: 'bg-indigo-100', iconCls: 'text-indigo-600', label: 'Total de matérias', value: subjectStats.subjects },
     { icon: Users, iconBg: 'bg-emerald-100', iconCls: 'text-emerald-600', label: 'Turmas vinculadas', value: subjectStats.classes },
@@ -592,7 +651,7 @@ export function TeacherSubjectsView({ model }: { model: RolePortalScreenModel })
       })
 
     return () => { active = false }
-  }, [debouncedSubjectSearch, onLoadTeacherSubjectCardsPage, subjectPage])
+  }, [debouncedSubjectSearch, lessonRecords, onLoadTeacherSubjectCardsPage, subjectPage])
 
   useEffect(() => {
     if (canUseBackendSubjectCards) return
@@ -894,8 +953,82 @@ export function TeacherSubjectsView({ model }: { model: RolePortalScreenModel })
               </div>
             )}
 
-            {/* ── Paginação do histórico no modal — substitui os botões manuais ── */}
-            {sortedSubjectHistoryRecords.length > 0 && (
+            {/* ── Histórico de aulas ── */}
+            {subjectModal.type === 'history' && (
+              <div className="grid gap-3">
+                <div className="flex items-center gap-3 rounded-xl border border-violet-200 bg-violet-50 px-4 py-3">
+                  <div className="grid h-8 w-8 place-items-center rounded-lg bg-violet-500 text-white">
+                    <CalendarDays className="h-4 w-4" />
+                  </div>
+                  <p className="text-sm font-semibold text-violet-800 font-['DM_Sans']">
+                    {sortedSubjectHistoryRecords.length} aula(s) registrada(s)
+                  </p>
+                </div>
+
+                {visibleSubjectHistoryRecords.map((lesson, index) => (
+                  <article
+                    key={lesson.id}
+                    className="rounded-xl border border-stone-300 bg-white p-4 shadow-sm transition hover:border-violet-200 hover:shadow-md"
+                    style={{ animation: 'fadeSlideIn 0.3s ease-out forwards', animationDelay: `${index * 45}ms`, opacity: 0 }}
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <strong className="block text-sm font-semibold text-stone-900 font-['Lora']">
+                          {lesson.content}
+                        </strong>
+                        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                          <span className="inline-flex items-center gap-1 rounded-md border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] font-semibold text-violet-700 font-['DM_Sans']">
+                            <GraduationCap className="h-3 w-3" />
+                            {getClassName(lesson.classId)}
+                          </span>
+                          <span className="inline-flex items-center gap-1 rounded-md border border-sky-200 bg-sky-50 px-2 py-0.5 text-[10px] font-semibold text-sky-700 font-['DM_Sans']">
+                            <CalendarDays className="h-3 w-3" />
+                            {formatReservationDate(lesson.date)}
+                          </span>
+                          <span className="inline-flex items-center gap-1 rounded-md border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700 font-['DM_Sans']">
+                            <Clock className="h-3 w-3" />
+                            {formatReservationTime(lesson.time)}
+                          </span>
+                        </div>
+                      </div>
+                      <span className="shrink-0 rounded-lg border border-stone-200 bg-stone-50 px-2.5 py-1 text-[10px] font-semibold text-stone-500 font-['DM_Sans']">
+                        {lesson.subject}
+                      </span>
+                    </div>
+
+                    <div className="mt-3 grid gap-2 md:grid-cols-3">
+                      {[
+                        { label: 'Plano', value: lesson.plan, icon: Target, cls: 'text-violet-500' },
+                        { label: 'Recursos', value: lesson.resources, icon: Layers, cls: 'text-sky-500' },
+                        { label: 'Atividade', value: lesson.activity, icon: Flame, cls: 'text-orange-500' },
+                      ].map((item) => (
+                        <div key={item.label} className="rounded-lg border border-stone-200 bg-stone-50 p-3">
+                          <Eyebrow className="mb-1 flex items-center gap-1">
+                            <item.icon className={`h-3 w-3 ${item.cls}`} />
+                            {item.label}
+                          </Eyebrow>
+                          <p className="line-clamp-3 text-xs font-medium leading-relaxed text-stone-600 font-['DM_Sans']">
+                            {item.value}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+
+                    {lesson.notes && (
+                      <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800 font-['DM_Sans']">
+                        {lesson.notes}
+                      </p>
+                    )}
+                  </article>
+                ))}
+
+                {visibleSubjectHistoryRecords.length === 0 && (
+                  <EmptyState message="Nenhuma aula registrada para esta materia." icon={<CalendarDays size={36} />} />
+                )}
+              </div>
+            )}
+
+            {subjectModal.type === 'history' && sortedSubjectHistoryRecords.length > 0 && (
               <div className="overflow-hidden rounded-xl border-2 border-stone-200 bg-white shadow-sm">
                 <PaginationControls
                   label="Aulas"
@@ -906,8 +1039,8 @@ export function TeacherSubjectsView({ model }: { model: RolePortalScreenModel })
                     totalPages: subjectHistoryTotalPages,
                   }}
                   limit={lessonHistoryPageSize}
-                  loading={false}
-                  source="local"
+                  loading={isSubjectCardsLoading}
+                  source={shouldUseBackendSubjectCards ? 'backend' : 'local'}
                   pageSizeOptions={[lessonHistoryPageSize]}
                   onPageChange={setSubjectHistoryPage}
                   onLimitChange={() => {}}
@@ -1026,9 +1159,7 @@ export function TeacherSubjectsView({ model }: { model: RolePortalScreenModel })
                                 className="grid min-w-0 items-center gap-3 rounded-xl border border-stone-200 bg-white p-3 transition hover:border-amber-200 hover:shadow-sm lg:grid-cols-[minmax(160px,1.4fr)_100px_120px_minmax(100px,1fr)] max-lg:grid-cols-2 max-[560px]:grid-cols-1"
                               >
                                 <div className="flex items-center gap-3 min-w-0">
-                                  <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-indigo-100 text-indigo-500">
-                                    <UserRound className="h-4 w-4" />
-                                  </span>
+                                  <StudentAvatar student={student} />
                                   <div className="min-w-0">
                                     <strong className="block truncate text-sm font-semibold text-stone-900 font-['DM_Sans']">{student.name}</strong>
                                     <span className="block truncate font-mono text-[10px] text-stone-400">

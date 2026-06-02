@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useMemo,
   useState,
   useRef,
   type CSSProperties,
@@ -47,6 +48,7 @@ import {
   AlertOctagon,
   CheckSquare,
   BookMarked as BookMarkedIcon,
+  Search,
 } from 'lucide-react'
 import {
   Bar,
@@ -62,11 +64,15 @@ import {
   YAxis,
 } from 'recharts'
 
+import { resolveApiAssetUrl } from '../../api'
+import { AvatarHoverPreview } from '../../components/profile/AvatarSign'
 import { getAcademicSubjectLabel } from '../../components/role-portal/portal-components'
+import { PaginationControls, type PaginationSource } from '../../components/ui/pagination-controls'
 import {
   getAverageLessonAttendanceRate,
   getStudentAttendanceRateFromLessons,
 } from '../../lib/lesson-attendance'
+import type { DashboardAlert, DashboardAlertsPagePayload, DashboardFiltersQuery, PaginationMeta } from '../../types'
 
 /* ─── Types ──────────────────────────────────────────────────────────────── */
 type ClassRoom = {
@@ -80,6 +86,12 @@ type ClassRoom = {
 type Student = {
   id: string
   name: string
+  email?: string
+  login?: string
+  registrationNumber?: string
+  avatarUrl?: string
+  bannerUrl?: string
+  className?: string
   classId: string
   attendanceRate: number
   averageScore: number
@@ -124,6 +136,7 @@ type PedagogicalDashboardProps = {
   lessonRecords: LessonRecord[]
   evaluations?: Evaluation[]
   evaluationCorrections?: EvaluationCorrection[]
+  onLoadAlertsPage?: (params: { page: number; limit: number; filters: Partial<DashboardFiltersQuery> }) => Promise<DashboardAlertsPagePayload>
 }
 
 /* ─── Design tokens ──────────────────────────────────────────────────────── */
@@ -142,6 +155,102 @@ function fmt(v: unknown) {
 function fmtPct(v: unknown) {
   const s = fmt(v)
   return s ? `${s}%` : ''
+}
+function getInitials(value: string) {
+  return value
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? '')
+    .join('')
+}
+function getStudentContact(student: Student) {
+  return student.email ?? student.login ?? student.registrationNumber ?? 'Sem e-mail cadastrado'
+}
+function normalizeSearchText(value: string) {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim()
+}
+const ALERT_PANEL_PAGE_SIZE = 6
+const ALERT_MODAL_PAGE_SIZE = 25
+
+function getPagination(total: number, page: number, limit: number): PaginationMeta {
+  const safeLimit = Math.min(100, Math.max(1, Math.trunc(Number(limit)) || ALERT_PANEL_PAGE_SIZE))
+  const totalPages = Math.max(1, Math.ceil(total / safeLimit))
+  return {
+    page: Math.min(Math.max(1, Math.trunc(Number(page)) || 1), totalPages),
+    limit: safeLimit,
+    total,
+    totalPages,
+  }
+}
+
+function paginateStudents(items: Student[], page: number, limit: number) {
+  const pagination = getPagination(items.length, page, limit)
+  const start = (pagination.page - 1) * pagination.limit
+  return {
+    students: items.slice(start, start + pagination.limit),
+    pagination,
+  }
+}
+
+function dashboardAlertToStudent(alert: DashboardAlert, studentsById: Map<string, Student>): Student | null {
+  const id = alert.student?.id ?? alert.studentId ?? alert.id.replace(/^alert-/, '')
+  const localStudent = id ? studentsById.get(id) : undefined
+
+  if (localStudent) {
+    return {
+      ...localStudent,
+      attendanceRate: alert.student?.attendanceRate ?? localStudent.attendanceRate,
+      averageScore: alert.student?.averageScore ?? localStudent.averageScore,
+      avatarUrl: alert.student?.avatarUrl ?? localStudent.avatarUrl,
+      bannerUrl: alert.student?.bannerUrl ?? localStudent.bannerUrl,
+      className: alert.student?.className ?? localStudent.className,
+    }
+  }
+
+  if (alert.student) {
+    return {
+      id: alert.student.id,
+      name: alert.student.name,
+      classId: alert.student.classId,
+      className: alert.student.className,
+      attendanceRate: alert.student.attendanceRate,
+      averageScore: alert.student.averageScore,
+      avatarUrl: alert.student.avatarUrl,
+      bannerUrl: alert.student.bannerUrl,
+    }
+  }
+
+  const name = alert.title.replace(/\s+em risco.*$/i, '').trim()
+  const attendanceMatch = alert.description.match(/frequ[eê]ncia\s+(\d+(?:[,.]\d+)?)%/i)
+  const scoreMatch = alert.description.match(/m[eé]dia\s+(\d+(?:[,.]\d+)?)/i)
+  const attendanceRate = Number(attendanceMatch?.[1]?.replace(',', '.') ?? 0)
+  const averageScore = Number(scoreMatch?.[1]?.replace(',', '.') ?? 0)
+  if (!id || !name) return null
+
+  return {
+    id,
+    name,
+    classId: '',
+    attendanceRate: Number.isFinite(attendanceRate) ? attendanceRate : 0,
+    averageScore: Number.isFinite(averageScore) ? averageScore : 0,
+  }
+}
+
+function dashboardAlertsToStudentsPage(
+  payload: DashboardAlertsPagePayload,
+  studentsById: Map<string, Student>,
+) {
+  return {
+    students: payload.alerts
+      .map((alert) => dashboardAlertToStudent(alert, studentsById))
+      .filter((student): student is Student => Boolean(student)),
+    pagination: payload.pagination,
+  }
 }
 
 /* ─── Font import ────────────────────────────────────────────────────────── */
@@ -661,18 +770,7 @@ function AlertCard({
           critical ? 'border-rose-400 hover:border-rose-500' : 'border-amber-300 hover:border-amber-400'
         }`}
       >
-        <div className="relative shrink-0">
-          <div
-            className={`grid h-11 w-11 place-items-center rounded-2xl border-2 ${
-              critical ? 'bg-rose-50 border-rose-300' : 'bg-amber-50 border-amber-300'
-            }`}
-          >
-            <UserRound size={18} className={critical ? 'text-rose-600' : 'text-amber-600'} />
-          </div>
-          {critical && (
-            <span className="absolute -top-1 -right-1 h-3.5 w-3.5 rounded-full bg-rose-500 border-2 border-white animate-[pulse-dot_1.5s_ease-in-out_infinite]" />
-          )}
-        </div>
+        <AlertStudentAvatar student={student} critical={critical} focusable={false} />
         <div className="min-w-0 flex-1">
           <strong className="block text-xs font-semibold text-stone-900 font-['Fraunces']">
             {student.name}
@@ -705,6 +803,89 @@ function AlertCard({
 }
 
 /* ─── Tooltip ────────────────────────────────────────────────────────────── */
+function AlertStudentAvatar({
+  student,
+  critical,
+  size = 'md',
+  focusable = true,
+}: {
+  student: Student
+  critical: boolean
+  size?: 'sm' | 'md' | 'lg'
+  focusable?: boolean
+}) {
+  const wrapperRef = useRef<HTMLDivElement | null>(null)
+  const [previewStyle, setPreviewStyle] = useState<CSSProperties | null>(null)
+  const avatarSrc = resolveApiAssetUrl(student.avatarUrl)
+  const bannerSrc = resolveApiAssetUrl(student.bannerUrl)
+  const initials = getInitials(student.name)
+  const hasProfileImage = Boolean(avatarSrc || bannerSrc)
+  const sizeClass = size === 'lg'
+    ? 'h-16 w-16 rounded-2xl text-lg'
+    : size === 'md'
+      ? 'h-11 w-11 rounded-2xl text-xs'
+      : 'h-9 w-9 rounded-xl text-[10px]'
+  const iconSize = size === 'lg' ? 28 : size === 'md' ? 18 : 15
+
+  function showPreview() {
+    if (!hasProfileImage) return
+    const rect = wrapperRef.current?.getBoundingClientRect()
+    if (!rect) return
+    const previewWidth = Math.min(360, window.innerWidth - 48)
+    const left = Math.min(Math.max(24, rect.left), Math.max(24, window.innerWidth - previewWidth - 24))
+    const belowTop = rect.bottom + 10
+    const previewHeight = 220
+    const top = belowTop + previewHeight > window.innerHeight ? Math.max(16, rect.top - previewHeight - 10) : belowTop
+    setPreviewStyle({ left, top, width: previewWidth })
+  }
+
+  return (
+    <div
+      ref={wrapperRef}
+      className="relative shrink-0"
+      onMouseEnter={showPreview}
+      onMouseLeave={() => setPreviewStyle(null)}
+      onFocus={showPreview}
+      onBlur={() => setPreviewStyle(null)}
+    >
+      <span
+        tabIndex={hasProfileImage && focusable ? 0 : -1}
+        className={`grid place-items-center overflow-hidden border-2 font-black shadow-sm outline-none transition-all duration-200 ${
+          critical ? 'bg-rose-50 border-rose-300 text-rose-600' : 'bg-amber-50 border-amber-300 text-amber-600'
+        } ${hasProfileImage ? 'cursor-pointer hover:scale-105 hover:ring-2 hover:ring-indigo-200 focus:ring-2 focus:ring-indigo-300' : ''} ${sizeClass}`}
+        aria-label={hasProfileImage ? `Ver foto de ${student.name}` : undefined}
+      >
+        {avatarSrc ? (
+          <img src={avatarSrc} alt={student.name} className="h-full w-full object-cover" draggable={false} />
+        ) : initials ? (
+          <span>{initials}</span>
+        ) : (
+          <UserRound size={iconSize} />
+        )}
+      </span>
+      {critical && (
+        <span className="absolute -top-1 -right-1 h-3.5 w-3.5 rounded-full bg-rose-500 border-2 border-white animate-[pulse-dot_1.5s_ease-in-out_infinite]" />
+      )}
+      {hasProfileImage && previewStyle && typeof document !== 'undefined'
+        ? createPortal(
+            <AvatarHoverPreview
+              name={student.name}
+              email={getStudentContact(student)}
+              avatarSrc={avatarSrc}
+              bannerSrc={bannerSrc}
+              initials={initials}
+              position="fixed"
+              style={previewStyle}
+              visible
+              className=""
+            />,
+            document.body,
+          )
+        : null}
+    </div>
+  )
+}
+
 const ChartTooltip = ({ active, payload, label }: any) => {
   if (!active || !payload?.length) return null
   return (
@@ -823,17 +1004,33 @@ function ActionBtn({
 function AlertModal({
   students,
   selectedId,
+  selectedFallback,
+  pagination,
+  loading,
+  source,
+  error,
+  search,
   onSelect,
+  onPageChange,
+  onSearchChange,
   onClose,
   getClass,
 }: {
   students: Student[]
   selectedId: string | null
+  selectedFallback?: Student | null
+  pagination: PaginationMeta
+  loading: boolean
+  source: PaginationSource
+  error?: string
+  search: string
   onSelect: (id: string) => void
+  onPageChange: (page: number) => void
+  onSearchChange: (value: string) => void
   onClose: () => void
   getClass: (classId: string) => string
 }) {
-  const selected = students.find((s) => s.id === selectedId) ?? students[0]
+  const selected = students.find((s) => s.id === selectedId) ?? selectedFallback ?? students[0]
   const [animIn, setAnimIn] = useState(false)
 
   useEffect(() => {
@@ -923,11 +1120,29 @@ function AlertModal({
           <aside className="flex min-h-0 flex-col border-r-2 border-stone-100 bg-stone-50">
             <div className="border-b-2 border-stone-100 px-4 py-3">
               <Label>
-                {students.length} aluno{students.length !== 1 ? 's' : ''}
+                {pagination.total} aluno{pagination.total !== 1 ? 's' : ''}
               </Label>
             </div>
-            <div className="flex-1 overflow-y-auto p-3 space-y-2" style={{ maxHeight: 440 }}>
-              {students.map((st) => {
+            <div className="border-b-2 border-stone-100 p-3">
+              <div className="relative">
+                <Search size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
+                <input
+                  value={search}
+                  onChange={(event) => onSearchChange(event.target.value)}
+                  className="h-10 w-full rounded-xl border-2 border-stone-200 bg-white pl-9 pr-3 text-xs font-semibold text-stone-700 outline-none transition-all placeholder:text-stone-400 focus:border-rose-300 focus:ring-2 focus:ring-rose-100 font-['Outfit']"
+                  placeholder="Buscar aluno"
+                />
+              </div>
+              {error && <p className="mt-2 text-[10px] font-bold text-rose-600 font-['Outfit']">{error}</p>}
+            </div>
+            <div className="flex-1 overflow-y-auto p-3 space-y-2">
+              {loading ? (
+                Array.from({ length: 6 }).map((_, index) => (
+                  <div key={index} className="rounded-xl border-2 border-stone-100 bg-white p-3">
+                    <Bone className="h-9 w-full rounded-lg" />
+                  </div>
+                ))
+              ) : students.length > 0 ? students.map((st) => {
                 const active = st.id === selected?.id
                 const isCrit = st.attendanceRate < 75 && st.averageScore < 6
                 return (
@@ -942,22 +1157,13 @@ function AlertModal({
                     }`}
                   >
                     <div className="flex items-center gap-2.5">
-                      <div
-                        className={`relative grid h-9 w-9 shrink-0 place-items-center rounded-xl border-2 ${
-                          isCrit ? 'bg-rose-50 border-rose-300' : 'bg-amber-50 border-amber-300'
-                        }`}
-                      >
-                        <UserRound size={15} className={isCrit ? 'text-rose-600' : 'text-amber-600'} />
-                        {isCrit && (
-                          <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full border-2 border-white bg-rose-500 animate-[pulse-dot_1.5s_ease-in-out_infinite]" />
-                        )}
-                      </div>
+                      <AlertStudentAvatar student={st} critical={isCrit} size="sm" focusable={false} />
                       <div className="min-w-0 flex-1">
                         <strong className="block truncate text-xs font-bold text-stone-900 font-['Fraunces']">
                           {st.name}
                         </strong>
                         <p className="truncate text-[10px] font-semibold text-stone-400 font-['Outfit']">
-                          {getClass(st.classId)}
+                          {st.className ?? getClass(st.classId)}
                         </p>
                         <div className="mt-1 flex gap-2">
                           <span
@@ -987,8 +1193,23 @@ function AlertModal({
                     </div>
                   </button>
                 )
-              })}
+              }) : (
+                <div className="rounded-xl border-2 border-stone-100 bg-white px-3 py-8 text-center">
+                  <p className="text-xs font-bold text-stone-400 font-['Outfit']">Nenhum aluno encontrado</p>
+                </div>
+              )}
             </div>
+            <PaginationControls
+              label="Alunos em alerta"
+              pagination={pagination}
+              limit={ALERT_MODAL_PAGE_SIZE}
+              loading={loading}
+              source={source}
+              pageSizeOptions={[ALERT_MODAL_PAGE_SIZE]}
+              className="border-x-0 border-b-0 bg-white"
+              onPageChange={onPageChange}
+              onLimitChange={() => onPageChange(1)}
+            />
           </aside>
 
           {/* Detail panel */}
@@ -998,18 +1219,12 @@ function AlertModal({
               <div className="border-b-2 border-stone-100 bg-gradient-to-b from-stone-50 to-white px-6 py-6">
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex items-center gap-4">
-                    <div
-                      className={`grid h-16 w-16 shrink-0 place-items-center rounded-2xl border-2 ${
-                        critical ? 'bg-rose-50 border-rose-300' : 'bg-amber-50 border-amber-300'
-                      }`}
-                    >
-                      <UserRound size={28} className={critical ? 'text-rose-600' : 'text-amber-600'} />
-                    </div>
+                    <AlertStudentAvatar student={selected} critical={critical} size="lg" />
                     <div>
                       <Label className="mb-1 text-rose-500">Diagnóstico pedagógico</Label>
                       <h3 className="text-xl font-bold text-stone-900 font-['Fraunces']">{selected.name}</h3>
                       <p className="text-xs font-semibold text-stone-400 font-['Outfit']">
-                        {getClass(selected.classId)}
+                        {selected.className ?? getClass(selected.classId)}
                       </p>
                     </div>
                   </div>
@@ -1258,6 +1473,7 @@ export function PedagogicalDashboard({
   lessonRecords,
   evaluations = [],
   evaluationCorrections = [],
+  onLoadAlertsPage,
 }: PedagogicalDashboardProps) {
   const [tab, setTab] = useState<'general' | 'action'>('general')
   const [classFilter, setClassFilter] = useState('all')
@@ -1266,6 +1482,16 @@ export function PedagogicalDashboard({
   const [lessonClassFilter, setLessonClassFilter] = useState('all')
   const [alertModal, setAlertModal] = useState(false)
   const [selectedAlertId, setSelectedAlertId] = useState<string | null>(null)
+  const [alertPage, setAlertPage] = useState(1)
+  const [alertPageData, setAlertPageData] = useState<{ students: Student[]; pagination: PaginationMeta } | null>(null)
+  const [alertPageLoading, setAlertPageLoading] = useState(false)
+  const [alertPageError, setAlertPageError] = useState('')
+  const [modalAlertPage, setModalAlertPage] = useState(1)
+  const [modalAlertSearch, setModalAlertSearch] = useState('')
+  const [debouncedModalAlertSearch, setDebouncedModalAlertSearch] = useState('')
+  const [modalAlertPageData, setModalAlertPageData] = useState<{ students: Student[]; pagination: PaginationMeta } | null>(null)
+  const [modalAlertLoading, setModalAlertLoading] = useState(false)
+  const [modalAlertError, setModalAlertError] = useState('')
 
   const getDerivedAtt = (s: Student) =>
     getStudentAttendanceRateFromLessons(s, lessonRecords, s.attendanceRate ?? 0)
@@ -1296,7 +1522,8 @@ export function PedagogicalDashboard({
   const lowAttScope = scopeStudents.filter((s) => getDerivedAtt(s) < 75)
   const lowScoreScope = scopeStudents.filter((s) => s.averageScore < 6)
 
-  const alertStudents = [
+  const studentsById = useMemo(() => new Map(students.map((student) => [student.id, student])), [students])
+  const localAlertStudents = [
     ...students.filter((s) => getDerivedAtt(s) < 75),
     ...students.filter((s) => s.averageScore < 6),
   ]
@@ -1308,6 +1535,102 @@ export function PedagogicalDashboard({
       const bc = bA < 75 && b.averageScore < 6 ? 1 : 0
       return bc - ac || aA - bA || a.averageScore - b.averageScore
     })
+  const dashboardAlertFilters = useMemo<Partial<DashboardFiltersQuery>>(() => ({
+    classId: classFilter !== 'all' ? classFilter : undefined,
+  }), [classFilter])
+  const modalDashboardAlertFilters = useMemo<Partial<DashboardFiltersQuery>>(() => ({
+    ...dashboardAlertFilters,
+    search: debouncedModalAlertSearch || undefined,
+  }), [dashboardAlertFilters, debouncedModalAlertSearch])
+  const localPanelAlertPage = paginateStudents(localAlertStudents, alertPage, ALERT_PANEL_PAGE_SIZE)
+  const visibleAlertPage = alertPageData ?? localPanelAlertPage
+  const visibleAlertStudents = visibleAlertPage.students
+  const alertPagination = visibleAlertPage.pagination
+  const alertSource: PaginationSource = alertPageData ? 'backend' : 'local'
+  const alertTotal = alertPagination.total
+  const searchedLocalAlertStudents = debouncedModalAlertSearch
+    ? localAlertStudents.filter((student) => normalizeSearchText(student.name).includes(normalizeSearchText(debouncedModalAlertSearch)))
+    : localAlertStudents
+  const localModalAlertPage = paginateStudents(searchedLocalAlertStudents, modalAlertPage, ALERT_MODAL_PAGE_SIZE)
+  const visibleModalAlertPage = modalAlertPageData ?? localModalAlertPage
+  const visibleModalAlertStudents = visibleModalAlertPage.students
+  const modalAlertPagination = visibleModalAlertPage.pagination
+  const modalAlertSource: PaginationSource = modalAlertPageData ? 'backend' : 'local'
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => setDebouncedModalAlertSearch(modalAlertSearch.trim()), 300)
+    return () => window.clearTimeout(timeout)
+  }, [modalAlertSearch])
+
+  useEffect(() => {
+    setModalAlertPage(1)
+  }, [debouncedModalAlertSearch, classFilter])
+
+  useEffect(() => {
+    if (!onLoadAlertsPage) {
+      setAlertPageData(null)
+      return
+    }
+
+    let active = true
+    setAlertPageLoading(true)
+    setAlertPageError('')
+
+    onLoadAlertsPage({
+      page: alertPage,
+      limit: ALERT_PANEL_PAGE_SIZE,
+      filters: dashboardAlertFilters,
+    })
+      .then((payload) => {
+        if (!active) return
+        const nextPage = dashboardAlertsToStudentsPage(payload, studentsById)
+        setAlertPageData(nextPage)
+        if (nextPage.pagination.page !== alertPage) setAlertPage(nextPage.pagination.page)
+      })
+      .catch((error) => {
+        if (!active) return
+        setAlertPageData(null)
+        setAlertPageError(error instanceof Error ? error.message : 'Nao foi possivel carregar alunos em alerta.')
+      })
+      .finally(() => {
+        if (active) setAlertPageLoading(false)
+      })
+
+    return () => { active = false }
+  }, [alertPage, dashboardAlertFilters, onLoadAlertsPage, studentsById])
+
+  useEffect(() => {
+    if (!alertModal || !onLoadAlertsPage) {
+      if (!onLoadAlertsPage) setModalAlertPageData(null)
+      return
+    }
+
+    let active = true
+    setModalAlertLoading(true)
+    setModalAlertError('')
+
+    onLoadAlertsPage({
+      page: modalAlertPage,
+      limit: ALERT_MODAL_PAGE_SIZE,
+      filters: modalDashboardAlertFilters,
+    })
+      .then((payload) => {
+        if (!active) return
+        const nextPage = dashboardAlertsToStudentsPage(payload, studentsById)
+        setModalAlertPageData(nextPage)
+        if (nextPage.pagination.page !== modalAlertPage) setModalAlertPage(nextPage.pagination.page)
+      })
+      .catch((error) => {
+        if (!active) return
+        setModalAlertPageData(null)
+        setModalAlertError(error instanceof Error ? error.message : 'Nao foi possivel buscar alunos em alerta.')
+      })
+      .finally(() => {
+        if (active) setModalAlertLoading(false)
+      })
+
+    return () => { active = false }
+  }, [alertModal, modalAlertPage, modalDashboardAlertFilters, onLoadAlertsPage, studentsById])
 
   /* ── Class summaries ── */
   const classSummaries: ClassSummary[] = classes
@@ -1423,7 +1746,19 @@ export function PedagogicalDashboard({
     subjectColors[s.name] = CHART_PALETTE[i % CHART_PALETTE.length]
   })
 
-  const selectedAlertForModal = selectedAlertId ?? alertStudents[0]?.id ?? null
+  const selectedAlertForModal =
+    selectedAlertId ??
+    (alertModal ? visibleModalAlertStudents[0]?.id : visibleAlertStudents[0]?.id) ??
+    visibleAlertStudents[0]?.id ??
+    visibleModalAlertStudents[0]?.id ??
+    localAlertStudents[0]?.id ??
+    null
+  const selectedAlertFallback = selectedAlertForModal
+    ? visibleAlertStudents.find((student) => student.id === selectedAlertForModal) ??
+      visibleModalAlertStudents.find((student) => student.id === selectedAlertForModal) ??
+      localAlertStudents.find((student) => student.id === selectedAlertForModal) ??
+      null
+    : null
   const visibleLessonRecords =
     classFilter === 'all'
       ? lessonRecords
@@ -1536,7 +1871,15 @@ export function PedagogicalDashboard({
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
               <select
                 value={classFilter}
-                onChange={(e) => setClassFilter(e.target.value)}
+                onChange={(e) => {
+                  setClassFilter(e.target.value)
+                  setAlertPage(1)
+                  setModalAlertPage(1)
+                  setAlertPageData(null)
+                  setModalAlertPageData(null)
+                  setAlertPageError('')
+                  setModalAlertError('')
+                }}
                 className="h-10 rounded-xl border-2 border-stone-300 bg-stone-50 px-3 text-xs font-bold text-stone-700 shadow-sm outline-none transition-all font-['Outfit'] focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
               >
                 <option value="all">Todas as turmas</option>
@@ -1590,14 +1933,14 @@ export function PedagogicalDashboard({
             />
             <KpiCard
               label="Em alerta"
-              value={String(alertStudents.length)}
-              numericValue={alertStudents.length}
+              value={String(alertTotal)}
+              numericValue={alertTotal}
               sub="Alunos com baixa frequência ou média"
-              tone={alertStudents.length > 0 ? 'rose' : 'emerald'}
+              tone={alertTotal > 0 ? 'rose' : 'emerald'}
               icon={<AlertTriangle size={16} />}
               delay={210}
               onClick={
-                alertStudents.length > 0
+                alertTotal > 0
                   ? () => {
                       setSelectedAlertId(selectedAlertForModal)
                       setAlertModal(true)
@@ -1924,9 +2267,9 @@ export function PedagogicalDashboard({
               icon={<AlertCircle size={15} />}
               tone="rose"
               title="Alunos que precisam de atenção"
-              sub={`${alertStudents.length} aluno${alertStudents.length !== 1 ? 's' : ''} identificado${alertStudents.length !== 1 ? 's' : ''}`}
+              sub={`${alertTotal} aluno${alertTotal !== 1 ? 's' : ''} identificado${alertTotal !== 1 ? 's' : ''}`}
               actions={
-                alertStudents.length > 0 ? (
+                alertTotal > 0 ? (
                   <ActionBtn
                     tone="rose"
                     onClick={() => {
@@ -1941,13 +2284,26 @@ export function PedagogicalDashboard({
                 ) : undefined
               }
             />
-            {alertStudents.length > 0 ? (
+            {alertPageError && (
+              <div className="mx-4 mt-4 rounded-xl border-2 border-rose-100 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700 font-['Outfit']">
+                {alertPageError}
+              </div>
+            )}
+            {alertPageLoading ? (
               <div className="grid gap-2.5 p-4 md:grid-cols-2 xl:grid-cols-3">
-                {alertStudents.slice(0, 9).map((student, index) => (
+                {Array.from({ length: ALERT_PANEL_PAGE_SIZE }).map((_, index) => (
+                  <div key={index} className="rounded-2xl border-2 border-stone-100 bg-white p-4">
+                    <Bone className="h-14 w-full rounded-xl" />
+                  </div>
+                ))}
+              </div>
+            ) : alertTotal > 0 ? (
+              <div className="grid gap-2.5 p-4 md:grid-cols-2 xl:grid-cols-3">
+                {visibleAlertStudents.map((student, index) => (
                   <AlertCard
                     key={student.id}
                     student={student}
-                    className={getClassName(student.classId)}
+                    className={student.className ?? getClassName(student.classId)}
                     delay={index * 45}
                     onOpen={() => {
                       setSelectedAlertId(student.id)
@@ -1961,6 +2317,19 @@ export function PedagogicalDashboard({
                 <CheckCircle size={40} className="mx-auto mb-3 text-emerald-400" />
                 <p className="text-sm font-bold text-stone-400 font-['Outfit']">Nenhum aluno em alerta no escopo</p>
               </div>
+            )}
+            {(alertTotal > 0 || alertPageLoading) && (
+              <PaginationControls
+                label="Alunos em alerta"
+                pagination={alertPagination}
+                limit={ALERT_PANEL_PAGE_SIZE}
+                loading={alertPageLoading}
+                source={alertSource}
+                pageSizeOptions={[ALERT_PANEL_PAGE_SIZE]}
+                className="border-x-0 border-b-0 bg-white"
+                onPageChange={setAlertPage}
+                onLimitChange={() => setAlertPage(1)}
+              />
             )}
           </Panel>
         </section>
@@ -2475,9 +2844,9 @@ export function PedagogicalDashboard({
                 icon={<AlertCircle size={15} />}
                 tone="rose"
                 title="Alunos que precisam de atenção"
-                sub={`${alertStudents.length} aluno${alertStudents.length !== 1 ? 's' : ''} identificado${alertStudents.length !== 1 ? 's' : ''}`}
+                sub={`${alertTotal} aluno${alertTotal !== 1 ? 's' : ''} identificado${alertTotal !== 1 ? 's' : ''}`}
                 actions={
-                  alertStudents.length > 0 ? (
+                  alertTotal > 0 ? (
                     <ActionBtn
                       tone="rose"
                       onClick={() => {
@@ -2492,13 +2861,26 @@ export function PedagogicalDashboard({
                   ) : undefined
                 }
               />
-              {alertStudents.length > 0 ? (
+              {alertPageError && (
+                <div className="mx-4 mt-4 rounded-xl border-2 border-rose-100 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700 font-['Outfit']">
+                  {alertPageError}
+                </div>
+              )}
+              {alertPageLoading ? (
                 <div className="p-4 grid gap-2.5 md:grid-cols-2 xl:grid-cols-3">
-                  {alertStudents.slice(0, 9).map((st, i) => (
+                  {Array.from({ length: ALERT_PANEL_PAGE_SIZE }).map((_, index) => (
+                    <div key={index} className="rounded-2xl border-2 border-stone-100 bg-white p-4">
+                      <Bone className="h-14 w-full rounded-xl" />
+                    </div>
+                  ))}
+                </div>
+              ) : alertTotal > 0 ? (
+                <div className="p-4 grid gap-2.5 md:grid-cols-2 xl:grid-cols-3">
+                  {visibleAlertStudents.map((st, i) => (
                     <AlertCard
                       key={st.id}
                       student={st}
-                      className={getClassName(st.classId)}
+                      className={st.className ?? getClassName(st.classId)}
                       delay={i * 45}
                       onOpen={() => {
                         setSelectedAlertId(st.id)
@@ -2515,6 +2897,19 @@ export function PedagogicalDashboard({
                   </p>
                 </div>
               )}
+              {(alertTotal > 0 || alertPageLoading) && (
+                <PaginationControls
+                  label="Alunos em alerta"
+                  pagination={alertPagination}
+                  limit={ALERT_PANEL_PAGE_SIZE}
+                  loading={alertPageLoading}
+                  source={alertSource}
+                  pageSizeOptions={[ALERT_PANEL_PAGE_SIZE]}
+                  className="border-x-0 border-b-0 bg-white"
+                  onPageChange={setAlertPage}
+                  onLimitChange={() => setAlertPage(1)}
+                />
+              )}
             </Panel>
           </div>
         </div>
@@ -2526,9 +2921,26 @@ export function PedagogicalDashboard({
 
       {alertModal && (
         <AlertModal
-          students={alertStudents}
+          students={visibleModalAlertStudents}
           selectedId={selectedAlertForModal}
+          selectedFallback={selectedAlertFallback}
+          pagination={modalAlertPagination}
+          loading={modalAlertLoading}
+          source={modalAlertSource}
+          error={modalAlertError}
+          search={modalAlertSearch}
           onSelect={setSelectedAlertId}
+          onPageChange={(page) => {
+            setSelectedAlertId(null)
+            setModalAlertError('')
+            setModalAlertPage(page)
+          }}
+          onSearchChange={(value) => {
+            setSelectedAlertId(null)
+            setModalAlertPageData(null)
+            setModalAlertError('')
+            setModalAlertSearch(value)
+          }}
           onClose={() => setAlertModal(false)}
           getClass={getClassName}
         />

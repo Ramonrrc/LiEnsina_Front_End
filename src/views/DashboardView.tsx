@@ -441,7 +441,7 @@ function ClassBarRow({ label, freq, perf }: { label: string; freq: number; perf:
         <div className="space-y-1.5">
           <div className="flex items-center gap-2">
             <span className="text-[10px] text-slate-400 w-16 shrink-0">Frequência</span>
-            <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+            <div className="flex-1 h-1.5 bg-slate-300/70 rounded-full overflow-hidden">
               <div
                 className="h-full rounded-full transition-[width] duration-700 ease-out"
                 style={{
@@ -456,7 +456,7 @@ function ClassBarRow({ label, freq, perf }: { label: string; freq: number; perf:
           </div>
           <div className="flex items-center gap-2">
             <span className="text-[10px] text-slate-400 w-16 shrink-0">Desempenho</span>
-            <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+            <div className="flex-1 h-1.5 bg-slate-300/70 rounded-full overflow-hidden">
               <div
                 className="h-full rounded-full transition-[width] duration-700 ease-out"
                 style={{

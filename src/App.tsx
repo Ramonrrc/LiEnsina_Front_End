@@ -46,6 +46,7 @@ import {
   loadStudentGradesEvaluationsScreen,
   loadTeachersScreen,
   loadTeacherSubjectEvaluationsScreen,
+  listEvaluationsPage,
   listLessonRecords,
   listClassesPage,
   listSchoolsPage,
@@ -481,7 +482,7 @@ function buildMealManagementsPagePayload(data: MealsScreenPayload, page: number,
 }
 
 function buildDashboardAlertsPagePayload(alerts: DashboardAlertsPagePayload['alerts'], page: number, limit: number): DashboardAlertsPagePayload {
-  const safeLimit = [25, 50, 100].includes(limit) ? limit : 25
+  const safeLimit = Math.min(100, Math.max(1, Math.trunc(Number(limit)) || 25))
   const total = alerts.length
   const totalPages = Math.max(1, Math.ceil(total / safeLimit))
   const safePage = Math.min(Math.max(1, page), totalPages)
@@ -701,6 +702,20 @@ async function loadSectionPayload(section: AppSection, token: string, profile: R
     ])
     return { ...scopePayload, lessonRecords }
   }
+  const loadStudentProgressScopeWithGrades = async () => {
+    const [scopePayload, gradesPayload] = await Promise.all([
+      loadAcademicScopeWithLessonRecords({ includeTeachers: false }),
+      loadStudentGradesEvaluationsScreen(token),
+    ])
+
+    return {
+      ...scopePayload,
+      evaluations: gradesPayload.evaluations,
+      evaluationCorrections: gradesPayload.evaluationCorrections,
+      curriculumSkills: gradesPayload.curriculumSkills,
+      questionBank: gradesPayload.questionBank,
+    }
+  }
 
   switch (section) {
     case 'dashboard':
@@ -746,7 +761,7 @@ async function loadSectionPayload(section: AppSection, token: string, profile: R
     case 'student-attendance':
     case 'child-attendance':
     case 'child-performance':
-      return loadAcademicScopeWithLessonRecords({ includeTeachers: false })
+      return loadStudentProgressScopeWithGrades()
     case 'student-grades':
       return Promise.all([
         loadAcademicScopeScreen(token, {
@@ -1301,10 +1316,15 @@ export default function App() {
       ...Array.from(relatedSchoolIds),
     ])
     if (session.currentUser.schoolId) allowedSchoolIds.add(session.currentUser.schoolId)
+    if ((roleProfile === 'ALUNO' || roleProfile === 'RESPONSAVEL') && allowedSchoolIds.size === 0) {
+      for (const school of data.schools ?? []) allowedSchoolIds.add(school.id)
+    }
     if (allowedSchoolIds.size === 0 && (data.schools ?? []).length === 1 && data.schools?.[0]?.id) allowedSchoolIds.add(data.schools[0].id)
     const allowedClassIdsFromSchools = new Set(scopedSchools?.classes.map((classRoom) => classRoom.id) ?? [])
     const schoolScopedEvaluations = roleProfile === 'PROFESSOR' || isSchoolLeadership(roleProfile)
+    const sessionScopedEvaluations = roleProfile === 'ALUNO' || roleProfile === 'RESPONSAVEL'
     const allowedClasses = data.classes.filter((classRoom) => {
+      if (sessionScopedEvaluations) return true
       if (schoolScopedEvaluations) return allowedSchoolIds.has(classRoom.schoolId)
       if (allowedClassIdsFromSchools.size > 0) return allowedClassIdsFromSchools.has(classRoom.id)
       return allowedSchoolIds.has(classRoom.schoolId)
@@ -1836,6 +1856,7 @@ export default function App() {
             }}
             onLoadTeacherSubjectCardsPage={(params) => listTeacherSubjectCardsPage(token, params, { networkScope: isNetworkAdminProfile(roleProfile) })}
             onLoadStudentSubjectCardsPage={(params) => listStudentSubjectCardsPage(token, params)}
+            onLoadAlertsPage={loadDashboardAlertsPage}
             onDownloadEvaluation={(id) => runAction(async () => {
               const file = activeSection === 'student-grades'
                 ? await downloadStudentEvaluationFile(token, id)
@@ -1872,6 +1893,7 @@ export default function App() {
             currentUser={session.currentUser}
             currentRole={userRole}
             evaluations={scopedData.evaluations}
+            evaluationsPagination={scopedData.evaluationsPagination}
             classes={scopedData.classes}
             teachers={scopedData.teachers ?? []}
             answerCards={scopedData.answerCards ?? []}
@@ -1969,6 +1991,7 @@ export default function App() {
               return generated
             }}
             onLoadQuestionsPage={loadQuestionsPageForEvaluations}
+            onLoadEvaluationsPage={(params) => listEvaluationsPage(token, params, { networkScope: isNetworkAdminProfile(roleProfile) })}
             onDeleteQuestion={async (id) => {
               if (!canManageEvaluations) {
                 await blockUnauthorizedAction('Seu perfil pode acompanhar questoes, mas nao excluir.')

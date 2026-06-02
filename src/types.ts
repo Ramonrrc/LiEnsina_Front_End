@@ -1115,6 +1115,7 @@ export interface DashboardFiltersQuery {
   schoolId?: string
   classId?: string
   subject?: string
+  search?: string
   period?: DashboardPeriodFilter
 }
 
@@ -1156,6 +1157,7 @@ export interface EvaluationsScreenPayload {
   assessmentDescriptors?: AssessmentDescriptor[]
   questionBank?: Question[]
   questionImportPlans?: QuestionImportPlan[]
+  evaluationsPagination?: PaginationMeta
 }
 
 export interface PedagogyScreenPayload extends SchoolsScreenPayload {
@@ -1295,6 +1297,17 @@ export interface StudentsPageQuery {
   classId?: string
 }
 
+export interface EvaluationsPageQuery {
+  page: number
+  limit: number
+  search?: string
+  schoolId?: string
+  classId?: string
+  subject?: string
+  teacherId?: string
+  status?: EvaluationStatus | 'all'
+}
+
 export interface TeachersPagePayload {
   teachers: Teacher[]
   pagination: PaginationMeta
@@ -1302,6 +1315,11 @@ export interface TeachersPagePayload {
 
 export interface StudentsPagePayload {
   students: Student[]
+  pagination: PaginationMeta
+}
+
+export interface EvaluationsPagePayload {
+  evaluations: Evaluation[]
   pagination: PaginationMeta
 }
 
@@ -1352,10 +1370,10 @@ export interface ScreenPayloads {
   'room-reservations': SchoolsScreenPayload
   'lesson-records': SchoolsScreenPayload
   'attendance-list': SchoolsScreenPayload
-  'student-performance': SchoolsScreenPayload
+  'student-performance': StudentGradesScreenPayload
   'student-grades': StudentGradesScreenPayload
-  'student-attendance': SchoolsScreenPayload
+  'student-attendance': StudentGradesScreenPayload
   children: SchoolsScreenPayload
-  'child-attendance': SchoolsScreenPayload
-  'child-performance': SchoolsScreenPayload
+  'child-attendance': StudentGradesScreenPayload
+  'child-performance': StudentGradesScreenPayload
 }

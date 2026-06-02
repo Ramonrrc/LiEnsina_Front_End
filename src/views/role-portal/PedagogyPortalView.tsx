@@ -15,6 +15,7 @@ export function PedagogyPortalView({ model }: { model: RolePortalScreenModel }) 
     teachers,
     lessonRecords,
     evaluationsData,
+    onLoadAlertsPage,
     getSchoolName,
   } = model
 
@@ -26,6 +27,7 @@ export function PedagogyPortalView({ model }: { model: RolePortalScreenModel }) 
     lessonRecords,
     evaluations: evaluationsData?.evaluations ?? [],
     evaluationCorrections: evaluationsData?.evaluationCorrections ?? [],
+    onLoadAlertsPage,
   }
 
   return (

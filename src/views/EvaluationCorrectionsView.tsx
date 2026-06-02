@@ -36,7 +36,7 @@ import {
   ZapOff,
 } from 'lucide-react'
 
-import { safeApiFilePreviewKind, type ApiFileResponse } from '../api'
+import { resolveApiAssetUrl, safeApiFilePreviewKind, type ApiFileResponse } from '../api'
 import { getAcademicSubjectLabel } from '../components/role-portal/portal-components'
 import { CompactSelect, type CompactSelectOption } from '../components/ui/compact-select'
 import { PageTitleBar } from '../components/ui/page-title-bar'
@@ -217,6 +217,16 @@ function ansStatusConfig(v: string) {
 
 function fileKindFromResponse(file: ApiFileResponse): CorrectionCardPreview['kind'] {
   return safeApiFilePreviewKind(file.contentType)
+}
+
+function getStudentInitials(name?: string | null) {
+  return String(name ?? '')
+    .split(' ')
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((word) => word[0])
+    .join('')
+    .toUpperCase()
 }
 
 function PdfPreview({ url, title, className = '' }: { url: string; title: string; className?: string }) {
@@ -462,7 +472,8 @@ function StudentCard({
   onSelect: () => void
   onFileChange: (e: ChangeEvent<HTMLInputElement>) => void
 }) {
-  const initials = student.name.split(' ').filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase()
+  const initials = getStudentInitials(student.name)
+  const avatarUrl = resolveApiAssetUrl(student.avatarUrl)
   const cardId = getAnswerCardId(answerCard)
   const sc = statusConfig(correction?.status)
   const score = correction ? (correction.finalScore ?? correction.suggestedScore) : null
@@ -471,31 +482,34 @@ function StudentCard({
     <div
       style={{ animationDelay: `${animDelay}ms` }}
       onClick={correction ? onSelect : undefined}
-      className={`group relative flex items-center gap-3 rounded-2xl border bg-white px-4 py-3 transition-all duration-200 animate-in fade-in slide-in-from-bottom-2 fill-mode-both overflow-hidden cursor-pointer
+      className={`group relative flex items-center gap-3 rounded-2xl border px-4 py-3 transition-all duration-200 animate-in fade-in slide-in-from-bottom-2 fill-mode-both overflow-hidden cursor-pointer
         ${isSelected
-          ? 'border-indigo-400 shadow-lg shadow-indigo-50 ring-1 ring-indigo-200'
-          : 'border-slate-300 hover:border-indigo-300 hover:shadow-md hover:shadow-slate-100'}`}
+          ? 'border-indigo-500 bg-indigo-50/80 shadow-lg shadow-indigo-100 ring-2 ring-indigo-300'
+          : 'border-slate-300 bg-white hover:border-indigo-300 hover:shadow-md hover:shadow-slate-100'}`}
     >
       {/* Left accent bar */}
-      <div className={`absolute left-0 top-3 bottom-3 w-[3px] rounded-full transition-all duration-300 ${sc.left} ${isSelected ? 'opacity-100' : 'opacity-30 group-hover:opacity-60'}`} />
-
-      {/* Selected glow bg */}
-      {isSelected && (
-        <div className="absolute inset-0 bg-gradient-to-r from-indigo-50/60 to-transparent pointer-events-none" />
-      )}
+      <div className={`absolute left-0 top-3 bottom-3 rounded-full transition-all duration-300 ${sc.left} ${isSelected ? 'w-1 opacity-100' : 'w-[3px] opacity-30 group-hover:opacity-60'}`} />
 
       {/* Avatar */}
-      <div className={`relative flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-[11px] font-bold transition-transform group-hover:scale-105 ${sc.avatar} shadow-sm border border-slate-300`}>
-        {initials || '?'}
+      <div className={`relative z-10 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-[11px] font-bold transition-transform group-hover:scale-105 ${avatarUrl ? 'bg-white text-slate-500' : sc.avatar} shadow-sm border ${isSelected ? 'border-indigo-300' : 'border-slate-300'}`}>
+        {avatarUrl ? (
+          <img
+            src={avatarUrl}
+            alt={student.name}
+            className="h-full w-full rounded-xl object-cover"
+            draggable={false}
+            referrerPolicy="no-referrer"
+          />
+        ) : initials || '?'}
         <span className={`absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full border-2 border-white ${sc.dot}`} />
       </div>
 
       {/* Name + registration */}
-      <div className="min-w-0 flex-1">
+      <div className="relative z-10 min-w-0 flex-1">
         <p className="truncate text-sm font-semibold text-slate-800 leading-tight font-['DM_Sans']">
           {student.name}
         </p>
-        <p className="text-[11px] text-slate-400 mt-0.5 font-['DM_Sans'] truncate">
+        <p className={`text-[11px] mt-0.5 font-['DM_Sans'] truncate ${isSelected ? 'text-slate-600' : 'text-slate-400'}`}>
           {student.registrationNumber || student.registration || student.login}
           {cardId && <span className="ml-1.5 text-indigo-400">· #{cardId}</span>}
         </p>
@@ -503,15 +517,15 @@ function StudentCard({
 
       {/* Score */}
       {score != null && (
-        <div className="shrink-0 text-right">
+        <div className="relative z-10 shrink-0 text-right">
           <p className="text-lg font-bold text-slate-800 leading-none font-['Lora'] tabular-nums">{fmt(score)}</p>
-          <p className="text-[9.5px] text-slate-400 mt-0.5 font-['DM_Sans']">{correction!.correctCount}/{correction!.totalQuestions}</p>
+          <p className={`text-[9.5px] mt-0.5 font-['DM_Sans'] ${isSelected ? 'text-slate-600' : 'text-slate-400'}`}>{correction!.correctCount}/{correction!.totalQuestions}</p>
         </div>
       )}
 
       {/* Status pill — shown only when there's a correction */}
       {correction && (
-        <span className={`shrink-0 hidden sm:inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold font-['DM_Sans'] ${sc.pill}`}>
+        <span className={`relative z-10 shrink-0 hidden sm:inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold font-['DM_Sans'] ${sc.pill}`}>
           {correction.status === 'CONFIRMED' && <Check className="h-2.5 w-2.5" />}
           {statusLabel(correction)}
         </span>
@@ -520,11 +534,11 @@ function StudentCard({
       {/* Upload button */}
       <label
         onClick={e => e.stopPropagation()}
-        className={`shrink-0 inline-flex cursor-pointer items-center gap-1 rounded-xl border px-2.5 py-1.5 text-[11px] font-semibold transition-all active:scale-95 font-['DM_Sans']
+        className={`relative z-10 shrink-0 inline-flex cursor-pointer items-center gap-1 rounded-xl border px-2.5 py-1.5 text-[11px] font-semibold transition-all active:scale-95 font-['DM_Sans']
           ${isProcessing
             ? 'border-slate-300 bg-slate-50 text-slate-400 cursor-not-allowed'
             : correction
-              ? 'border-slate-300 bg-white text-slate-500 opacity-0 group-hover:opacity-100 hover:border-indigo-400 hover:bg-indigo-600 hover:text-white hover:shadow-md hover:shadow-indigo-200'
+              ? `${isSelected ? 'border-indigo-300 bg-white text-indigo-700 opacity-100 shadow-sm' : 'border-slate-300 bg-white text-slate-500 opacity-0 group-hover:opacity-100'} hover:border-indigo-400 hover:bg-indigo-600 hover:text-white hover:shadow-md hover:shadow-indigo-200`
               : 'border-indigo-400 bg-indigo-600 text-white hover:bg-indigo-700 shadow-md shadow-indigo-200'}`}
       >
         {isProcessing ? <Spin sm dark /> : <Camera className="h-3 w-3" />}
@@ -560,6 +574,8 @@ function ReviewPanel({
   const confPct = Math.round(correction.confidence * 100)
   const hasIssues = correction.failures.length > 0 || correction.shouldRetakeImage
   const sc = statusConfig(correction.status)
+  const avatarUrl = resolveApiAssetUrl(student?.avatarUrl)
+  const initials = getStudentInitials(student?.name)
 
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
@@ -568,9 +584,17 @@ function ReviewPanel({
       <div className="shrink-0 px-6 py-5 border-b border-slate-200 bg-white">
         <div className="flex items-center gap-4">
           {/* Avatar */}
-          <div className={`relative flex h-12 w-12 shrink-0 items-center justify-center border-2 rounded-2xl text-sm font-bold shadow-sm ${sc.avatar} ${sc.glow}`}
+          <div className={`relative flex h-12 w-12 shrink-0 items-center justify-center border-2 rounded-2xl text-sm font-bold shadow-sm ${avatarUrl ? 'bg-white text-slate-500' : sc.avatar} ${sc.glow}`}
             style={{ borderColor: correction.status === 'CONFIRMED' ? '#6ee7b7' : correction.status === 'NEEDS_RETAKE' ? '#fcd34d' : correction.status === 'REJECTED' ? '#fca5a5' : '#c4b5fd' }}>
-            {student ? student.name.split(' ').filter(Boolean).slice(0,2).map(w=>w[0]).join('').toUpperCase() : '?'}
+            {avatarUrl ? (
+              <img
+                src={avatarUrl}
+                alt={student?.name ?? 'Aluno'}
+                className="h-full w-full rounded-2xl object-cover"
+                draggable={false}
+                referrerPolicy="no-referrer"
+              />
+            ) : initials || '?'}
             <span className={`absolute -bottom-1 -right-1 h-3 w-3 rounded-full border-2 border-white ${sc.dot}`} />
           </div>
 

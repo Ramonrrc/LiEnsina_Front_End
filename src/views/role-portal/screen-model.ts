@@ -7,6 +7,8 @@ import type {
   ClassRoom,
   CreateLessonRecordPayload,
   CreateRoomReservationPayload,
+  DashboardAlertsPagePayload,
+  DashboardFiltersQuery,
   EvaluationDownloadKind,
   EvaluationsScreenPayload,
   EvaluationCorrection,
@@ -62,6 +64,7 @@ export interface RolePortalScreenModel {
   onUpdateLessonRecord?: (id: string, draft: UpdateLessonRecordPayload) => Promise<LessonRecord>
   onLoadTeacherSubjectCardsPage?: (params: TeacherSubjectsPageQuery) => Promise<TeacherSubjectCardsPagePayload>
   onLoadStudentSubjectCardsPage?: (params: StudentSubjectsPageQuery) => Promise<StudentSubjectCardsPagePayload>
+  onLoadAlertsPage?: (params: { page: number; limit: number; filters: Partial<DashboardFiltersQuery> }) => Promise<DashboardAlertsPagePayload>
   onLoadEvaluationsData?: () => Promise<Pick<
     EvaluationsScreenPayload,
     'evaluations' | 'evaluationCorrections' | 'curriculumSkills' | 'assessmentDescriptors' | 'questionBank'
