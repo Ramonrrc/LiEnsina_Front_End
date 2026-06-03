@@ -11,6 +11,7 @@ import {
 } from 'lucide-react'
 
 import { CompactSelect, type CompactSelectOption } from '../components/ui/compact-select'
+import { AppToastNotice } from '../components/ui/app-toast'
 import { ConfirmDialog } from '../components/ui/confirm-dialog'
 import DateInput from '../components/ui/date-input'
 import { FieldMessage, fieldStateClass, zodFieldErrors, type FieldErrors } from '../components/ui/form-field'
@@ -420,7 +421,7 @@ function CronogramaCalendar({
     : 'grid min-h-8 w-full max-w-full grid-cols-1 items-center gap-1.5 min-[380px]:grid-cols-2 min-[560px]:grid-cols-[136px_136px] sm:w-auto sm:justify-end md:justify-center'
 
   return (
-    <div className="flex w-full max-w-full flex-col justify-center overflow-hidden rounded-xl border border-[#e2e0da] bg-[#f4f3ef] px-2.5 py-3 font-DMSans sm:rounded-2xl sm:px-7 sm:py-7">
+    <div className="flex w-full max-w-full flex-col justify-center overflow-hidden rounded-xl border border-[#e2e0da] bg-white px-2.5 py-3 font-DMSans sm:rounded-2xl sm:px-7 sm:py-7">
       <div className="mb-3 flex flex-col items-stretch gap-2.5 sm:mb-5 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
         <div className="min-w-0">
           <h1 className="text-[24px] font-black leading-none tracking-normal text-[#1a1814] sm:text-[32px]">
@@ -528,8 +529,7 @@ function CronogramaCalendar({
                     onDayClick(cell.date, dayEvents)
                   }
                 }}
-                className={`relative min-h-[72px] cursor-pointer overflow-hidden border-b border-r border-[#e2e0da] p-0 text-left transition hover:bg-[#f0eeea] sm:min-h-[122px]
-                  ${cell.otherMonth ? 'bg-[#f6f3f7]' : 'bg-[#f9f7fa]'}`}
+                className="relative min-h-[72px] cursor-pointer overflow-hidden border-b border-r border-[#e2e0da] bg-white p-0 text-left transition hover:bg-white sm:min-h-[122px]"
               >
                   <div className="relative flex h-full min-h-[72px] flex-col gap-1 px-1.5 py-1.5 sm:min-h-[112px] sm:gap-1 sm:px-2 sm:py-2">
                     {isToday && (
@@ -629,26 +629,6 @@ function FilterGroup({ children, className = '' }: { children: React.ReactNode; 
   return (
     <div className={`relative flex h-8 min-w-0 items-center ${className}`}>
       {children}
-    </div>
-  )
-}
-
-/* ─────────────────────────────────────────────
-   Toast (from file 2)
-───────────────────────────────────────────── */
-function Toast({ message, type, onClose }: { message: string; type: 'success' | 'error'; onClose: () => void }) {
-  return (
-    <div className={`flex items-start gap-3 rounded-xl border px-4 py-3.5 text-sm font-medium animate-in fade-in slide-in-from-top-2 duration-200 font-DMSans shadow-sm
-      ${type === 'error'
-        ? 'border-rose-400 bg-rose-50 text-rose-800'
-        : 'border-emerald-400 bg-emerald-50 text-emerald-800'}`}>
-      {type === 'error'
-        ? <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-rose-500" />
-        : <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />}
-      <span className="flex-1">{message}</span>
-      <button type="button" onClick={onClose} className="shrink-0 rounded p-0.5 hover:bg-black/5 transition">
-        <X className="h-3.5 w-3.5" />
-      </button>
     </div>
   )
 }
@@ -1274,7 +1254,7 @@ export default function CalendarView({
         .cv-mobile-agenda { display: none; }
       `}</style>
 
-      <div className="cv-page font-DMSans text-stone-900 bg-stone-100 min-h-screen">
+      <div className="cv-page font-DMSans text-stone-900 bg-white min-h-screen">
 
         {/* ══ HEADER ══ */}
         <div className="px-[clamp(16px,3vw,40px)] pt-5">
@@ -1316,10 +1296,10 @@ export default function CalendarView({
         {/* ══ ALERTS ══ */}
         <div className="px-[clamp(16px,3vw,40px)] mt-4 space-y-3">
           {holidayError && (
-            <Toast message={holidayError} type="error" onClose={() => setHolidayError(null)} />
+            <AppToastNotice message={holidayError} tone="error" onClose={() => setHolidayError(null)} />
           )}
           {notice && (
-            <Toast message={notice} type="success" onClose={() => setNotice(null)} />
+            <AppToastNotice message={notice} tone="success" onClose={() => setNotice(null)} />
           )}
         </div>
 
@@ -1455,7 +1435,7 @@ export default function CalendarView({
 
                 {/* Mobile agenda */}
                 <div className="cv-mobile-agenda">
-                  <div className="border-b border-stone-200 bg-stone-50 px-4 py-4">
+                  <div className="border-b border-stone-200 bg-white px-4 py-4">
                     <Eyebrow className="text-indigo-500 mb-1">Agenda compacta</Eyebrow>
                     <h3 className="font-['Lora'] text-[15px] font-semibold text-stone-900">
                       {mobileAgendaGroups.length > 0
@@ -1540,7 +1520,7 @@ export default function CalendarView({
 
           {/* ══ UPCOMING EVENTS ══ */}
           <section className="animate-in fade-in slide-in-from-bottom-2 duration-500 delay-[400ms] fill-mode-both overflow-hidden rounded-2xl border border-stone-300 bg-white shadow-sm">
-            <div className="px-5 py-4 border-b border-stone-200 bg-stone-50 flex items-center gap-3">
+            <div className="px-5 py-4 border-b border-stone-200 bg-white flex items-center gap-3">
               <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-500 shadow-sm">
                 <GraduationCap size={16} className="text-white" />
               </div>

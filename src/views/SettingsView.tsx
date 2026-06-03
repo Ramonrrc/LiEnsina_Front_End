@@ -12,7 +12,7 @@ import { AvatarHoverPreview } from '../components/profile/AvatarSign'
 import DateInput from '../components/ui/date-input'
 import { FieldMessage, fieldStateClass } from '../components/ui/form-field'
 import { PageTitleBar } from '../components/ui/page-title-bar'
-import { PROFILE_IMAGE_ACCEPT, validateProfileImageFile } from '../lib/file-security'
+import { PROFILE_IMAGE_ACCEPT, validateProfileAvatarFile, validateProfileBannerFile } from '../lib/file-security'
 import type { RoleCode, School as SchoolType, UserAccount } from '../types'
 
 interface SettingsViewProps {
@@ -510,7 +510,7 @@ export default function SettingsView({ currentUser, profile, schools = [], asset
     const file = event.target.files?.[0] ?? null
     event.target.value = ''
     if (!file) return
-    const validation = await validateProfileImageFile(file)
+    const validation = await validateProfileAvatarFile(file)
     if (!validation.ok) {
       setMediaError(validation.message ?? 'Imagem de perfil invalida.')
       return
@@ -523,7 +523,7 @@ export default function SettingsView({ currentUser, profile, schools = [], asset
     const file = event.target.files?.[0] ?? null
     event.target.value = ''
     if (!file) return
-    const validation = await validateProfileImageFile(file)
+    const validation = await validateProfileBannerFile(file)
     if (!validation.ok) {
       setMediaError(validation.message ?? 'Imagem de capa invalida.')
       return

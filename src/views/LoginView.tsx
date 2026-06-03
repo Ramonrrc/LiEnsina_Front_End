@@ -336,7 +336,7 @@ export default function LoginView({ errorMessage, isSubmitting, onBackToLanding,
 
       <motion.div
         className="lv-shell"
-        initial={{ opacity: 0, y: 30, scale: 0.965 }}
+        initial={{ opacity: 1, y: 0, scale: 1 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         transition={{ duration: 0.58, ease: [0.16, 1, 0.3, 1] }}
       >
@@ -391,7 +391,7 @@ export default function LoginView({ errorMessage, isSubmitting, onBackToLanding,
 
           {/* Top: back + badge + branding */}
           <motion.div
-            initial={{ opacity: 0 }}
+            initial={{ opacity: 1 }}
             animate={{ opacity: 1 }}
             transition={{ delay: 0.12, duration: 0.44 }}
             style={{ position:'relative', zIndex:1 }}
@@ -425,7 +425,7 @@ export default function LoginView({ errorMessage, isSubmitting, onBackToLanding,
           {/* Feature cards */}
           <motion.div
             className="lv-features"
-            initial={{ opacity: 0, y: 10 }}
+            initial={{ opacity: 1, y: 0 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.22, duration: 0.44 }}
             style={{ position:'relative', zIndex:1 }}
@@ -438,7 +438,7 @@ export default function LoginView({ errorMessage, isSubmitting, onBackToLanding,
               <motion.div
                 key={i}
                 className="lv-feat"
-                initial={{ opacity: 0, x: -8 }}
+                initial={{ opacity: 1, x: 0 }}
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: 0.28 + i * 0.08, duration: 0.34 }}
               >
@@ -451,7 +451,7 @@ export default function LoginView({ errorMessage, isSubmitting, onBackToLanding,
           {/* Status grid */}
           <motion.div
             className="lv-stats"
-            initial={{ opacity: 0, y: 8 }}
+            initial={{ opacity: 1, y: 0 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.42, duration: 0.40 }}
             style={{ position:'relative', zIndex:1 }}
@@ -479,7 +479,7 @@ export default function LoginView({ errorMessage, isSubmitting, onBackToLanding,
         <section className="lv-form-panel" aria-label="Formulário de login">
           <motion.div
             className="lv-form-card"
-            initial={{ opacity: 0, y: 16 }}
+            initial={{ opacity: 1, y: 0 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.10, duration: 0.48, ease: [0.16, 1, 0.3, 1] }}
           >
@@ -491,7 +491,7 @@ export default function LoginView({ errorMessage, isSubmitting, onBackToLanding,
               {/* E-mail */}
               <motion.div
                 className="lv-field"
-                initial={{ opacity: 0, x: -7 }}
+                initial={{ opacity: 1, x: 0 }}
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: 0.22, duration: 0.36 }}
               >
@@ -508,13 +508,13 @@ export default function LoginView({ errorMessage, isSubmitting, onBackToLanding,
                     aria-invalid={Boolean(fieldErrors.email) || undefined}
                   />
                 </div>
-                <FieldMessage hint="Digite o e-mail, login cadastrado ou matrícula do aluno." error={fieldErrors.email} className="mt-1" />
+                <FieldMessage hint="Digite o e-mail, login cadastrado ou matrícula do aluno." error={fieldErrors.email} />
               </motion.div>
 
               {/* Senha */}
               <motion.div
                 className="lv-field"
-                initial={{ opacity: 0, x: -7 }}
+                initial={{ opacity: 1, x: 0 }}
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: 0.28, duration: 0.36 }}
               >
@@ -534,7 +534,7 @@ export default function LoginView({ errorMessage, isSubmitting, onBackToLanding,
                     {showPassword ? <EyeOff size={14} /> : <Eye size={14} />}
                   </button>
                 </div>
-                <FieldMessage hint="Digite a senha da sua conta." error={fieldErrors.password} className="mt-1" />
+                <FieldMessage hint="Digite a senha da sua conta." error={fieldErrors.password} />
               </motion.div>
 
               {/* Erro geral */}
@@ -558,7 +558,7 @@ export default function LoginView({ errorMessage, isSubmitting, onBackToLanding,
                 type="submit"
                 className="lv-sub"
                 disabled={isSubmitting}
-                initial={{ opacity: 0, y: 6 }}
+                initial={{ opacity: 1, y: 0 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.34, duration: 0.34 }}
                 whileTap={{ scale: 0.984 }}
@@ -571,7 +571,7 @@ export default function LoginView({ errorMessage, isSubmitting, onBackToLanding,
 
             <motion.div
               className="lv-form-foot"
-              initial={{ opacity: 0 }}
+              initial={{ opacity: 1 }}
               animate={{ opacity: 1 }}
               transition={{ delay: 0.42, duration: 0.34 }}
             >

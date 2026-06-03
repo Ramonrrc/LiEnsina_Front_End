@@ -40,7 +40,7 @@ export function FieldMessage({
   return error ? (
     <span
       id={id}
-      className={cn('flex min-w-0 max-w-full items-start gap-1 text-[11px] font-bold leading-snug text-red-600', className)}
+      className={cn('flex min-h-4 min-w-0 max-w-full items-start gap-1 text-[11px] font-bold leading-4 text-red-600', className)}
     >
       <AlertCircle size={12} className="mt-0.5 shrink-0" />
       <span className="min-w-0 break-words [overflow-wrap:anywhere]">{error}</span>
@@ -49,7 +49,7 @@ export function FieldMessage({
     <span
       id={id}
       title={hint}
-      className={cn('block min-w-0 max-w-full truncate text-[11px] font-semibold leading-snug text-slate-400', className)}
+      className={cn('block h-4 min-w-0 max-w-full truncate text-left text-[11px] font-semibold leading-4 text-slate-400', className)}
     >
       {hint}
     </span>

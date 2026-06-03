@@ -5,9 +5,10 @@ import {
   BookOpen, Building2, Clock3, Eye, GraduationCap, Pencil, Plus, Save,
   Search, UserRound, Users, X, MapPin, Hash, User, Mail,
   Phone, Lock, CheckCircle2, Layers, Shield, ChevronRight, Zap,
-  School as SchoolIcon, Calendar, Award, BarChart3, Activity, Check, XCircle,
+  School as SchoolIcon, Calendar, Award, BarChart3, Activity, Check,
 } from 'lucide-react'
 
+import { AppToastNotice } from '../components/ui/app-toast'
 import { CompactSelect, type CompactSelectOption } from '../components/ui/compact-select'
 import { DEFAULT_PAGE_SIZE, PaginationControls, getLocalPagination } from '../components/ui/pagination-controls'
 import { AvatarHoverPreview } from '../components/profile/AvatarSign'
@@ -275,22 +276,6 @@ function SkeletonClassCard() {
         <Bone className="h-9 rounded-lg" />
         <Bone className="h-9 rounded-lg" />
       </div>
-    </div>
-  )
-}
-
-/* ─── Toast ─── */
-function Toast({ message, type, onClose }: { message: string; type: 'success' | 'error'; onClose: () => void }) {
-  return (
-    <div className={`flex items-start gap-3 rounded-xl border px-4 py-3 text-sm font-medium animate-in fade-in slide-in-from-top-2 duration-200
-      ${type === 'error' ? 'border-rose-200 bg-rose-50 text-rose-800' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}>
-      {type === 'error'
-        ? <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-rose-500" />
-        : <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />}
-      <span className="flex-1">{message}</span>
-      <button type="button" onClick={onClose} className="shrink-0 rounded p-0.5 hover:bg-black/5 transition">
-        <X className="h-3.5 w-3.5" />
-      </button>
     </div>
   )
 }
@@ -1237,7 +1222,7 @@ export default function SchoolsView({
           </header>
 
           {/* Toast */}
-          {toast && <Toast message={toast.msg} type={toast.type} onClose={() => setToast(null)} />}
+          {toast && <AppToastNotice message={toast.msg} tone={toast.type} onClose={() => setToast(null)} />}
 
           {/* ═══ SECTION 1 — Schools ═══ */}
           {!isDirectorView && (

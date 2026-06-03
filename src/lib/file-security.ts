@@ -1,7 +1,9 @@
-export const MAX_PROFILE_IMAGE_BYTES = 5 * 1024 * 1024
-export const MAX_OMR_FILE_BYTES = 12 * 1024 * 1024
+export const MAX_PROFILE_AVATAR_BYTES = 10 * 1024 * 1024
+export const MAX_PROFILE_BANNER_BYTES = 15 * 1024 * 1024
+export const MAX_PROFILE_IMAGE_BYTES = MAX_PROFILE_AVATAR_BYTES
+export const MAX_OMR_FILE_BYTES = 16 * 1024 * 1024
 export const MAX_OMR_BATCH_FILES = 20
-export const MAX_OMR_BATCH_TOTAL_BYTES = 12 * 1024 * 1024
+export const MAX_OMR_BATCH_TOTAL_BYTES = 48 * 1024 * 1024
 
 export const PROFILE_IMAGE_ACCEPT = 'image/png,image/jpeg,image/webp'
 export const OMR_PDF_UPLOADS_ENABLED = import.meta.env.VITE_OMR_ALLOW_PDF_UPLOADS === 'true'
@@ -105,13 +107,21 @@ export function isAllowedProfileImageName(fileName: string) {
   return Boolean(extension && allowedProfileImageExtensions.has(extension) && !dangerousExtensions.has(extension) && !hasDangerousDoubleExtension(fileName))
 }
 
-export function validateProfileImageFile(file: File) {
+export function validateProfileImageFile(file: File, maxBytes = MAX_PROFILE_AVATAR_BYTES, label = 'Imagem de perfil') {
   return validateFileBasics(file, {
-    maxBytes: MAX_PROFILE_IMAGE_BYTES,
+    maxBytes,
     allowedMimes: allowedProfileImageMimes,
     allowedExtensions: allowedProfileImageExtensions,
-    label: 'Imagem de perfil',
+    label,
   })
+}
+
+export function validateProfileAvatarFile(file: File) {
+  return validateProfileImageFile(file, MAX_PROFILE_AVATAR_BYTES, 'Imagem de perfil')
+}
+
+export function validateProfileBannerFile(file: File) {
+  return validateProfileImageFile(file, MAX_PROFILE_BANNER_BYTES, 'Imagem de capa')
 }
 
 export function validateOmrFile(file: File) {

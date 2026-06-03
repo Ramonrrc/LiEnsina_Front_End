@@ -38,6 +38,7 @@ import {
 
 import { resolveApiAssetUrl, safeApiFilePreviewKind, type ApiFileResponse } from '../api'
 import { getAcademicSubjectLabel } from '../components/role-portal/portal-components'
+import { AppToastNotice } from '../components/ui/app-toast'
 import { CompactSelect, type CompactSelectOption } from '../components/ui/compact-select'
 import { PageTitleBar } from '../components/ui/page-title-bar'
 import { DEFAULT_PAGE_SIZE, PaginationControls, paginateLocal } from '../components/ui/pagination-controls'
@@ -339,27 +340,6 @@ function EmptyState({ icon, title, sub }: { icon: React.ReactNode; title: string
         <p className="text-sm font-semibold text-slate-600 font-['DM_Sans']">{title}</p>
         <p className="text-xs text-slate-400 mt-0.5 font-['DM_Sans']">{sub}</p>
       </div>
-    </div>
-  )
-}
-
-/* ─── Toast ──────────────────────────────────────────────────────────────── */
-
-function Toast({ message, type, onClose }: { message: string; type: 'success' | 'error'; onClose: () => void }) {
-  return (
-    <div className={`flex items-start gap-3 rounded-2xl px-5 py-4 text-sm font-medium animate-in fade-in slide-in-from-top-3 duration-300 font-['DM_Sans'] shadow-lg border
-      ${type === 'error'
-        ? 'border-rose-200 bg-white text-rose-700 shadow-rose-100/60'
-        : 'border-emerald-200 bg-white text-emerald-700 shadow-emerald-100/60'}`}>
-      <div className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full ${type === 'error' ? 'bg-rose-100' : 'bg-emerald-100'}`}>
-        {type === 'error'
-          ? <X className="h-3 w-3 text-rose-600" />
-          : <Check className="h-3 w-3 text-emerald-600" />}
-      </div>
-      <span className="flex-1 leading-relaxed">{message}</span>
-      <button type="button" onClick={onClose} className="shrink-0 rounded-lg p-1 hover:bg-slate-100 transition text-slate-400 hover:text-slate-600">
-        <X className="h-3.5 w-3.5" />
-      </button>
     </div>
   )
 }
@@ -1500,9 +1480,9 @@ export default function EvaluationCorrectionsView({
           ═══════════════════════════════════════ */}
           <div className="space-y-3">
             {(notice || error) && (
-              <Toast
+              <AppToastNotice
                 message={(error ?? notice)!}
-                type={error ? 'error' : 'success'}
+                tone={error ? 'error' : 'success'}
                 onClose={() => { setError(null); setNotice(null) }}
               />
             )}

@@ -5,11 +5,11 @@ services:
       args:
         VITE_API_URL: ${VITE_API_URL:-/api}
         VITE_ALLOWED_ASSET_ORIGINS: ${VITE_ALLOWED_ASSET_ORIGINS:-}
-    image: MeuEnsino-frontend:local
+    image: meuensino-frontend:local
     ports:
       - "${FRONTEND_PORT:-8080}:8080"
     environment:
-      CHECK_BACKEND_HEALTH: ${CHECK_BACKEND_HEALTH:-true}
+      CHECK_BACKEND_HEALTH: ${CHECK_BACKEND_HEALTH:-false}
     read_only: true
     security_opt:
       - no-new-privileges:true
@@ -19,7 +19,7 @@ services:
       - /var/cache/nginx:uid=101,gid=101
       - /var/run:uid=101,gid=101
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/health >/dev/null && { [ \"$${CHECK_BACKEND_HEALTH:-true}\" != \"true\" ] || wget -qO- http://127.0.0.1:8080/api/health >/dev/null; } || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/health >/dev/null && { [ \"$${CHECK_BACKEND_HEALTH:-false}\" != \"true\" ] || wget -qO- http://127.0.0.1:8080/api/health >/dev/null; } || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3

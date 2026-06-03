@@ -1084,7 +1084,7 @@ function CompositionPanel({
               </div>
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-semibold text-slate-800 group-hover:text-indigo-700">{q.title}</p>
-                <div className="mt-1.5"><SkillSummaryList question={q} compact /></div>
+                <div><SkillSummaryList question={q} compact /></div>
               </div>
               <button type="button" onClick={() => onOpenQuestion(q)}
                 className="grid h-7 w-7 shrink-0 place-items-center rounded-lg border border-slate-200 text-slate-400 opacity-0 transition hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-600 group-hover:opacity-100"
@@ -2317,7 +2317,7 @@ export default function EvaluationsView({
                     error={evaluationFieldErrors.subject} dropdownMinWidth={240} />
                 </label>
                 <label className="flex scroll-mt-24 flex-col gap-1.5" data-evaluation-field="questions">
-                  <span className="flex items-center border border-gray-300 gap-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                  <span className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-500">
                     <Hash className="h-3 w-3 text-violet-500" />Nº de questões
                   </span>
                   <div className="relative">
@@ -2732,7 +2732,7 @@ export default function EvaluationsView({
                       onChange={e => setTeacherQuestionField('title', e.target.value)}
                       placeholder="Ex: Porcentagem — Desconto em compras"
                       required aria-invalid={Boolean(questionFieldErrors.title) || undefined} />
-                    <FieldMessage hint="Título curto para localizar a questão depois." error={questionFieldErrors.title} className="mt-1.5" />
+                    <FieldMessage hint="Título curto para localizar a questão depois." error={questionFieldErrors.title} />
                   </label>
 
                   <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -2744,7 +2744,7 @@ export default function EvaluationsView({
                         value={teacherQuestionDraft.gradeLevel}
                         onChange={e => setTeacherQuestionField('gradeLevel', e.target.value)}
                         required aria-invalid={Boolean(questionFieldErrors.gradeLevel) || undefined} />
-                      <FieldMessage hint="Ex: 8o ano" error={questionFieldErrors.gradeLevel} className="mt-1.5" />
+                      <FieldMessage hint="Ex: 8o ano" error={questionFieldErrors.gradeLevel} />
                     </label>
                     <label className="block">
                       <span className="mb-1.5 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-500">
@@ -2814,7 +2814,7 @@ export default function EvaluationsView({
                         value={teacherQuestionDraft.estimatedTimeSeconds}
                         onChange={e => setTeacherQuestionField('estimatedTimeSeconds', Number(e.target.value))}
                         aria-invalid={Boolean(questionFieldErrors.estimatedTimeSeconds) || undefined} />
-                      <FieldMessage hint="Tempo estimado para resolver." error={questionFieldErrors.estimatedTimeSeconds} className="mt-1.5" />
+                      <FieldMessage hint="Tempo estimado para resolver." error={questionFieldErrors.estimatedTimeSeconds} />
                     </label>
                     <label className="block">
                       <span className="mb-1.5 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-500">
@@ -2824,7 +2824,7 @@ export default function EvaluationsView({
                         value={teacherQuestionDraft.sourceName}
                         onChange={e => setTeacherQuestionField('sourceName', e.target.value)}
                         aria-invalid={Boolean(questionFieldErrors.sourceName) || undefined} />
-                      <FieldMessage hint="Origem da questão." error={questionFieldErrors.sourceName} className="mt-1.5" />
+                      <FieldMessage hint="Origem da questão." error={questionFieldErrors.sourceName} />
                     </label>
                   </div>
                 </div>
@@ -2852,7 +2852,7 @@ export default function EvaluationsView({
                       onChange={e => setTeacherQuestionField('statement', e.target.value)}
                       placeholder="Escreva a pergunta da questão aqui…"
                       required aria-invalid={Boolean(questionFieldErrors.statement) || undefined} />
-                    <FieldMessage hint="Enunciado completo que o aluno responderá." error={questionFieldErrors.statement} className="mt-1.5" />
+                    <FieldMessage hint="Enunciado completo que o aluno responderá." error={questionFieldErrors.statement} />
                   </label>
 
                   <div className="grid gap-4 sm:grid-cols-2">
@@ -2866,7 +2866,7 @@ export default function EvaluationsView({
                         onChange={e => setTeacherQuestionField('context', e.target.value)}
                         placeholder="Texto de apoio, situação problema…"
                         aria-invalid={Boolean(questionFieldErrors.context) || undefined} />
-                      <FieldMessage hint="Texto de apoio ou situação-problema." error={questionFieldErrors.context} className="mt-1.5" />
+                      <FieldMessage hint="Texto de apoio ou situação-problema." error={questionFieldErrors.context} />
                     </label>
                     <label className="block">
                       <span className="mb-1.5 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-500">
@@ -2877,7 +2877,7 @@ export default function EvaluationsView({
                         onChange={e => setTeacherQuestionField('explanation', e.target.value)}
                         placeholder="Explique a resposta correta…"
                         aria-invalid={Boolean(questionFieldErrors.explanation) || undefined} />
-                      <FieldMessage hint="Raciocínio da alternativa correta." error={questionFieldErrors.explanation} className="mt-1.5" />
+                      <FieldMessage hint="Raciocínio da alternativa correta." error={questionFieldErrors.explanation} />
                     </label>
                   </div>
 
@@ -2891,7 +2891,7 @@ export default function EvaluationsView({
                       onChange={e => setTeacherQuestionField('keywords', e.target.value)}
                       placeholder="porcentagem, desconto, razão…"
                       aria-invalid={Boolean(questionFieldErrors.keywords) || undefined} />
-                    <FieldMessage hint="Palavras-chave separadas por vírgula." error={questionFieldErrors.keywords} className="mt-1.5" />
+                    <FieldMessage hint="Palavras-chave separadas por vírgula." error={questionFieldErrors.keywords} />
                   </label>
                 </div>
 

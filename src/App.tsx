@@ -91,6 +91,7 @@ import {
 import { appName, navItems } from './data'
 import { Header } from './components/layout/Header'
 import { Sidebar } from './components/layout/Sidebar'
+import { AppToastNotice } from './components/ui/app-toast'
 import LandingPage from './views/LandingPage'
 import LoginView from './views/LoginView'
 import { getAnswerCardEvaluationId, getBatchCorrections, getCreatedAnswerCards, getCreatedEvaluation } from './lib/evaluation-omr'
@@ -926,6 +927,12 @@ export default function App() {
     let cancelled = false
 
     async function restoreSessionFromRefreshCookie() {
+      if (isLoginPath(window.location.pathname) || isLandingPath(window.location.pathname)) {
+        setIsAuthRestoring(false)
+        setIsSessionLoading(false)
+        return
+      }
+
       setIsAuthRestoring(true)
 
       try {
@@ -2447,7 +2454,7 @@ export default function App() {
           onLogout={handleLogout}
         />
 
-        <main className="w-full min-w-0 bg-slate-50">
+        <main className={`w-full min-w-0 ${activeSection === 'calendar' ? 'bg-white' : 'bg-slate-50'}`}>
           {appError ? (
             <div className="grid gap-3 px-4 pt-4 sm:px-6 lg:px-9">
               {appError ? <InlineNotice tone="danger" message={appError} /> : null}
@@ -2466,7 +2473,7 @@ export default function App() {
         </main>
       </div>
 
-      {toast && <ToastNotice tone={toast.tone} message={toast.message} />}
+      {toast && <AppToastNotice tone={toast.tone} message={toast.message} floating />}
     </div>
   )
 }
@@ -3787,19 +3794,4 @@ function InlineNotice({ tone, message }: { tone: 'danger' | 'success'; message: 
       : 'border-emerald-200 bg-emerald-50 text-emerald-700'
 
   return <div className={`rounded-xl border px-4 py-3 text-sm font-semibold ${className}`}>{message}</div>
-}
-
-function ToastNotice({ tone, message }: AppToast) {
-  const className =
-    tone === 'error'
-      ? 'border-rose-300 bg-rose-50 text-rose-700 shadow-rose-950/10'
-      : 'border-emerald-300 bg-emerald-50 text-emerald-700 shadow-emerald-950/10'
-
-  return (
-    <div className="fixed right-4 top-4 z-[2000] w-[min(420px,calc(100vw-32px))]">
-      <div className={`rounded-xl border px-4 py-3 text-sm font-black shadow-xl ${className}`}>
-        {message}
-      </div>
-    </div>
-  )
 }

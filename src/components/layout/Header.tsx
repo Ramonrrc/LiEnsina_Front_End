@@ -351,11 +351,11 @@ function EmptyNotifications() {
   return (
     <div
       className="flex flex-col items-center gap-3 rounded-2xl px-4 py-12 text-center"
-      style={{ border: '1.5px dashed #cbd5e1', background: '#C1C9D2' }}
+      style={{ border: '1.5px dashed #cbd5e1', background: '#F3F4F6' }}
     >
       <span
         className="flex h-14 w-14 items-center justify-center rounded-full"
-        style={{ background: 'linear-gradient(135deg, #eff6ff, #dbeafe)', border: '1px solid #bfdbfe' }}
+        style={{ background: 'linear-gradient(135deg, #eff6ff, #dbeafe)', border: '1px solid #F3F4F6' }}
       >
         <Bell className="h-6 w-6 text-indigo-400" />
       </span>

@@ -74,7 +74,7 @@ import type {
   UserAccount,
 } from './types'
 import { sanitizePublicErrorMessage } from './lib/safe-errors'
-import { validateOmrBatchFiles, validateOmrFile, validateProfileImageFile } from './lib/file-security'
+import { validateOmrBatchFiles, validateOmrFile, validateProfileAvatarFile, validateProfileBannerFile } from './lib/file-security'
 import { MAX_EVALUATION_QUESTIONS, evaluationQuestionLimitMessage } from './lib/evaluation-limits'
 
 const configuredApiBaseUrl = import.meta.env.VITE_API_URL || '/api'
@@ -1675,7 +1675,7 @@ export async function removeProfileBanner(token: string) {
 }
 
 export async function uploadProfileAvatar(token: string, file: File) {
-  const validation = await validateProfileImageFile(file)
+  const validation = await validateProfileAvatarFile(file)
   if (!validation.ok) throw new ApiError(validation.message ?? 'Imagem de perfil invalida.', 415)
   const formData = new FormData()
   formData.append('avatar', file)
@@ -1683,7 +1683,7 @@ export async function uploadProfileAvatar(token: string, file: File) {
 }
 
 export async function uploadProfileBanner(token: string, file: File) {
-  const validation = await validateProfileImageFile(file)
+  const validation = await validateProfileBannerFile(file)
   if (!validation.ok) throw new ApiError(validation.message ?? 'Imagem de capa invalida.', 415)
   const formData = new FormData()
   formData.append('banner', file)

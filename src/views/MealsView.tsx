@@ -1694,7 +1694,7 @@ function PurchaseForm({ management, onSearchFoods, onCreateItem }: {
                 autoFocus
               />
             </div>
-            <FieldMessage error={fieldErrors.alimentoId} className="mt-1.5" />
+            <FieldMessage error={fieldErrors.alimentoId} />
           </div>
 
           {(!selectedFood || query.trim() !== selectedFood.nome) && (
